@@ -1,0 +1,6 @@
+# NBRs (Normas Brasileiras) — coloque PDFs aqui para indexação
+# Exemplo: data/nbrs/NBR-6118.pdf
+#
+# Indexar:
+#   python scripts/index_nbrs.py
+#   python scripts/index_nbrs.py --file NBR-6118.pdf --force

@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment & secrets
+.env
+.env.local
+*.pem
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Data & indexes (gerados localmente)
+data/index/vector_store.json
+memory/faiss_index/*.faiss
+memory/faiss_index/*.json
+memory/faiss_index/embedding_cache.db
+memory/faiss_index/chunks.json
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.turbo/
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes
+infra/docker/postgres_data/
+
+# Netlify
+.netlify/
+
+# Logs
+*.log
