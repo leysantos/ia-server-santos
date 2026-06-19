@@ -7,6 +7,8 @@ Camada acima de router, dispatcher e RAG v2 — não os substitui.
 import re
 from typing import Optional
 
+from core.agent_registry import get_agent_name
+from core.context_graph import ContextGraph
 from core.dispatcher import AGENTS, dispatch
 from memory.rag_engine import RAGEngine, get_rag_engine
 
@@ -150,6 +152,7 @@ def execute_agents(
     use_rag: bool = True,
     rag_engine: Optional[RAGEngine] = None,
     persist: bool = True,
+    context_graph: Optional[ContextGraph] = None,
 ) -> list[dict]:
     """
     Executa agentes para cada disciplina identificada.
@@ -169,36 +172,55 @@ def execute_agents(
 
     for discipline in disciplines:
         if discipline not in AGENTS:
-            responses.append({
+            response = {
                 "discipline": discipline,
-                "agent": f"{discipline.lower()}_agent",
+                "agent": get_agent_name(discipline),
                 "input": user_input,
                 "result": f"Disciplina '{discipline}' não possui agente registrado.",
                 "error": True,
-            })
+            }
+            if context_graph is not None:
+                context_graph.add_result(discipline=discipline, data=response)
+            responses.append(response)
             continue
 
         agent_route = {
             "input": user_input,
             "discipline": discipline,
-            "agent": f"{discipline.lower()}_agent",
+            "agent": get_agent_name(discipline),
             "_conversation_id": route_result.get("_conversation_id"),
             "_orchestrator_log_id": route_result.get("_orchestrator_log_id"),
         }
 
         if use_rag:
+            engine = rag_engine or get_rag_engine()
             agent_route = engine.enrich_route_result(agent_route)
+        else:
+            agent_route["_use_rag"] = False
 
         response = dispatch(agent_route, persist=persist)
+
+        if context_graph is not None:
+            discipline_key = response.get("discipline", discipline)
+            context_graph.add_result(
+                discipline=discipline_key,
+                data=response,
+            )
+
         responses.append(response)
 
     return responses
 
 
-def synthesize_results(results: list[dict]) -> dict:
+def synthesize_results(results: list[dict], context: Optional[str] = None) -> dict:
     """
     Agrega respostas individuais em relatório técnico unificado.
     """
+    if context:
+        context_section = f"\n## CONTEXTO GLOBAL DO PROJETO\n{context}\n"
+    else:
+        context_section = ""
+
     by_discipline: dict[str, dict] = {}
     sections: list[str] = []
     normas: set[str] = set()
@@ -242,6 +264,7 @@ def synthesize_results(results: list[dict]) -> dict:
         f"## Análises por Disciplina\n\n{discipline_report}\n\n"
         f"## Conclusão Geral\n{conclusion}"
     )
+    final_report = context_section + final_report
 
     return {
         "technical_summary": technical_summary,
@@ -249,6 +272,7 @@ def synthesize_results(results: list[dict]) -> dict:
         "discipline_sections": discipline_report,
         "general_conclusion": conclusion,
         "final_report": final_report,
+        "global_context": context or "",
     }
 
 
@@ -279,14 +303,18 @@ def process_multi_domain_request(
         "_conversation_id": conversation_id,
     }
 
+    graph = ContextGraph()
+
     agent_results = execute_agents(
         route_result,
         use_rag=use_rag,
         rag_engine=rag_engine,
         persist=persist,
+        context_graph=graph,
     )
 
-    synthesis = synthesize_results(agent_results)
+    global_context = graph.build_global_context()
+    synthesis = synthesize_results(agent_results, context=global_context)
 
     results_by_discipline = {
         item.get("discipline", f"item_{index}"): item
@@ -316,12 +344,25 @@ def process_multi_domain_request(
         "synthesis": {
             "technical_summary": synthesis["technical_summary"],
             "general_conclusion": synthesis["general_conclusion"],
+            "global_context": synthesis.get("global_context", ""),
         },
+        "context_graph": graph.to_dict(),
     }
 
     if conversation_id:
         output["conversation_id"] = conversation_id
     if orchestrator_log:
         output["orchestrator_log_id"] = orchestrator_log.get("id")
+
+    try:
+        from core.learning.feedback_service import record_orchestrator_summary
+
+        record_orchestrator_summary(
+            input_text=text,
+            response_text=synthesis["final_report"],
+            conversation_id=conversation_id,
+        )
+    except Exception:
+        pass
 
     return output

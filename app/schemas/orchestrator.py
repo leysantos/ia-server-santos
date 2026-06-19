@@ -14,6 +14,7 @@ class OrchestrateResponse(BaseModel):
     disciplines: list[str]
     results: dict[str, Any]
     final_report: str
-    synthesis: dict[str, str]
+    synthesis: dict[str, Any]
+    context_graph: dict[str, Any] = Field(default_factory=dict)
     conversation_id: Optional[str] = None
     orchestrator_log_id: Optional[str] = None

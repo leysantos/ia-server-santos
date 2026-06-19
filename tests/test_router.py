@@ -55,6 +55,94 @@ def test_rules_priority_over_generic():
     assert result["discipline"] != "GERAL"
 
 
+def test_chat_greeting_routes_to_chat_agent():
+    for text in ("oi", "Olá!", "bom dia", "boa tarde", "tudo bem?"):
+        result = route(text)
+        assert result["discipline"] == "CHAT"
+        assert result["agent"] == "chat_agent"
+
+
+def test_chat_identity_questions():
+    for text in (
+        "oi quem é vc?",
+        "quem é você?",
+        "o que você faz?",
+        "o que vc sabe fazer de melhor?",
+        "quais são suas capacidades?",
+        "como funciona?",
+        "bom dia, quem é vc",
+        "me ajuda?",
+    ):
+        result = route(text)
+        assert result["discipline"] == "CHAT", f"falhou para: {text!r}"
+        assert result["agent"] == "chat_agent"
+
+
+def test_chat_agent_capabilities_response():
+    from unittest.mock import patch
+
+    from agents.chat import ChatAgent, TEMPLATE_CAPABILITIES
+    from models.ollama_client import OllamaClient
+
+    with patch.object(OllamaClient, "generate", side_effect=RuntimeError("offline")):
+        agent = ChatAgent()
+        response = agent.handle("o que vc sabe fazer de melhor?")
+
+    assert response["discipline"] == "CHAT"
+    assert "multidisciplinar" in response["result"]
+    assert response["result"] == TEMPLATE_CAPABILITIES
+    assert response["extra"]["response_source"] == "template_fallback"
+    assert response["extra"]["domain"] == "chat"
+
+
+def test_chat_agent_uses_fast_llm():
+    from unittest.mock import patch
+
+    from agents.chat import ChatAgent
+    from models.ollama_client import OllamaClient
+
+    with patch.object(
+        OllamaClient,
+        "generate",
+        return_value=("Posso ajudar com estruturas e hidráulica.", "qwen3:8b"),
+    ) as mock_gen:
+        agent = ChatAgent()
+        response = agent.handle("o que vc sabe fazer de melhor?")
+
+    mock_gen.assert_called_once()
+    assert response["extra"]["response_source"] == "llm"
+    assert response["extra"]["model"] == "qwen3:8b"
+    assert response["extra"]["domain"] == "chat"
+    assert "estruturas" in response["result"].lower() or "ChatAgent" in response["result"]
+
+
+def test_chat_not_triggered_with_technical_content():
+    result = route("oi, preciso dimensionar viga de concreto")
+    assert result["discipline"] != "CHAT"
+    assert result["discipline"] == "ESTRUTURAL"
+
+
+def test_chat_agent_handle():
+    from agents.chat import ChatAgent, TEMPLATE_GREETING
+
+    agent = ChatAgent(use_llm=False)
+    response = agent.handle("olá")
+
+    assert response["agent"] == "chat_agent"
+    assert response["discipline"] == "CHAT"
+    assert response["result"] == TEMPLATE_GREETING
+    assert response["extra"]["domain"] == "chat"
+    assert response["extra"]["mode"] == "conversational"
+    assert "normas_base" not in response.get("extra", {})
+
+
+def test_dispatcher_has_chat_agent():
+    from core.dispatcher import AGENTS
+
+    assert "CHAT" in AGENTS
+    assert AGENTS["CHAT"].name == "chat_agent"
+
+
 if __name__ == "__main__":
     test_estrutural_viga_concreto()
     test_hidrossanitario()
@@ -64,4 +152,11 @@ if __name__ == "__main__":
     test_incendio()
     test_normalize_discipline()
     test_rules_priority_over_generic()
+    test_chat_greeting_routes_to_chat_agent()
+    test_chat_identity_questions()
+    test_chat_agent_capabilities_response()
+    test_chat_agent_uses_fast_llm()
+    test_chat_not_triggered_with_technical_content()
+    test_chat_agent_handle()
+    test_dispatcher_has_chat_agent()
     print("OK: testes router passaram")

@@ -4,6 +4,7 @@ from typing import Optional
 import requests
 
 from config.settings import OLLAMA_BASE_URL, OLLAMA_LLM_MODEL
+from core.agent_registry import get_agent_name
 
 OLLAMA_URL = f"{OLLAMA_BASE_URL.rstrip('/')}/api/generate"
 MODEL = OLLAMA_LLM_MODEL
@@ -25,26 +26,88 @@ VALID_DISCIPLINES = [
     "ORÇAMENTO",
     "MEIO_AMBIENTE",
     "GERAL",
+    "CHAT",
 ]
 
-DISCIPLINE_TO_AGENT = {
-    "ARQUITETURA": "arquitetura_agent",
-    "ESTRUTURAL": "estruturas_agent",
-    "HIDROSSANITÁRIO": "hidrossanitario_agent",
-    "DRENAGEM": "drenagem_agent",
-    "ELÉTRICA": "eletrica_agent",
-    "TELECOM": "telecom_agent",
-    "INCÊNDIO": "incendio_agent",
-    "GEOTECNIA": "geotecnia_agent",
-    "TRANSPORTES": "transportes_agent",
-    "INFRAESTRUTURA": "infraestrutura_agent",
-    "SANEAMENTO": "saneamento_agent",
-    "GEOPROCESSAMENTO": "geoprocessamento_agent",
-    "TOPOGRAFIA": "topografia_agent",
-    "ORÇAMENTO": "orcamento_agent",
-    "MEIO_AMBIENTE": "meio_ambiente_agent",
-    "GERAL": "geral_agent",
-}
+CHAT_AGENT_NAME = "chat_agent"
+
+# Saudações exatas — fluxo conversacional (prioridade máxima no route)
+SIMPLE_GREETING_PATTERNS = [
+    r"^oi$",
+    r"^olá$",
+    r"^ola$",
+    r"^hey$",
+    r"^hi$",
+    r"^hello$",
+    r"^bom dia$",
+    r"^boa tarde$",
+    r"^boa noite$",
+    r"^tudo bem$",
+    r"^td bem$",
+    r"^e aí$",
+    r"^eai$",
+]
+
+# Perguntas gerais / identidade / capacidades (sem engenharia)
+CONVERSATIONAL_PATTERNS = [
+    r"^oi\s+",
+    r"^olá\s+",
+    r"^ola\s+",
+    r"^bom dia\s+",
+    r"^boa tarde\s+",
+    r"^boa noite\s+",
+    r"quem é (você|voce|vc)\b",
+    r"quem e (voce|vc)\b",
+    r"o que (você|voce|vc)\s",
+    r"o que e (voce|vc)\s",
+    r"(você|voce|vc) sabe",
+    r"(você|voce|vc) consegue",
+    r"(você|voce|vc) pode",
+    r"sabe fazer",
+    r"pode fazer",
+    r"faz de melhor",
+    r"do que (você|voce|vc)",
+    r"como funciona",
+    r"como (você|voce|vc) funciona",
+    r"como (posso|eu posso|usar)",
+    r"(fale|conte) sobre (você|voce|vc|o sistema|ia server)",
+    r"qual (é )?(seu )?nome",
+    r"(você|voce|vc) é (um )?(robo|robô|ia|bot|assistente)",
+    r"(voce|vc) e (um )?(robo|ia|bot|assistente)",
+    r"quais (são )?(suas|as) (capacidades|funções|especialidades)",
+    r"em que (você|voce|vc) (pode|consegue)",
+    r"me (ajuda|ajude)(\s|\?|$)",
+    r"preciso de ajuda(\s|\?|$)",
+]
+
+# Fallback: frases com marcadores conversacionais (sem keyword de engenharia)
+CONVERSATIONAL_MARKERS = [
+    "sabe fazer",
+    "pode fazer",
+    "consegue fazer",
+    "faz de melhor",
+    "capacidades",
+    "especialidades",
+    "quem é",
+    "quem e",
+    "o que vc",
+    "o que voce",
+    "o que você",
+    "como funciona",
+    "como usar",
+    "como posso usar",
+    "seu nome",
+    "você é",
+    "voce e",
+    "vc é",
+    "ia server",
+    "me ajuda",
+    "preciso de ajuda",
+    "bom dia",
+    "boa tarde",
+    "boa noite",
+    "tudo bem",
+]
 
 # Regras fortes — prioridade sobre LLM (keywords mais longas têm peso maior)
 DISCIPLINE_RULES: dict[str, list[str]] = {
@@ -251,6 +314,35 @@ def normalize_discipline(raw: str) -> Optional[str]:
     return None
 
 
+def _normalize_chat_text(text: str) -> str:
+    normalized = text.strip().lower()
+    normalized = re.sub(r"[^\w\sáàâãéêíóôõúç]", "", normalized, flags=re.UNICODE)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
+
+
+def _has_conversational_markers(normalized: str) -> bool:
+    return any(marker in normalized for marker in CONVERSATIONAL_MARKERS)
+
+
+def route_by_chat(text: str) -> bool:
+    """
+    Detecta saudações e perguntas conversacionais simples (sem engenharia).
+    """
+    if route_by_rules(text):
+        return False
+
+    normalized = _normalize_chat_text(text)
+
+    if any(re.match(pattern, normalized) for pattern in SIMPLE_GREETING_PATTERNS):
+        return True
+
+    if any(re.search(pattern, normalized) for pattern in CONVERSATIONAL_PATTERNS):
+        return True
+
+    return _has_conversational_markers(normalized)
+
+
 def route_by_rules(text: str) -> Optional[str]:
     """
     Classificação determinística por palavras-chave de engenharia.
@@ -313,9 +405,10 @@ DISCIPLINA:"""
     return call_llm(prompt)
 
 
-def route(text: str) -> dict:
+def route_engineering_only(text: str) -> dict:
     """
-    Pipeline de roteamento: regras > LLM > GERAL
+    Roteamento técnico — ignora detecção CHAT.
+    Usado pela Intent Layer v2 para segmentos de engenharia.
     """
     discipline: Optional[str] = route_by_rules(text)
 
@@ -329,8 +422,46 @@ def route(text: str) -> dict:
     if not discipline or discipline not in VALID_DISCIPLINES:
         discipline = "GERAL"
 
+    agent = get_agent_name(discipline)
+
     return {
         "input": text,
         "discipline": discipline,
-        "agent": DISCIPLINE_TO_AGENT.get(discipline, "geral_agent"),
+        "agent": agent,
+    }
+
+
+def route(text: str) -> dict:
+    """
+    Pipeline de roteamento: saudação > regras > LLM > GERAL
+    """
+    if route_by_chat(text):
+        return {
+            "input": text,
+            "discipline": "CHAT",
+            "agent": CHAT_AGENT_NAME,
+        }
+
+    discipline: Optional[str] = route_by_rules(text)
+
+    if not discipline:
+        try:
+            llm_raw = route_engineering(text)
+            discipline = normalize_discipline(llm_raw)
+        except Exception:
+            discipline = None
+
+    if not discipline or discipline not in VALID_DISCIPLINES:
+        discipline = "GERAL"
+
+    # GERAL sem agente → fallback conversacional se não for técnico
+    if discipline == "GERAL" and route_by_chat(text):
+        discipline = "CHAT"
+
+    agent = CHAT_AGENT_NAME if discipline == "CHAT" else get_agent_name(discipline)
+
+    return {
+        "input": text,
+        "discipline": discipline,
+        "agent": agent,
     }

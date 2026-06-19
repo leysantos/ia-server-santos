@@ -31,13 +31,12 @@ def test_health():
     assert body["rag_version"] == 2
 
 
-@patch("app.services.chat_service.route")
-def test_chat(mock_route):
-    mock_route.return_value = {
-        "input": "dimensionar viga de concreto",
-        "discipline": "ESTRUTURAL",
-        "agent": "estrutural_agent",
-    }
+@patch.object(
+    __import__("models.ollama_client", fromlist=["OllamaClient"]).OllamaClient,
+    "generate",
+    return_value=("Resposta técnica LLM", "qwen3:14b"),
+)
+def test_chat(mock_generate):
     response = client.post(
         "/chat",
         json={"text": "dimensionar viga de concreto", "use_rag": False, "persist": False},
@@ -46,10 +45,16 @@ def test_chat(mock_route):
     body = response.json()
     assert body["discipline"] == "ESTRUTURAL"
     assert body["result"]
+    assert body.get("intent", {}).get("mode") == "engineering_only"
 
 
+@patch.object(
+    __import__("models.ollama_client", fromlist=["OllamaClient"]).OllamaClient,
+    "generate",
+    return_value=("Relatório técnico LLM", "qwen3:14b"),
+)
 @patch("core.orchestrator.decompose_problem")
-def test_orchestrate(mock_decompose):
+def test_orchestrate(mock_decompose, mock_generate):
     mock_decompose.return_value = ["ESTRUTURAL", "HIDROSSANITÁRIO", "INCÊNDIO", "ORÇAMENTO"]
     response = client.post(
         "/orchestrate",

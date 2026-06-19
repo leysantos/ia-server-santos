@@ -5,7 +5,7 @@ class EstruturasAgent(BaseAgent):
 
     def __init__(self):
         super().__init__(
-            name="estrutural_agent",
+            name="estruturas_agent",
             discipline="ESTRUTURAL"
         )
 

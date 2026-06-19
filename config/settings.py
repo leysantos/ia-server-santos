@@ -1,11 +1,27 @@
 from pathlib import Path
 
+import os
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Ollama
 OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_EMBED_MODEL = "nomic-embed-text"
 OLLAMA_LLM_MODEL = "qwen3:14b"
+OLLAMA_LLM_FALLBACK_MODEL = "qwen3-coder"
+# Modelo leve para chat conversacional (sem RAG)
+OLLAMA_CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "qwen3:8b")
+OLLAMA_CHAT_TIMEOUT = int(os.getenv("OLLAMA_CHAT_TIMEOUT", "45"))
+CHAT_USE_LLM = os.getenv("CHAT_USE_LLM", "true").lower() == "true"
+
+# Intent Layer v2 — decisão central chat vs engenharia vs mixed
+USE_INTENT_LAYER = os.getenv("USE_INTENT_LAYER", "true").lower() == "true"
+
+# Agentes: true = RAG v2 + LLM (BaseAgentIntelligent), false = simulados (BaseAgent)
+USE_INTELLIGENT_AGENTS = os.getenv("USE_INTELLIGENT_AGENTS", "true").lower() == "true"
+
+# Learning Loop v2 — usar prompts otimizados por disciplina quando disponíveis
+USE_TUNED_PROMPTS = os.getenv("USE_TUNED_PROMPTS", "false").lower() == "true"
 
 # RAG v2
 RAG_VERSION = 2
@@ -44,6 +60,9 @@ AGENT_CONTEXT_LIMITS: dict[str, int] = {
 DATA_DIR = BASE_DIR / "data"
 NBR_DIR = DATA_DIR / "nbrs"
 TDR_DIR = DATA_DIR / "tdrs"
+LEARNING_V2_DIR = DATA_DIR / "learning_v2"
+LEARNING_V2_PROFILES_DIR = LEARNING_V2_DIR / "profiles"
+LEARNING_V2_PROMPTS_DIR = LEARNING_V2_DIR / "prompts"
 FAISS_INDEX_DIR = BASE_DIR / "memory" / "faiss_index"
 EMBEDDING_CACHE_PATH = FAISS_INDEX_DIR / "embedding_cache.db"
 

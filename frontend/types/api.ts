@@ -15,7 +15,24 @@ export interface ChatResponse {
   route?: {
     discipline?: string;
     agent?: string;
+    mode?: string;
   };
+  intent?: Record<string, unknown>;
+  segments?: ChatResponse[];
+  error?: boolean;
+}
+
+export type ChatStreamEventType =
+  | "status"
+  | "intent"
+  | "token"
+  | "segment_done"
+  | "done"
+  | "error";
+
+export interface ChatStreamEvent {
+  type: ChatStreamEventType | string;
+  data: Record<string, unknown>;
 }
 
 export interface OrchestrateRequest {
@@ -87,6 +104,12 @@ export interface HealthResponse {
   rag_version: number;
   rag_indexed_chunks: number;
   ollama: string;
+  models?: {
+    chat: string;
+    engineering: string;
+    fallback: string;
+    embed: string;
+  };
 }
 
 export interface ChatMessage {
@@ -98,5 +121,8 @@ export interface ChatMessage {
     agent?: string;
     extra?: Record<string, unknown>;
     raw?: ChatResponse;
+    streaming?: boolean;
+    streamStatus?: string;
+    llmModel?: string;
   };
 }

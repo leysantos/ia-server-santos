@@ -32,14 +32,21 @@ def test_decompose_problem_fallback(monkeypatch=None):
 
 
 def test_execute_agents():
-    results = execute_agents(
-        {
-            "input": "dimensionar viga",
-            "disciplines": ["ESTRUTURAL", "ORÇAMENTO"],
-        },
-        use_rag=False,
-        persist=False,
-    )
+    from unittest.mock import MagicMock, patch
+
+    with patch.object(
+        __import__("models.ollama_client", fromlist=["OllamaClient"]).OllamaClient,
+        "generate",
+        return_value=("Resposta técnica LLM", "qwen3:14b"),
+    ):
+        results = execute_agents(
+            {
+                "input": "dimensionar viga",
+                "disciplines": ["ESTRUTURAL", "ORÇAMENTO"],
+            },
+            use_rag=False,
+            persist=False,
+        )
 
     assert len(results) == 2
     assert results[0]["discipline"] == "ESTRUTURAL"
@@ -50,7 +57,7 @@ def test_execute_agents():
 def test_synthesize_results():
     results = [
         {
-            "agent": "estrutural_agent",
+            "agent": "estruturas_agent",
             "discipline": "ESTRUTURAL",
             "input": "viga",
             "result": "Análise estrutural simulada",
@@ -74,12 +81,34 @@ def test_synthesize_results():
     assert len(synthesis["by_discipline"]) == 2
 
 
+def test_synthesize_results_with_context():
+    results = [
+        {
+            "agent": "estruturas_agent",
+            "discipline": "ESTRUTURAL",
+            "result": "OK",
+        },
+    ]
+    synthesis = synthesize_results(results, context="Contexto compartilhado ESTRUTURAL")
+
+    assert "CONTEXTO GLOBAL DO PROJETO" in synthesis["final_report"]
+    assert "Contexto compartilhado ESTRUTURAL" in synthesis["final_report"]
+    assert synthesis["global_context"] == "Contexto compartilhado ESTRUTURAL"
+
+
 def test_process_multi_domain_request():
-    output = process_multi_domain_request(
-        "projeto de prédio residencial com estrutura e hidráulica",
-        use_rag=False,
-        persist=False,
-    )
+    from unittest.mock import patch
+
+    with patch.object(
+        __import__("models.ollama_client", fromlist=["OllamaClient"]).OllamaClient,
+        "generate",
+        return_value=("Relatório técnico LLM", "qwen3:14b"),
+    ):
+        output = process_multi_domain_request(
+            "projeto de prédio residencial com estrutura e hidráulica",
+            use_rag=False,
+            persist=False,
+        )
 
     assert output["input"]
     assert isinstance(output["disciplines"], list)
@@ -87,6 +116,10 @@ def test_process_multi_domain_request():
     assert isinstance(output["results"], dict)
     assert output["final_report"]
     assert "synthesis" in output
+    assert "context_graph" in output
+    assert len(output["context_graph"]["nodes"]) >= 2
+    assert "CONTEXTO GLOBAL DO PROJETO" in output["final_report"]
+    assert output["synthesis"]["global_context"]
 
 
 if __name__ == "__main__":
@@ -94,5 +127,6 @@ if __name__ == "__main__":
     test_decompose_problem_fallback()
     test_execute_agents()
     test_synthesize_results()
+    test_synthesize_results_with_context()
     test_process_multi_domain_request()
     print("OK: testes do orchestrator passaram")

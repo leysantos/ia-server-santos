@@ -8,7 +8,16 @@ from typing import Any, Optional
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-from core.database.models import AgentRun, Conversation, OrchestratorLog
+from core.database.models import (
+    AedRun,
+    AgentFeedback,
+    AgentRun,
+    Conversation,
+    CopilotEvaluationRecord,
+    OrchestratorLog,
+    SystemFailure,
+    SystemPatch,
+)
 
 
 class DatabaseRepository:
@@ -96,6 +105,338 @@ class DatabaseRepository:
         if conversation_id:
             stmt = stmt.where(AgentRun.conversation_id == conversation_id)
         return list(self.db.scalars(stmt).all())
+
+    # --- agent_feedback (Learning Loop v1) ---
+
+    def create_agent_feedback(
+        self,
+        agent_name: str,
+        input_text: str,
+        response_text: Optional[str] = None,
+        discipline: Optional[str] = None,
+        conversation_id: Optional[uuid.UUID] = None,
+        rating: Optional[int] = None,
+        feedback_text: Optional[str] = None,
+        corrected_answer: Optional[str] = None,
+    ) -> AgentFeedback:
+        row = AgentFeedback(
+            conversation_id=conversation_id,
+            agent_name=agent_name,
+            discipline=discipline,
+            input_text=input_text,
+            response_text=response_text,
+            rating=rating,
+            feedback_text=feedback_text,
+            corrected_answer=corrected_answer,
+        )
+        self.db.add(row)
+        self.db.flush()
+        return row
+
+    def get_latest_feedback(
+        self,
+        conversation_id: uuid.UUID,
+        agent_name: str,
+    ) -> Optional[AgentFeedback]:
+        stmt = (
+            select(AgentFeedback)
+            .where(
+                AgentFeedback.conversation_id == conversation_id,
+                AgentFeedback.agent_name == agent_name,
+            )
+            .order_by(desc(AgentFeedback.created_at))
+            .limit(1)
+        )
+        return self.db.scalars(stmt).first()
+
+    def list_feedback_by_agent(
+        self,
+        agent_name: str,
+        limit: int = 50,
+    ) -> list[AgentFeedback]:
+        stmt = (
+            select(AgentFeedback)
+            .where(AgentFeedback.agent_name == agent_name)
+            .order_by(desc(AgentFeedback.created_at))
+            .limit(limit)
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def list_low_quality_responses(
+        self,
+        threshold: int = 3,
+        limit: int = 50,
+    ) -> list[AgentFeedback]:
+        stmt = (
+            select(AgentFeedback)
+            .where(
+                AgentFeedback.rating.is_not(None),
+                AgentFeedback.rating <= threshold,
+            )
+            .order_by(desc(AgentFeedback.created_at))
+            .limit(limit)
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def list_all_feedback(
+        self,
+        limit: int = 500,
+        discipline: Optional[str] = None,
+        agent_name: Optional[str] = None,
+    ) -> list[AgentFeedback]:
+        stmt = select(AgentFeedback).order_by(desc(AgentFeedback.created_at)).limit(limit)
+        if discipline:
+            stmt = stmt.where(AgentFeedback.discipline == discipline)
+        if agent_name:
+            stmt = stmt.where(AgentFeedback.agent_name == agent_name)
+        return list(self.db.scalars(stmt).all())
+
+    def list_feedback_by_discipline(
+        self,
+        discipline: str,
+        limit: int = 200,
+    ) -> list[AgentFeedback]:
+        stmt = (
+            select(AgentFeedback)
+            .where(AgentFeedback.discipline == discipline)
+            .order_by(desc(AgentFeedback.created_at))
+            .limit(limit)
+        )
+        return list(self.db.scalars(stmt).all())
+
+    @staticmethod
+    def serialize_agent_feedback(row: AgentFeedback) -> dict[str, Any]:
+        return {
+            "id": str(row.id),
+            "conversation_id": str(row.conversation_id) if row.conversation_id else None,
+            "agent_name": row.agent_name,
+            "discipline": row.discipline,
+            "input_text": row.input_text,
+            "response_text": row.response_text,
+            "rating": row.rating,
+            "feedback_text": row.feedback_text,
+            "corrected_answer": row.corrected_answer,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+    # --- copilot_evaluations (Evaluation Loop v2) ---
+
+    def create_copilot_evaluation(
+        self,
+        input_text: str,
+        intent_accuracy: float,
+        plan_quality: float,
+        execution_completeness: float,
+        response_quality: float,
+        final_score: float,
+        intent: Optional[str] = None,
+        conversation_id: Optional[uuid.UUID] = None,
+        issues: Optional[list] = None,
+        scores_detail: Optional[list] = None,
+    ) -> CopilotEvaluationRecord:
+        row = CopilotEvaluationRecord(
+            conversation_id=conversation_id,
+            input_text=input_text,
+            intent=intent,
+            intent_accuracy=intent_accuracy,
+            plan_quality=plan_quality,
+            execution_completeness=execution_completeness,
+            response_quality=response_quality,
+            final_score=final_score,
+            issues=issues,
+            scores_detail=scores_detail,
+        )
+        self.db.add(row)
+        self.db.flush()
+        return row
+
+    def list_copilot_evaluations(
+        self,
+        limit: int = 50,
+        min_final_score: Optional[float] = None,
+    ) -> list[CopilotEvaluationRecord]:
+        stmt = (
+            select(CopilotEvaluationRecord)
+            .order_by(desc(CopilotEvaluationRecord.created_at))
+            .limit(limit)
+        )
+        if min_final_score is not None:
+            stmt = stmt.where(CopilotEvaluationRecord.final_score >= min_final_score)
+        return list(self.db.scalars(stmt).all())
+
+    @staticmethod
+    def serialize_copilot_evaluation(row: CopilotEvaluationRecord) -> dict[str, Any]:
+        return {
+            "id": str(row.id),
+            "conversation_id": str(row.conversation_id) if row.conversation_id else None,
+            "input_text": row.input_text,
+            "intent": row.intent,
+            "intent_accuracy": row.intent_accuracy,
+            "plan_quality": row.plan_quality,
+            "execution_completeness": row.execution_completeness,
+            "response_quality": row.response_quality,
+            "final_score": row.final_score,
+            "issues": row.issues,
+            "scores_detail": row.scores_detail,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+    # --- system_failures / system_patches (Self-Improving Loop v1) ---
+
+    def create_system_failure(
+        self,
+        input_text: str,
+        failure_type: str,
+        route_decision: Optional[dict] = None,
+        agent_used: Optional[str] = None,
+        evaluation_scores: Optional[dict] = None,
+        suggested_fix: Optional[str] = None,
+        conversation_id: Optional[uuid.UUID] = None,
+    ) -> SystemFailure:
+        row = SystemFailure(
+            conversation_id=conversation_id,
+            input_text=input_text,
+            failure_type=failure_type,
+            route_decision=route_decision,
+            agent_used=agent_used,
+            evaluation_scores=evaluation_scores,
+            suggested_fix=suggested_fix,
+        )
+        self.db.add(row)
+        self.db.flush()
+        return row
+
+    def list_system_failures(
+        self,
+        limit: int = 100,
+        failure_type: Optional[str] = None,
+    ) -> list[SystemFailure]:
+        stmt = (
+            select(SystemFailure)
+            .order_by(desc(SystemFailure.created_at))
+            .limit(limit)
+        )
+        if failure_type:
+            stmt = stmt.where(SystemFailure.failure_type == failure_type)
+        return list(self.db.scalars(stmt).all())
+
+    @staticmethod
+    def serialize_system_failure(row: SystemFailure) -> dict[str, Any]:
+        return {
+            "id": str(row.id),
+            "conversation_id": str(row.conversation_id) if row.conversation_id else None,
+            "input_text": row.input_text,
+            "route_decision": row.route_decision,
+            "agent_used": row.agent_used,
+            "evaluation_scores": row.evaluation_scores,
+            "failure_type": row.failure_type,
+            "suggested_fix": row.suggested_fix,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+    def create_system_patch(
+        self,
+        patch_key: str,
+        patch_version: int,
+        patch_type: str,
+        content: dict,
+        status: str = "proposed",
+        risk_score: float = 0.0,
+        impact_score: float = 0.0,
+        source_finding: Optional[str] = None,
+    ) -> SystemPatch:
+        row = SystemPatch(
+            patch_key=patch_key,
+            patch_version=patch_version,
+            patch_type=patch_type,
+            status=status,
+            content=content,
+            risk_score=risk_score,
+            impact_score=impact_score,
+            source_finding=source_finding,
+        )
+        self.db.add(row)
+        self.db.flush()
+        return row
+
+    def list_system_patches(
+        self,
+        limit: int = 50,
+        status: Optional[str] = None,
+    ) -> list[SystemPatch]:
+        stmt = (
+            select(SystemPatch)
+            .order_by(desc(SystemPatch.created_at))
+            .limit(limit)
+        )
+        if status:
+            stmt = stmt.where(SystemPatch.status == status)
+        return list(self.db.scalars(stmt).all())
+
+    @staticmethod
+    def serialize_system_patch(row: SystemPatch) -> dict[str, Any]:
+        return {
+            "id": str(row.id),
+            "patch_key": row.patch_key,
+            "patch_version": row.patch_version,
+            "patch_type": row.patch_type,
+            "status": row.status,
+            "content": row.content,
+            "risk_score": row.risk_score,
+            "impact_score": row.impact_score,
+            "source_finding": row.source_finding,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+    # --- aed_runs (AED v1) ---
+
+    def create_aed_run(
+        self,
+        input_text: str,
+        understanding: Optional[dict] = None,
+        designs: Optional[list] = None,
+        simulations: Optional[list] = None,
+        comparison: Optional[dict] = None,
+        selection: Optional[dict] = None,
+        report: Optional[dict] = None,
+        conversation_id: Optional[uuid.UUID] = None,
+    ) -> AedRun:
+        row = AedRun(
+            conversation_id=conversation_id,
+            input_text=input_text,
+            understanding=understanding,
+            designs=designs,
+            simulations=simulations,
+            comparison=comparison,
+            selection=selection,
+            report=report,
+        )
+        self.db.add(row)
+        self.db.flush()
+        return row
+
+    def list_aed_runs(self, limit: int = 50) -> list[AedRun]:
+        stmt = (
+            select(AedRun)
+            .order_by(desc(AedRun.created_at))
+            .limit(limit)
+        )
+        return list(self.db.scalars(stmt).all())
+
+    @staticmethod
+    def serialize_aed_run(row: AedRun) -> dict[str, Any]:
+        return {
+            "id": str(row.id),
+            "conversation_id": str(row.conversation_id) if row.conversation_id else None,
+            "input_text": row.input_text,
+            "understanding": row.understanding,
+            "designs": row.designs,
+            "simulations": row.simulations,
+            "comparison": row.comparison,
+            "selection": row.selection,
+            "report": row.report,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
 
     # --- history ---
 

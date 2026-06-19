@@ -18,3 +18,6 @@ class ChatResponse(BaseModel):
     extra: Optional[dict[str, Any]] = None
     conversation_id: Optional[str] = None
     route: Optional[dict[str, Any]] = None
+    intent: Optional[dict[str, Any]] = None
+    segments: Optional[list[dict[str, Any]]] = None
+    error: Optional[bool] = None

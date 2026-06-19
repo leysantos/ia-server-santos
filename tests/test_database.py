@@ -43,7 +43,7 @@ def test_repository_crud():
     run = repo.create_agent_run(
         input_text="teste multi",
         discipline="ESTRUTURAL",
-        agent_name="estrutural_agent",
+        agent_name="estruturas_agent",
         result_text="resultado",
         had_context=False,
         extra={"normas_base": ["NBR 6118"]},
@@ -75,7 +75,7 @@ def test_service_with_sqlite(monkeypatch=None):
     run = service_module.save_agent_run(
         route_result={"input": "input teste", "discipline": "ESTRUTURAL"},
         response={
-            "agent": "estrutural_agent",
+            "agent": "estruturas_agent",
             "discipline": "ESTRUTURAL",
             "result": "ok",
             "extra": {},

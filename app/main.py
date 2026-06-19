@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import chat, health, history, orchestrator
+from app.routes import aed, chat, copilot, feedback, health, history, orchestrator
 from core.database import init_db, is_db_enabled
 
 
@@ -37,6 +37,9 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(chat.router)
+app.include_router(aed.router)
+app.include_router(copilot.router)
+app.include_router(feedback.router)
 app.include_router(orchestrator.router)
 app.include_router(history.router)
 
@@ -49,6 +52,10 @@ def root():
         "docs": "/docs",
         "endpoints": {
             "chat": "POST /chat",
+            "chat_stream": "POST /chat/stream",
+            "copilot": "POST /copilot",
+            "aed": "POST /aed",
+            "feedback": "POST /feedback",
             "orchestrate": "POST /orchestrate",
             "history": "GET /history",
             "health": "GET /health",

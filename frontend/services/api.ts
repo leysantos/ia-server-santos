@@ -1,6 +1,7 @@
 import type {
   ChatRequest,
   ChatResponse,
+  ChatStreamEvent,
   HealthResponse,
   HistoryResponse,
   OrchestrateRequest,
@@ -48,6 +49,71 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+function parseSseBlock(block: string): ChatStreamEvent | null {
+  let eventType = "message";
+  let dataLine = "";
+
+  for (const line of block.split("\n")) {
+    if (line.startsWith("event:")) {
+      eventType = line.slice(6).trim();
+    } else if (line.startsWith("data:")) {
+      dataLine = line.slice(5).trim();
+    }
+  }
+
+  if (!dataLine) return null;
+
+  try {
+    return { type: eventType, data: JSON.parse(dataLine) } as ChatStreamEvent;
+  } catch {
+    return null;
+  }
+}
+
+export async function* chatStream(
+  body: ChatRequest,
+  signal?: AbortSignal
+): AsyncGenerator<ChatStreamEvent> {
+  const response = await fetch(`${API_BASE_URL}/chat/stream`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Erro HTTP ${response.status}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("Streaming não suportado neste navegador");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split("\n\n");
+    buffer = blocks.pop() ?? "";
+
+    for (const block of blocks) {
+      const event = parseSseBlock(block.trim());
+      if (event) yield event;
+    }
+  }
+
+  if (buffer.trim()) {
+    const event = parseSseBlock(buffer.trim());
+    if (event) yield event;
+  }
+}
+
 export const api = {
   chat(body: ChatRequest): Promise<ChatResponse> {
     return request<ChatResponse>("/chat", {
@@ -55,6 +121,8 @@ export const api = {
       body: JSON.stringify(body),
     });
   },
+
+  chatStream,
 
   orchestrate(body: OrchestrateRequest): Promise<OrchestrateResponse> {
     return request<OrchestrateResponse>("/orchestrate", {
