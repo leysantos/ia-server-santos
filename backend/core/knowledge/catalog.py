@@ -37,3 +37,20 @@ def read_catalog() -> list[dict[str, Any]]:
         if line:
             rows.append(json.loads(line))
     return rows
+
+
+def rewrite_catalog(rows: list[dict[str, Any]]) -> None:
+    """Substitui o catálogo inteiro (ex.: após exclusão de documento)."""
+    KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
+    with open(CATALOG_PATH, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def remove_catalog_entries_by_id(document_id: str) -> int:
+    rows = read_catalog()
+    kept = [row for row in rows if row.get("id") != document_id]
+    removed = len(rows) - len(kept)
+    if removed:
+        rewrite_catalog(kept)
+    return removed

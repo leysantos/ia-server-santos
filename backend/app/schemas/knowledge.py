@@ -30,6 +30,8 @@ class KnowledgeIngestFileResult(BaseModel):
     status: str
     document_id: Optional[str] = None
     target: Optional[str] = None
+    price_item_count: int = 0
+    price_base_active: bool = False
     classification: Optional[KnowledgeClassificationResponse] = None
     reason: Optional[str] = None
 
@@ -72,18 +74,48 @@ class KnowledgeIndexResponse(BaseModel):
 
 class KnowledgeCatalogEntry(BaseModel):
     id: str
+    name: str = ""
+    description: str = ""
     filename: str
     path: str
     discipline: list[str]
     content_type: str
     content_hash: Optional[str] = None
     catalog_ts: Optional[str] = None
+    price_item_count: int = 0
+    has_price_items: bool = False
+    is_active_price_base: bool = False
 
 
 class KnowledgeCatalogResponse(BaseModel):
     total: int
     log_entries: int = 0
     items: list[KnowledgeCatalogEntry]
+
+
+class KnowledgeDocumentUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=500)
+    description: Optional[str] = Field(default=None, max_length=5000)
+    content_type: Optional[str] = None
+    discipline: Optional[str] = None
+
+
+class KnowledgeDocumentUpdateResponse(BaseModel):
+    updated: str
+    name: str = ""
+    description: str = ""
+    content_type: str = ""
+    discipline: list[str] = Field(default_factory=list)
+    filename: str = ""
+
+
+class KnowledgeDocumentDeleteResponse(BaseModel):
+    deleted: str
+    filename: str = ""
+    was_active_price_base: bool = False
+    catalog_entries_removed: int = 0
+    faiss_chunks_removed: int = 0
+    files_removed: list[str] = Field(default_factory=list)
 
 
 class KnowledgeStatsResponse(BaseModel):

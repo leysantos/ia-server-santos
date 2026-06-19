@@ -1,0 +1,65 @@
+[
+  {
+    "id": "99557f7702",
+    "name": "Minha Base",
+    "filename": "base.csv",
+    "format": "csv",
+    "item_count": 2,
+    "created_at": "2026-06-19T11:30:39.424286+00:00",
+    "active": false
+  },
+  {
+    "id": "4d8a90cb9b",
+    "name": "DP/SEMINF",
+    "filename": "19_PPD_MC_OR_R01-Nivel-1-2-Marco2026-14-05-2026.xlsm",
+    "format": "xlsm",
+    "item_count": 8239,
+    "created_at": "2026-06-19T11:31:45.768329+00:00",
+    "active": false
+  },
+  {
+    "id": "314c074605",
+    "name": "Minha Base",
+    "filename": "base.csv",
+    "format": "csv",
+    "item_count": 2,
+    "created_at": "2026-06-19T11:51:44.607925+00:00",
+    "active": false
+  },
+  {
+    "id": "0e1d81774b",
+    "name": "Minha Base",
+    "filename": "base.csv",
+    "format": "csv",
+    "item_count": 2,
+    "created_at": "2026-06-19T11:53:58.111528+00:00",
+    "active": false
+  },
+  {
+    "id": "82c4d15ce8",
+    "name": "DP/SEMINF",
+    "filename": "19_PPD_MC_OR_R01-Nivel-1-2-Marco2026-14-05-2026.xlsm",
+    "format": "xlsm",
+    "item_count": 8239,
+    "created_at": "2026-06-19T11:58:12.183957+00:00",
+    "active": false
+  },
+  {
+    "id": "01bcfa2fbe",
+    "name": "Minha Base",
+    "filename": "base.csv",
+    "format": "csv",
+    "item_count": 2,
+    "created_at": "2026-06-19T12:34:04.755868+00:00",
+    "active": false
+  },
+  {
+    "id": "a0a986de1b",
+    "name": "DP/SEMINF",
+    "filename": "19_PPD_MC_OR_R01-Nivel-1-2-Marco2026-14-05-2026.xlsm",
+    "format": "xlsm",
+    "item_count": 8239,
+    "created_at": "2026-06-19T12:38:55.010834+00:00",
+    "active": true
+  }
+]

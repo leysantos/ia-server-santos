@@ -47,7 +47,7 @@ export default function ProjectsPage() {
   return (
     <>
       <WorkspaceCollapseStrip />
-      <ShellHeader className="px-6" innerClassName="gap-3">
+      <ShellHeader className="px-6" innerClassName="gap-3" showModelsStatus>
         <WorkspaceExpandButton />
         <div className="min-w-0">
           <h1 className="text-lg font-semibold text-white">Projetos</h1>

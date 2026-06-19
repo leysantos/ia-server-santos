@@ -122,15 +122,32 @@ def test_dispatcher_backward_compatible():
 
 
 def test_dispatcher_with_context():
+    from unittest.mock import MagicMock, patch
+
     from core.dispatcher import dispatch
 
-    result = dispatch({
+    mock_agent = MagicMock()
+    mock_agent.handle.return_value = {
+        "agent": "estruturas_agent",
         "discipline": "ESTRUTURAL",
         "input": "dimensionar viga",
-        "context": "NBR 6118: requisitos de armadura",
-    })
+        "result": "Resposta técnica com NBR 6118: requisitos de armadura",
+        "extra": {"rag": {"active": True, "context_length": 42}},
+    }
+
+    with patch("core.dispatcher.AGENTS", {"ESTRUTURAL": mock_agent}), patch(
+        "core.structural_intelligence.dispatch_adapter.try_sie_dispatch",
+        return_value=None,
+    ):
+        result = dispatch({
+            "discipline": "ESTRUTURAL",
+            "input": "dimensionar viga",
+            "context": "NBR 6118: requisitos de armadura",
+        })
+
     assert result["extra"]["rag"]["active"] is True
     assert "NBR 6118" in result["result"]
+    mock_agent.handle.assert_called_once()
 
 
 def test_nbr_catalog():

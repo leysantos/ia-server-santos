@@ -9,7 +9,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import aed, chat, copilot, feedback, health, history, knowledge, models, orchestrator, system, workspace
+from app.routes import aed, chat, copilot, feedback, health, history, knowledge, models, orchestrator, pricing, system, workspace
+from config.settings import get_settings
 from core.database import init_db, is_db_enabled
 
 
@@ -27,12 +28,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_cors = get_settings().cors_allowed_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
 )
 
 app.include_router(health.router)
@@ -46,6 +49,7 @@ app.include_router(orchestrator.router)
 app.include_router(history.router)
 app.include_router(workspace.router)
 app.include_router(knowledge.router)
+app.include_router(pricing.router)
 
 
 @app.get("/")
@@ -70,5 +74,10 @@ def root():
             "knowledge_index": "POST /knowledge/index",
             "knowledge_catalog": "GET /knowledge/catalog",
             "knowledge_stats": "GET /knowledge/stats",
+            "pricing_resolve": "POST /pricing/resolve",
+            "pricing_budget": "POST /pricing/budget/build",
+            "pricing_generate": "POST /pricing/budget/generate",
+            "pricing_providers": "GET /pricing/providers",
+            "pricing_upload": "POST /pricing/providers/{name}/upload",
         },
     }

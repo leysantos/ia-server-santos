@@ -1,10 +1,18 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, useState } from "react";
+import { FormEvent, KeyboardEvent, useId, useState } from "react";
 import { ShellFooter } from "@/components/ShellHeader";
+import ModelSelector from "@/components/ModelSelector";
+import { useLlmModelSelection } from "@/hooks/useLlmModel";
+
+export interface ChatSendOptions {
+  useRag: boolean;
+  persist: boolean;
+  llmModel: string;
+}
 
 interface ChatBoxProps {
-  onSend: (text: string, options: { useRag: boolean; persist: boolean }) => void;
+  onSend: (text: string, options: ChatSendOptions) => void;
   loading?: boolean;
   placeholder?: string;
 }
@@ -17,11 +25,13 @@ export default function ChatBox({
   const [text, setText] = useState("");
   const [useRag, setUseRag] = useState(true);
   const [persist, setPersist] = useState(true);
+  const { model, setModel } = useLlmModelSelection();
+  const modelSelectId = useId();
 
   const submit = () => {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
-    onSend(trimmed, { useRag, persist });
+    onSend(trimmed, { useRag, persist, llmModel: model });
     setText("");
   };
 
@@ -64,6 +74,13 @@ export default function ChatBox({
               Enter envia · Shift+Enter nova linha
             </p>
           </div>
+
+          <ModelSelector
+            id={modelSelectId}
+            value={model}
+            onChange={setModel}
+            className="px-1"
+          />
 
           <div className="flex items-center gap-3 rounded-2xl bg-slate-900/90 p-2 ring-1 ring-slate-700/80 focus-within:ring-cyan-500/40">
             <textarea

@@ -16,6 +16,7 @@ KNOWLEDGE_CONTENT_TYPES: tuple[str, ...] = (
     "manuais",
     "projetos",
     "regional",
+    "modelos_orcamento",
 )
 
 CONTENT_TYPE_ALIASES: dict[str, str] = {
@@ -29,6 +30,10 @@ CONTENT_TYPE_ALIASES: dict[str, str] = {
     "project": "projetos",
     "projeto": "projetos",
     "regional": "regional",
+    "modelo_orcamento": "modelos_orcamento",
+    "modelos_orcamento": "modelos_orcamento",
+    "ppd_modelo": "modelos_orcamento",
+    "wbs": "modelos_orcamento",
 }
 
 BASE_KEY_TO_CONTENT_TYPE: dict[str, str] = {
@@ -38,6 +43,7 @@ BASE_KEY_TO_CONTENT_TYPE: dict[str, str] = {
     "tdr": "tdrs",
     "catalogos": "catalogos",
     "regional": "regional",
+    "budget_models": "modelos_orcamento",
 }
 
 # Quais tipos (metadata) alimentam cada índice FAISS
@@ -48,6 +54,7 @@ BASE_KEY_ACCEPTS_CONTENT_TYPES: dict[str, frozenset[str]] = {
     "tdr": frozenset({"tdrs", "projetos"}),
     "catalogos": frozenset({"catalogos", "manuais"}),
     "regional": frozenset({"regional"}),
+    "budget_models": frozenset({"modelos_orcamento"}),
 }
 
 CONTENT_TYPE_TO_BASE_KEY: dict[str, str] = {
@@ -66,6 +73,7 @@ KB_SUBDIR_TO_PRIMARY_PATH: dict[str, tuple[str, str]] = {
     "manuais": ("geral", "canonical"),
     "catalogos": ("arquitetura", "raw"),
     "regional": ("meio_ambiente", "raw"),
+    "modelos_orcamento": ("orcamento", "raw"),
 }
 
 # Compat legado (migrate scripts)
@@ -124,6 +132,8 @@ def infer_content_type_from_filename(filename: str) -> str | None:
         return "projetos"
     if any(k in name for k in ("regional", "manaus", "amazonas")):
         return "regional"
+    if any(k in name for k in ("ppd", "modelo_orc", "modelo orc", "wbs orc")):
+        return "modelos_orcamento"
     return None
 
 

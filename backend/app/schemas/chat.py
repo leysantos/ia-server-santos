@@ -15,6 +15,10 @@ class ChatRequest(BaseModel):
         default=None,
         description="UUID do projeto — vincula nova conversa ou move conversa",
     )
+    llm_model: Optional[str] = Field(
+        default=None,
+        description='Modelo Ollama (ex.: qwen3:14b). Use "auto" ou omita para roteamento automático.',
+    )
 
 
 class ChatResponse(BaseModel):

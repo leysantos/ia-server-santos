@@ -1,0 +1,28 @@
+{
+  "discipline": "ESTRUTURAL",
+  "prompt_version": 1,
+  "prompt_key": "prompt_estrutural_v1",
+  "agent_name": "estruturas_agent",
+  "common_errors": [
+    "resposta incompleta, faltou citar nbr 6118",
+    "correcao: deveria citar nbr 6118 tabela 6"
+  ],
+  "improvements": [
+    "Sempre cite explicitamente a NBR aplicável e o item/tabela relevante",
+    "Inclua seção de Premissas e Recomendações mesmo quando dados faltarem",
+    "Reproduza tabelas normativas solicitadas em markdown estruturado",
+    "Incorpore correções frequentes dos usuários nas respostas futuras",
+    "Antecipe temas frequentes dos usuários: viga, concreto, armado, viga concreto, concreto armado",
+    "Quando houver contexto RAG, cite trechos e referências normativas recuperadas"
+  ],
+  "frequent_themes": [
+    "viga",
+    "concreto",
+    "armado",
+    "viga concreto",
+    "concreto armado"
+  ],
+  "feedback_sample_size": 4,
+  "low_quality_count": 2,
+  "updated_at": "2026-06-19T16:09:49.590283+00:00"
+}

@@ -65,11 +65,13 @@ def _patch_learning_dirs(tmp_path: Path):
 
     import core.learning_v2.discipline_profiles as profiles_mod
     import core.learning_v2.prompt_optimizer as optimizer_mod
+    import experimental.learning_v2.discipline_profiles as exp_profiles_mod
+    import experimental.learning_v2.prompt_optimizer as exp_optimizer_mod
 
-    profiles_mod.LEARNING_V2_DIR = tmp_path
-    profiles_mod.LEARNING_V2_PROFILES_DIR = profiles
-    profiles_mod.LEARNING_V2_PROMPTS_DIR = prompts
-    optimizer_mod.LEARNING_V2_PROMPTS_DIR = prompts
+    for mod in (profiles_mod, optimizer_mod, exp_profiles_mod, exp_optimizer_mod):
+        mod.LEARNING_V2_DIR = tmp_path
+        mod.LEARNING_V2_PROFILES_DIR = profiles
+        mod.LEARNING_V2_PROMPTS_DIR = prompts
 
 
 def test_feedback_analysis_grouping():
@@ -176,6 +178,8 @@ def test_auto_tune_integration():
 
         import core.database.connection as conn_mod
         import core.learning_v2.feedback_analyzer as analyzer_mod
+        import experimental.learning_v2.feedback_analyzer as exp_analyzer_mod
+        import experimental.learning_v2.auto_tuner as exp_auto_mod
 
         original_enabled = conn_mod.is_db_enabled
 
@@ -188,10 +192,9 @@ def test_auto_tune_integration():
                 db.rollback()
                 raise
 
-        conn_mod.is_db_enabled = lambda: True
-        conn_mod.session_scope = _scope
-        analyzer_mod.is_db_enabled = lambda: True
-        analyzer_mod.session_scope = _scope
+        for mod in (conn_mod, analyzer_mod, exp_analyzer_mod, exp_auto_mod):
+            mod.is_db_enabled = lambda: True
+            mod.session_scope = _scope
 
         report = run_auto_tune(discipline="ESTRUTURAL", min_feedback=3)
         assert report.tuned_count == 1

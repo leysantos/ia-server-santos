@@ -113,13 +113,18 @@ def build_metadata_record(
     confidence: float,
     filename: str | None = None,
     doc_id: str | None = None,
+    name: str | None = None,
+    description: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     slugs = [slug_for_discipline(d) for d in discipline_slugs if d]
     if not slugs:
         slugs = ["geral"]
+    display_name = (name or "").strip() or (filename or "")
     record: dict[str, Any] = {
         "id": doc_id or str(uuid.uuid4()),
+        "name": display_name,
+        "description": (description or "").strip(),
         "filename": filename or "",
         "discipline": slugs,
         "layer": layer,

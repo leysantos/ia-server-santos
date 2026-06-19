@@ -180,29 +180,39 @@ RESPOSTA TÉCNICA ESTRUTURADA:"""
         return get_discipline_extra_instructions(self.discipline, text)
 
     def call_llm(self, prompt: str, text: str = "") -> str:
-        """Chama Ollama com roteamento opcional via ModelRouter."""
+        """Chama Ollama com roteamento por complexidade (engenharia) ou ModelRouter global."""
         from config import settings
+        from core.models.engineering_model_routing import (
+            engineering_generate,
+            engineering_routing_enabled,
+        )
 
-        if settings.USE_MODEL_ROUTER or settings.USE_MODEL_EVALUATION:
-            from core.models.model_router import get_model_router, routed_generate
+        user_text = text or prompt
 
-            router = get_model_router()
-            task_type = router.resolve_engineering_task(
-                text or prompt,
-                self.discipline,
-            )
-            result, model_used = routed_generate(
+        if engineering_routing_enabled():
+            result, model_used = engineering_generate(
                 prompt,
-                task_type,
-                context={"text": text or prompt, "discipline": self.discipline},
-                module="agent",
+                text=user_text,
                 discipline=self.discipline,
                 client=self.llm_client,
             )
             self._last_model_used = model_used
+            logger.info(
+                "agent=%s discipline=%s llm_model=%s response_length=%d",
+                self.name,
+                self.discipline,
+                model_used,
+                len(result),
+            )
             return result
 
-        result, model_used = self.llm_client.generate(prompt)
+        from core.llm_override import get_llm_model_override
+
+        override = get_llm_model_override()
+        if override:
+            result, model_used = self.llm_client.generate(prompt, model=override)
+        else:
+            result, model_used = self.llm_client.generate(prompt)
         self._last_model_used = model_used
         logger.info(
             "agent=%s discipline=%s llm_model=%s response_length=%d",
@@ -290,9 +300,14 @@ RESPOSTA TÉCNICA ESTRUTURADA:"""
         context: Optional[str] = None,
         use_rag: Optional[bool] = None,
     ):
-        """Stream de tokens LLM para resposta técnica."""
+        """Stream de tokens LLM para resposta técnica (com roteamento por complexidade)."""
+        from core.models.engineering_model_routing import engineering_stream_models
+
         prompt, _, _ = self.prepare_prompt(text, context, use_rag)
-        for token, model_used in self.llm_client.generate_stream(prompt):
+        model, fallbacks, _task = engineering_stream_models(text, self.discipline)
+        for token, model_used in self.llm_client.generate_stream(
+            prompt, model=model, fallback_models=fallbacks
+        ):
             self._last_model_used = model_used
             yield token
 

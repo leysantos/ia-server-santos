@@ -7,6 +7,10 @@ class OrchestrateRequest(BaseModel):
     text: str = Field(..., min_length=1, description="Problema multidisciplinar de engenharia")
     use_rag: bool = Field(default=True, description="Ativar contexto RAG v2 por disciplina")
     persist: bool = Field(default=True, description="Persistir conversa e logs no PostgreSQL")
+    llm_model: Optional[str] = Field(
+        default=None,
+        description='Modelo Ollama. Use "auto" ou omita para roteamento automático.',
+    )
 
 
 class OrchestrateResponse(BaseModel):

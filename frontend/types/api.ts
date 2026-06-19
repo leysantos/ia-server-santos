@@ -4,6 +4,7 @@ export interface ChatRequest {
   persist?: boolean;
   conversation_id?: string;
   project_id?: string;
+  llm_model?: string | null;
 }
 
 export interface ChatResponse {
@@ -41,6 +42,7 @@ export interface OrchestrateRequest {
   text: string;
   use_rag?: boolean;
   persist?: boolean;
+  llm_model?: string | null;
 }
 
 export interface OrchestrateResponse {
@@ -198,6 +200,14 @@ export interface HealthResponse {
   };
 }
 
+export interface ModelsStatusResponse {
+  router_enabled: boolean;
+  evaluation_enabled?: boolean;
+  model_map?: Record<string, string>;
+  installed_models?: string[];
+  ollama?: string;
+}
+
 export interface SystemBenchmarkMetric {
   percent?: number | null;
   cores?: number;
@@ -243,6 +253,13 @@ export interface KnowledgeIngestFileResult {
     mapped_discipline: string;
   };
   reason?: string;
+  price_item_count?: number;
+  price_base_active?: boolean;
+  budget_model_indexed?: number;
+  service_count?: number;
+  reason?: string;
+  saved_as?: string;
+  storage_renamed?: boolean;
 }
 
 export interface KnowledgeIngestResponse {
@@ -262,12 +279,19 @@ export interface KnowledgeIndexResponse {
 
 export interface KnowledgeCatalogEntry {
   id: string;
+  name?: string;
+  description?: string;
   filename: string;
   path: string;
   discipline: string[];
   content_type: string;
   content_hash?: string;
   catalog_ts?: string;
+  price_item_count?: number;
+  has_price_items?: boolean;
+  has_budget_model?: boolean;
+  service_count?: number;
+  is_active_price_base?: boolean;
 }
 
 export interface KnowledgeCatalogResponse {
@@ -300,4 +324,160 @@ export interface ChatMessage {
     streamStatus?: string;
     llmModel?: string;
   };
+}
+
+export interface BudgetRow {
+  row_id: string;
+  row_index?: number;
+  code: string;
+  name: string;
+  level: number;
+  quantity: number;
+  unit: string;
+  unit_cost: number;
+  unit_cost_semd?: number;
+  unit_price: number;
+  unit_price_semd?: number;
+  total_price: number;
+  total_price_semd?: number;
+  source_base: string;
+  source_code: string;
+  parent_code?: string;
+  item_type: string;
+  row_type?: string;
+  bdi_rate?: number;
+  bdi_label?: string;
+  calculation_note?: string;
+  editable: boolean;
+  is_memory_row?: boolean;
+  total_effective?: number;
+  desoneracao_mode?: "comd" | "semd" | string;
+  pricing_query?: string;
+}
+
+export interface BudgetProjectInfo {
+  projeto?: string;
+  objeto?: string;
+  local?: string;
+  endereco?: string;
+  orcamento?: string;
+  base_preco?: string;
+  orgao?: string;
+  empresa?: string;
+  responsavel_tecnico?: string;
+  obra_type?: string;
+  bdi?: {
+    obra_type?: string;
+    obra_label?: string;
+    rate_com_desoneracao: number;
+    rate_sem_desoneracao: number;
+    label?: string;
+  };
+  template?: string;
+}
+
+export interface BdiObraType {
+  code: string;
+  label: string;
+  rate_com_desoneracao: number;
+  rate_sem_desoneracao: number;
+}
+
+export interface PriceBaseInfo {
+  id: string;
+  name: string;
+  filename: string;
+  format: string;
+  item_count: number;
+  created_at: string;
+  active: boolean;
+}
+
+export interface PriceBaseActiveStatus {
+  loaded: boolean;
+  source: "configured" | "memory" | "none" | string;
+  base_id: string | null;
+  base_name: string | null;
+  item_count: number;
+  hint?: string | null;
+}
+
+export interface BudgetGenerateRequest {
+  text: string;
+  source_priority?: string[];
+  use_llm?: boolean;
+  obra_type?: string;
+  existing_session_id?: string;
+}
+
+export type BudgetStreamEventType =
+  | "status"
+  | "token"
+  | "step"
+  | "done"
+  | "error"
+  | "pricing_resolve";
+
+export interface BudgetStreamEvent {
+  type: BudgetStreamEventType | string;
+  data: Record<string, unknown>;
+}
+
+export interface BudgetSummary {
+  id: string;
+  title: string;
+  session_id: string;
+  grand_total: number;
+  obra_type: string;
+  input_text?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface BudgetSessionResponse {
+  session_id: string;
+  title: string;
+  rows: BudgetRow[];
+  items: Record<string, unknown>[];
+  grand_total: number;
+  grand_total_comd?: number;
+  grand_total_semd?: number;
+  desoneracao_mode?: "comd" | "semd" | string;
+  currency: string;
+  project?: BudgetProjectInfo;
+  template?: string;
+  calculation_memory: Record<string, unknown>[];
+  source_priority: string[];
+  intent: Record<string, unknown>;
+  project_import?: {
+    filename: string;
+    format: string;
+    segments: number;
+    chars_extracted: number;
+  };
+  pipeline?: {
+    steps: string[];
+    intent: Record<string, unknown>;
+    quantity_memory: Record<string, unknown>[];
+    parser: string;
+    llm_model?: string | null;
+    llm_used?: boolean;
+  };
+  input_text?: string;
+  db_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PricingProviderInfo {
+  name: string;
+  label: string;
+  loaded: boolean;
+  item_count: number;
+  source?: Record<string, unknown> | null;
+}
+
+export interface PricingProvidersResponse {
+  data_dir: string;
+  providers: PricingProviderInfo[];
 }

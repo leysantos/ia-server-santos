@@ -31,7 +31,7 @@ def test_classify_nbr_to_estruturas():
 def test_all_content_types_defined():
     from core.knowledge.content_types import KNOWLEDGE_CONTENT_TYPES
 
-    expected = {"nbrs", "sinapi", "tcpo", "tdrs", "catalogos", "manuais", "projetos", "regional"}
+    expected = {"nbrs", "sinapi", "tcpo", "tdrs", "catalogos", "manuais", "projetos", "regional", "modelos_orcamento"}
     assert set(KNOWLEDGE_CONTENT_TYPES) == expected
 
 

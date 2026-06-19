@@ -34,6 +34,7 @@ BASE_TCPO = "tcpo"
 BASE_TDR = "tdr"
 BASE_CATALOGOS = "catalogos"
 BASE_REGIONAL = "regional"
+BASE_BUDGET_MODELS = "budget_models"
 
 DOMAIN_ALIASES: dict[str, str] = {
     "nbr": BASE_NBR,
@@ -56,6 +57,7 @@ CANONICAL_SUBDIRS: dict[str, str] = {
     BASE_TDR: "tdrs",
     BASE_CATALOGOS: "catalogos",
     BASE_REGIONAL: "regional",
+    BASE_BUDGET_MODELS: "modelos_orcamento",
 }
 
 KB_SUBDIR_TO_PRIMARY_PATH = {

@@ -38,16 +38,19 @@ def test_foundation_query_detection():
 
 
 def test_estrutural_gets_foundation_hint_on_foundation_query():
+    from unittest.mock import MagicMock, patch
+
     agent = BaseAgentIntelligent(
         name="estruturas_agent",
         discipline="ESTRUTURAL",
         use_rag=False,
         llm_client=MagicMock(),
     )
-    prompt = agent.build_prompt(
-        "fundação sapata 200t sigma adm 2.5 kg/cm2",
-        "",
-    )
+    with patch("core.learning_v2.prompt_resolver.resolve_tuned_prompt", return_value=None):
+        prompt = agent.build_prompt(
+            "fundação sapata 200t sigma adm 2.5 kg/cm2",
+            "",
+        )
     assert "Solução recomendada" in prompt
     assert "A_min = P/σ_adm" in prompt
 

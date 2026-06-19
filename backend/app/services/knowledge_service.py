@@ -17,10 +17,12 @@ from core.knowledge.content_types import (
     normalize_content_type,
 )
 from core.knowledge.constants import KNOWLEDGE_PATHS
-from core.knowledge.ingestion import INGESTABLE_SUFFIXES, get_ingester
+from core.concurrency import run_sync
+from core.knowledge.ingestion import INGESTABLE_SUFFIXES, get_ingester, ingest_batch_sync
 from core.knowledge.knowledge_base_router import get_knowledge_router
 from core.knowledge.knowledge_indexer import KnowledgeIndexer
 from core.knowledge.multi_index_store import get_multi_index_store
+from core.knowledge.document_admin import delete_document, update_document_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,7 @@ _CONTENT_TYPE_LABELS: dict[str, str] = {
     "manuais": "Manuais",
     "projetos": "Projetos",
     "regional": "Dados regionais",
+    "modelos_orcamento": "Modelo de orçamento (PPD/WBS)",
 }
 
 _BASE_LABELS: dict[str, str] = {
@@ -42,6 +45,7 @@ _BASE_LABELS: dict[str, str] = {
     "tdr": "TDR",
     "catalogos": "Catálogos",
     "regional": "Regional",
+    "budget_models": "Modelos de orçamento",
 }
 
 
@@ -63,6 +67,91 @@ def _dedupe_catalog_rows(rows: list[dict]) -> list[dict]:
 
 
 class KnowledgeService:
+    @staticmethod
+    def _active_price_document_id() -> str | None:
+        from core.knowledge.price_registry import get_active_price_document_id
+
+        return get_active_price_document_id()
+
+    def activate_price_document(self, document_id: str) -> dict[str, Any]:
+        from core.knowledge.price_registry import (
+            get_active_price_document_id,
+            load_active_price_rows,
+            set_active_price_document,
+        )
+
+        catalog = _dedupe_catalog_rows(read_catalog())
+        entry = next((row for row in catalog if row.get("id") == document_id), None)
+        if not entry:
+            raise ValueError("Documento não encontrado no catálogo")
+
+        previous = get_active_price_document_id()
+        set_active_price_document(document_id)
+        loaded = load_active_price_rows()
+        return {
+            "activated": document_id,
+            "name": loaded[0] if loaded else entry.get("name"),
+            "item_count": len(loaded[1]) if loaded else entry.get("price_item_count", 0),
+            "previous": previous,
+        }
+
+    def index_budget_model_document(self, document_id: str) -> dict[str, Any]:
+        """Extrai WBS e indexa FAISS para documento já no catálogo (ex.: PPD como base de preço)."""
+        from pathlib import Path
+
+        from core.knowledge.ingestion import get_ingester
+        from core.knowledge.metadata import read_metadata
+
+        catalog = _dedupe_catalog_rows(read_catalog())
+        entry = next((row for row in catalog if row.get("id") == document_id), None)
+        if not entry:
+            raise ValueError("Documento não encontrado no catálogo")
+
+        path = Path(entry.get("path", ""))
+        if not path.is_file():
+            raise ValueError(f"Arquivo não encontrado: {path.name}")
+
+        suffix = path.suffix.lower()
+        if suffix not in (".xlsm", ".xlsx", ".xls", ".pdf", ".md", ".txt"):
+            raise ValueError("Tipo de arquivo não suportado para modelo de orçamento")
+
+        meta = read_metadata(path) or {}
+        record: dict[str, Any] = {
+            "content_hash": entry.get("content_hash", ""),
+            "classification": {
+                "discipline_slug": "orcamento",
+                "content_type": "modelos_orcamento",
+                "confidence": 1.0,
+                "source": "manual",
+                "mapped_discipline": "ORÇAMENTO",
+            },
+        }
+        from core.knowledge.ingestion import ClassificationResult
+
+        classification = ClassificationResult(
+            discipline_slug="orcamento",
+            content_type="modelos_orcamento",
+            confidence=1.0,
+            source="manual",
+            mapped_discipline="ORÇAMENTO",
+        )
+        result = get_ingester()._attach_budget_model_to_existing(
+            path,
+            record,
+            classification,
+            name=entry.get("name") or meta.get("name"),
+            description=entry.get("description") or meta.get("description"),
+        )
+        if result.get("status") == "error":
+            raise ValueError(result.get("reason") or "Falha ao indexar modelo WBS")
+        return {
+            "document_id": document_id,
+            "status": result.get("status"),
+            "service_count": result.get("service_count", 0),
+            "budget_model_indexed": result.get("budget_model_indexed", 0),
+            "reason": result.get("reason"),
+        }
+
     def get_options(self) -> dict[str, Any]:
         disciplines = [
             {"value": key, "label": key.replace("_", " ").title()}
@@ -87,18 +176,32 @@ class KnowledgeService:
         rows = read_catalog()
         unique_rows = _dedupe_catalog_rows(rows)
         sliced = unique_rows[:limit]
-        items = [
-            {
+        items = []
+        for row in sliced:
+            path = Path(row.get("path", ""))
+            meta = {}
+            if path.is_file():
+                from core.knowledge.metadata import read_metadata
+
+                meta = read_metadata(path) or {}
+            items.append({
                 "id": row.get("id", ""),
-                "filename": row.get("filename", Path(row.get("path", "")).name),
+                "name": row.get("name") or row.get("filename", path.name),
+                "description": row.get("description", ""),
+                "filename": row.get("filename", path.name),
                 "path": row.get("path", ""),
                 "discipline": row.get("discipline") or [],
                 "content_type": row.get("content_type", ""),
                 "content_hash": row.get("content_hash"),
                 "catalog_ts": row.get("catalog_ts"),
-            }
-            for row in sliced
-        ]
+                "price_item_count": row.get("price_item_count", 0),
+                "has_price_items": row.get("has_price_items", False),
+                "has_budget_model": bool(
+                    row.get("has_budget_model") or meta.get("has_budget_model")
+                ),
+                "service_count": row.get("service_count") or meta.get("service_count", 0),
+                "is_active_price_base": row.get("id") == self._active_price_document_id(),
+            })
         return {
             "total": len(unique_rows),
             "log_entries": len(rows),
@@ -122,6 +225,8 @@ class KnowledgeService:
         self,
         files: list[UploadFile],
         *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
         discipline: Optional[str] = None,
         content_type: Optional[str] = None,
         layer: str = "raw",
@@ -129,6 +234,8 @@ class KnowledgeService:
         dry_run: bool = False,
         auto_index: bool = False,
         index_base: Optional[str] = None,
+        register_price_base: bool = False,
+        register_budget_model: bool = False,
     ) -> dict[str, Any]:
         if not files:
             raise ValueError("Nenhum arquivo enviado")
@@ -170,13 +277,18 @@ class KnowledgeService:
                     "indexing": None,
                 }
 
-            batch = get_ingester().ingest_batch(
+            batch = await run_sync(
+                ingest_batch_sync,
                 [path for path, _ in saved],
                 discipline_hint=discipline,
                 content_type_hint=content_type,
                 layer=layer,
                 force=force,
                 copy=not dry_run,
+                name=name,
+                description=description,
+                register_price_base=register_price_base,
+                register_budget_model=register_budget_model,
             )
 
             results = []
@@ -188,6 +300,12 @@ class KnowledgeService:
                     "status": record.get("status", "unknown"),
                     "document_id": record.get("document_id"),
                     "target": record.get("target"),
+                    "price_item_count": record.get("price_item_count", 0),
+                    "price_base_active": record.get("price_base_active", False),
+                    "budget_model_indexed": record.get("budget_model_indexed", 0),
+                    "service_count": record.get("service_count", 0),
+                    "saved_as": record.get("saved_as"),
+                    "storage_renamed": record.get("storage_renamed", False),
                     "classification": {
                         "discipline_slug": classification.get("discipline_slug", ""),
                         "content_type": classification.get("content_type", ""),
@@ -239,6 +357,26 @@ class KnowledgeService:
             force=force,
             index_base=base,
             content_types=content_types,
+        )
+
+    def delete_document(self, document_id: str) -> dict[str, Any]:
+        return delete_document(document_id)
+
+    def update_document(
+        self,
+        document_id: str,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        content_type: Optional[str] = None,
+        discipline: Optional[str] = None,
+    ) -> dict[str, Any]:
+        return update_document_metadata(
+            document_id,
+            name=name,
+            description=description,
+            content_type=content_type,
+            discipline=discipline,
         )
 
     def _run_indexing(

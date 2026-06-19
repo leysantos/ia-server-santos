@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
-import ChatBox from "@/components/ChatBox";
+import ChatBox, { type ChatSendOptions } from "@/components/ChatBox";
 import MessageList from "@/components/MessageList";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ShellHeader from "@/components/ShellHeader";
@@ -44,7 +44,6 @@ function ChatPageContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeModel, setActiveModel] = useState<string | null>(null);
-  const [configuredModels, setConfiguredModels] = useState<string | null>(null);
 
   const streamRafRef = useRef<number | null>(null);
   const pendingContentRef = useRef<{ id: string; content: string; meta: ChatMessage["meta"] } | null>(null);
@@ -81,19 +80,6 @@ function ChatPageContent() {
     },
     [flushPendingContent]
   );
-
-  useEffect(() => {
-    api.health().then((health) => {
-      if (health.models?.installed_llm) {
-        setConfiguredModels(`WSL: ${health.models.installed_llm}`);
-      } else if (health.installed_models?.length) {
-        const llms = health.installed_models.filter((m) => !m.toLowerCase().includes("embed"));
-        setConfiguredModels(`WSL: ${llms.map((m) => m.replace(/:latest$/, "")).join(" · ")}`);
-      } else if (health.models) {
-        setConfiguredModels(`chat: ${health.models.chat} · eng: ${health.models.engineering}`);
-      }
-    }).catch(() => {});
-  }, []);
 
   useEffect(() => {
     setConversationId(urlConversationId);
@@ -134,7 +120,7 @@ function ChatPageContent() {
   }, []);
 
   const handleSend = useCallback(
-    async (text: string, options: { useRag: boolean; persist: boolean }) => {
+    async (text: string, options: ChatSendOptions) => {
       const userMessage: ChatMessage = { id: generateId(), role: "user", content: text };
       const assistantId = generateId();
       const assistantPlaceholder: ChatMessage = {
@@ -159,6 +145,7 @@ function ChatPageContent() {
           persist: options.persist,
           conversation_id: conversationIdRef.current ?? undefined,
           project_id: projectId ?? undefined,
+          llm_model: options.llmModel !== "auto" ? options.llmModel : undefined,
         })) {
           if (event.type === "status") {
             const message = String(event.data.message ?? "Processando...");
@@ -252,7 +239,17 @@ function ChatPageContent() {
   return (
     <>
       <WorkspaceCollapseStrip />
-      <ShellHeader className="px-6" innerClassName="justify-between gap-4">
+      <ShellHeader
+        className="px-6"
+        showModelsStatus
+        trailing={
+          activeModel ? (
+            <div className="rounded-xl bg-slate-800/80 px-3 py-2 text-right ring-1 ring-slate-700/80">
+              <p className="text-xs font-medium text-emerald-300">Modelo ativo: {activeModel}</p>
+            </div>
+          ) : undefined
+        }
+      >
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <WorkspaceExpandButton />
           <div className="min-w-0">
@@ -266,16 +263,6 @@ function ChatPageContent() {
             </p>
           </div>
         </div>
-        {(activeModel || configuredModels) && (
-          <div className="hidden shrink-0 rounded-xl bg-slate-800/80 px-3 py-2 text-right ring-1 ring-slate-700/80 sm:block">
-            {activeModel && (
-              <p className="text-xs font-medium text-emerald-300">Modelo ativo: {activeModel}</p>
-            )}
-            {configuredModels && (
-              <p className="mt-0.5 text-[11px] text-slate-500">{configuredModels}</p>
-            )}
-          </div>
-        )}
       </ShellHeader>
 
       {error && (

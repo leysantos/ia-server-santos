@@ -153,18 +153,18 @@ def test_build_prompt_uses_tuned_version_when_enabled():
 
 
 def test_build_prompt_falls_back_without_tuned_prompt():
+    from unittest.mock import MagicMock, patch
+
     import core.agents.base_agent_intelligent as agent_mod
 
-    original = agent_mod.settings.USE_TUNED_PROMPTS
-    agent_mod.settings.USE_TUNED_PROMPTS = True
-
     agent = _TestAgent(use_rag=False, llm_client=MagicMock())
-    prompt = agent.build_prompt("dimensionar viga", "")
+    with patch.object(agent_mod.settings, "USE_TUNED_PROMPTS", True), patch(
+        "core.learning_v2.prompt_resolver.resolve_tuned_prompt", return_value=None
+    ):
+        prompt = agent.build_prompt("dimensionar viga", "")
 
     assert "INSTRUÇÕES:" in prompt
     assert agent._last_prompt_meta is None
-
-    agent_mod.settings.USE_TUNED_PROMPTS = original
 
 
 if __name__ == "__main__":

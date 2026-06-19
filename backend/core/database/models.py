@@ -444,3 +444,40 @@ class AgentSimulationRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class BudgetDocument(Base):
+    """Orçamento PPD persistido — sessão completa em JSON."""
+
+    __tablename__ = "budget_documents"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    grand_total: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    obra_type: Mapped[str] = mapped_column(String(8), nullable=False, default="RF")
+    input_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    def to_summary(self) -> dict:
+        return {
+            "id": str(self.id),
+            "title": self.title,
+            "session_id": self.session_id,
+            "grand_total": self.grand_total,
+            "obra_type": self.obra_type,
+            "input_text": self.input_text,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }

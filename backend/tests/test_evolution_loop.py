@@ -158,7 +158,7 @@ def test_rag_evolution_boost_and_rerank():
         hits = [(chunk_b, 0.9), (chunk_a, 0.85)]
 
         with patch.object(settings_mod, "USE_EVOLUTION_LOOP", True), patch(
-            "core.evolution.rag_evolution.get_rag_evolution_store", return_value=store
+            "experimental.evolution.rag_evolution.get_rag_evolution_store", return_value=store
         ):
             ranked = apply_rag_score_evolution(hits)
 

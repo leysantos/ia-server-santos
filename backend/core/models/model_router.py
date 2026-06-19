@@ -33,6 +33,102 @@ _DISCIPLINE_KEYWORDS = (
     "incêndio", "incendio", "drenagem", "saneamento", "orçamento", "orcamento",
 )
 
+# --- Estimativa de complexidade (centralizada) ---
+
+_BUDGET_HEAVY_KEYWORDS = (
+    "passarela", "ponte", "viaduto", "igarap", "tabuleiro", "estrutura met",
+    "todos os servi", "completo", "completa",
+)
+
+_ENGINEERING_HEAVY_KEYWORDS = (
+    "dimensionar", "dimensionamento", "memorial de cálculo", "memorial de calculo",
+    "projeto executivo", "nbr 6118", "nbr 6122", "concreto armado", "estaca",
+    "fundação", "fundacao", "passarela", "ponte", "viga", "laje", "pilar",
+)
+
+_DISCIPLINE_HEAVY = frozenset(
+    {"ESTRUTURAL", "GEOTECNIA", "ORÇAMENTO", "INFRAESTRUTURA", "TRANSPORTES"}
+)
+
+
+def estimate_budget_complexity(text: str, intent: dict[str, Any] | None = None) -> str:
+    lower = (text or "").lower()
+    score = 0
+    if len(text) > 180:
+        score += 1
+    if len(text) > 400:
+        score += 1
+    if re.search(r"\d+(?:[.,]\d+)?\s*m\b", lower):
+        score += 1
+    if any(k in lower for k in _BUDGET_HEAVY_KEYWORDS):
+        score += 2
+    if any(k in lower for k in ("fundação", "fundacao", "estaca", "bloco", "coroamento")):
+        score += 1
+    if intent:
+        etapas = intent.get("etapas") or []
+        svc_count = sum(len(e.get("services") or []) for e in etapas)
+        if len(etapas) >= 4:
+            score += 1
+        if svc_count >= 12:
+            score += 2
+        elif svc_count >= 8:
+            score += 1
+    if score >= 4:
+        return "HIGH"
+    if score >= 2:
+        return "MEDIUM"
+    return "LOW"
+
+
+def estimate_pricing_complexity(
+    line_name: str | None,
+    query: str | None,
+    service_context: str | None = None,
+) -> str:
+    combined = f"{line_name or ''} {query or ''} {service_context or ''}".lower()
+    if any(
+        k in combined
+        for k in (
+            "estrutura",
+            "metalic",
+            "passarela",
+            "ponte",
+            "concretagem",
+            "estaca",
+            "fundacao",
+            "fundação",
+            "tabuleiro",
+        )
+    ):
+        return "HIGH"
+    if len(combined) > 70:
+        return "MEDIUM"
+    return "LOW"
+
+
+def estimate_engineering_complexity(text: str, discipline: str | None = None) -> str:
+    lower = (text or "").lower()
+    score = 0
+    if discipline and discipline not in ("CHAT", "GERAL"):
+        score += 1
+    if discipline in _DISCIPLINE_HEAVY:
+        score += 1
+    if len(text) > 120:
+        score += 1
+    if len(text) > 280:
+        score += 1
+    if re.search(r"\d+(?:[.,]\d+)?\s*(?:m|m²|m2|kn|mpa|cm|mm)\b", lower):
+        score += 1
+    if any(k in lower for k in _ENGINEERING_HEAVY_KEYWORDS):
+        score += 2
+    if "nbr" in lower or "norma" in lower:
+        score += 1
+    if score >= 4:
+        return "HIGH"
+    if score >= 2:
+        return "MEDIUM"
+    return "LOW"
+
 
 @dataclass
 class InferenceRecord:
@@ -61,16 +157,27 @@ class ModelRouter:
 
     def __init__(self) -> None:
         self.model_map: dict[str, str] = {
+            # RTX 4060 8GB — leves 100% VRAM
             "chat_simple": "phi3:mini",
+            "intent_layer": "phi3:mini",
             "chat_natural": "mistral:7b",
+            # Código / fallback rápido
             "code_generation": "deepseek-coder:latest",
-            "code_understanding": "qwen2.5-coder",
-            "engineering_primary": "qwen3:14b",
-            "engineering_fallback": "qwen3-coder",
+            "code_understanding": "qwen2.5-coder:latest",
+            # Engenharia — híbrido VRAM+RAM
+            "engineering_primary": "gemma3:12b",
+            "engineering_fallback": "qwen2.5-coder:latest",
             "rag_embedding": "nomic-embed-text",
             "orchestration_synthesis": "gemma3:12b",
-            "aed_simulation": "qwen3:14b",
+            "aed_simulation": "gemma3:12b",
             "aed_evaluation": "gemma3:12b",
+            # Orçamento WBS / pricing
+            "budget_wbs_light": "mistral:7b",
+            "budget_wbs": "qwen2.5-coder:latest",
+            "budget_wbs_high": "gemma3:12b",
+            "budget_pricing_light": "phi3:mini",
+            "budget_pricing": "mistral:7b",
+            "budget_pricing_high": "qwen2.5-coder:latest",
         }
 
         self._fallback_map: dict[str, str] = {
@@ -78,6 +185,10 @@ class ModelRouter:
             "chat_natural": "chat_simple",
             "aed_simulation": "engineering_fallback",
             "orchestration_synthesis": "engineering_fallback",
+            "budget_wbs_high": "budget_wbs",
+            "budget_wbs": "budget_wbs_light",
+            "budget_pricing_high": "budget_pricing",
+            "budget_pricing": "budget_pricing_light",
         }
 
         self._legacy_map: dict[str, str] = {
@@ -91,6 +202,12 @@ class ModelRouter:
             "aed_evaluation": settings.OLLAMA_LLM_MODEL,
             "code_generation": settings.OLLAMA_LLM_FALLBACK_MODEL,
             "code_understanding": settings.OLLAMA_LLM_FALLBACK_MODEL,
+            "budget_wbs_light": settings.OLLAMA_CHAT_MODEL,
+            "budget_wbs": settings.OLLAMA_BUDGET_MODEL,
+            "budget_wbs_high": settings.OLLAMA_LLM_MODEL,
+            "budget_pricing_light": "phi3:mini",
+            "budget_pricing": settings.OLLAMA_BUDGET_MODEL,
+            "budget_pricing_high": settings.OLLAMA_LLM_FALLBACK_MODEL,
         }
 
         self._active_by_module: dict[str, str] = {}
@@ -125,29 +242,67 @@ class ModelRouter:
     def enabled(self) -> bool:
         return settings.USE_MODEL_ROUTER
 
+    def resolve_budget_task_type(self, task: str, complexity: str) -> str:
+        if task == "wbs":
+            if complexity == "HIGH":
+                return "budget_wbs_high"
+            if complexity == "MEDIUM":
+                return "budget_wbs"
+            return "budget_wbs_light"
+        if complexity == "HIGH":
+            return "budget_pricing_high"
+        if complexity == "MEDIUM":
+            return "budget_pricing"
+        return "budget_pricing_light"
+
+    def resolve_engineering_task_type(self, complexity: str) -> str:
+        if complexity in ("HIGH", "MEDIUM"):
+            return "engineering_primary"
+        return "engineering_fallback"
+
+    def get_optimal_model(
+        self,
+        task_type: str,
+        *,
+        complexity: str | None = None,
+        context: Optional[dict[str, Any]] = None,
+    ) -> tuple[str, list[str], str]:
+        """
+        Ponto único de decisão: task_type + complexidade → (modelo, fallbacks, task resolvido).
+        """
+        ctx = dict(context or {})
+        if complexity:
+            ctx["complexity"] = complexity
+        resolved = self._resolve_task_type(task_type, ctx)
+        model = self.get_model(resolved, ctx)
+        fallbacks = self.get_fallback_models(resolved, ctx)
+        return model, fallbacks, resolved
+
     def get_model(self, task_type: str, context: Optional[dict[str, Any]] = None) -> str:
         """Retorna modelo ideal baseado no tipo de tarefa e contexto."""
         context = context or {}
-
-        if not self.enabled():
-            resolved = self._resolve_task_type(task_type, context or {})
-            learned = self.get_best_model(resolved, (context or {}).get("discipline"))
-            if learned:
-                return learned
-            return self._legacy_map.get(task_type, settings.OLLAMA_LLM_MODEL)
-
         resolved_task = self._resolve_task_type(task_type, context)
+
         learned = self.get_best_model(resolved_task, context.get("discipline"))
         if learned:
             return learned
+
+        if not self.enabled():
+            return self._legacy_map.get(resolved_task, settings.OLLAMA_LLM_MODEL)
+
         model = self.model_map.get(resolved_task)
         if not model:
             logger.warning("ModelRouter: task_type desconhecido %s, usando engineering_primary", task_type)
             model = self.model_map["engineering_primary"]
         return model
 
-    def get_fallback_models(self, task_type: str) -> list[str]:
+    def get_fallback_models(
+        self,
+        task_type: str,
+        context: Optional[dict[str, Any]] = None,
+    ) -> list[str]:
         """Cadeia de fallback após falha do modelo primário."""
+        context = context or {}
         if not self.enabled():
             primary = self._legacy_map.get(task_type, settings.OLLAMA_LLM_MODEL)
             fb = settings.OLLAMA_LLM_FALLBACK_MODEL
@@ -275,7 +430,16 @@ class ModelRouter:
             return self.resolve_chat_task(text)
 
         if task_type == "engineering" or task_type == "engineering_auto":
-            return self.resolve_engineering_task(text, discipline, complexity=complexity)
+            return self.resolve_engineering_task(
+                text, discipline, complexity=complexity
+            )
+
+        if module == "budget" and context.get("budget_task"):
+            cx = complexity or estimate_budget_complexity(text, context.get("intent"))
+            return self.resolve_budget_task_type(context["budget_task"], cx)
+
+        if module == "agent" and complexity:
+            return self.resolve_engineering_task_type(complexity)
 
         if task_type == "engineering_primary" and complexity == "HIGH":
             return "engineering_primary"
@@ -307,6 +471,7 @@ def routed_generate(
     discipline: Optional[str] = None,
     client: Any = None,
     timeout: Optional[int] = None,
+    format_json: bool = False,
 ) -> tuple[str, str]:
     """
     Gera resposta LLM via ModelRouter (ou legado se flag desabilitada).
@@ -321,18 +486,30 @@ def routed_generate(
         ctx.setdefault("discipline", discipline)
 
     if not router.enabled() and not router.evaluation_enabled():
+        from core.llm_override import get_llm_model_override
+
         llm = client or OllamaClient(timeout=timeout or 120)
-        text, model_used = llm.generate(prompt)
+        override = get_llm_model_override()
+        if override:
+            return llm.generate(prompt, model=override, format_json=format_json)
+        text, model_used = llm.generate(prompt, format_json=format_json)
         return text, model_used
 
+    from core.llm_override import get_llm_model_override
+
     input_text = ctx.get("text") or ctx.get("input") or prompt[:500]
-    model = router.get_model(task_type, ctx)
-    fallbacks = router.get_fallback_models(task_type)
+    override = get_llm_model_override()
+    if override:
+        model = override
+        fallbacks = router.get_fallback_models(task_type, ctx)
+    else:
+        model = router.get_model(task_type, ctx)
+        fallbacks = router.get_fallback_models(task_type, ctx)
     fallback_model = fallbacks[0] if fallbacks else None
 
     llm = client or OllamaClient(timeout=timeout or 120)
 
-    if router.evaluation_enabled() and fallback_model and fallback_model != model:
+    if router.evaluation_enabled() and fallback_model and fallback_model != model and not override:
         from core.models.model_evaluation_loop import evaluate_and_generate
 
         start = time.perf_counter()
@@ -361,7 +538,7 @@ def routed_generate(
     success = True
     model_used = model
     try:
-        text, model_used = llm.generate(prompt, model=model, fallback_models=fallbacks)
+        text, model_used = llm.generate(prompt, model=model, fallback_models=fallbacks, format_json=format_json)
     except Exception:
         success = False
         raise

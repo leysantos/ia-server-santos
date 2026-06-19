@@ -1,0 +1,103 @@
+"""Facade de engenharia no chat — delega roteamento ao ModelRouter central."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from config import settings
+from core.models.model_router import (
+    estimate_engineering_complexity,
+    get_model_router,
+    routed_generate,
+)
+
+__all__ = [
+    "engineering_generate",
+    "engineering_routing_enabled",
+    "engineering_stream_models",
+    "estimate_engineering_complexity",
+    "resolve_engineering_task_type",
+]
+
+
+def resolve_engineering_task_type(complexity: str) -> str:
+    return get_model_router().resolve_engineering_task_type(complexity)
+
+
+def engineering_routing_enabled() -> bool:
+    return (
+        settings.USE_MODEL_ROUTER
+        or settings.USE_MODEL_EVALUATION
+        or settings.USE_ENGINEERING_SMART_ROUTING
+    )
+
+
+def engineering_generate(
+    prompt: str,
+    *,
+    text: str,
+    discipline: str,
+    complexity: str | None = None,
+    client: Any = None,
+    timeout: int | None = None,
+) -> tuple[str, str]:
+    from models.ollama_client import OllamaClient
+
+    llm = client or OllamaClient(timeout=timeout or 120)
+    if not engineering_routing_enabled():
+        return llm.generate(prompt)
+
+    router = get_model_router()
+    cx = complexity or estimate_engineering_complexity(text, discipline)
+    task_type = router.resolve_engineering_task_type(cx)
+    ctx = {
+        "text": text,
+        "input": text,
+        "complexity": cx,
+        "discipline": discipline,
+        "module": "agent",
+    }
+    return routed_generate(
+        prompt,
+        task_type,
+        context=ctx,
+        module="agent",
+        discipline=discipline,
+        client=llm,
+        timeout=timeout,
+    )
+
+
+def engineering_stream_models(
+    text: str,
+    discipline: str,
+    *,
+    complexity: str | None = None,
+) -> tuple[str, list[str], str]:
+    if not engineering_routing_enabled():
+        from config.settings import OLLAMA_LLM_MODEL
+
+        fb = settings.OLLAMA_LLM_FALLBACK_MODEL
+        fallbacks = [fb] if fb and fb != OLLAMA_LLM_MODEL else []
+        return OLLAMA_LLM_MODEL, fallbacks, "engineering_fallback"
+
+    from core.llm_override import get_llm_model_override
+
+    router = get_model_router()
+    cx = complexity or estimate_engineering_complexity(text, discipline)
+    task_type = router.resolve_engineering_task_type(cx)
+    ctx = {
+        "text": text,
+        "input": text,
+        "complexity": cx,
+        "discipline": discipline,
+        "module": "agent",
+    }
+    override = get_llm_model_override()
+    if override:
+        fallbacks = router.get_fallback_models(task_type, ctx)
+        return override, fallbacks, "user_override"
+    model, fallbacks, resolved = router.get_optimal_model(
+        task_type, complexity=cx, context=ctx
+    )
+    return model, fallbacks, resolved

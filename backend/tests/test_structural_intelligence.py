@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.structural_intelligence.structural_classifier import StructuralClassifier
@@ -12,6 +14,16 @@ from core.structural_intelligence.model_selector import ModelSelector
 from core.structural_intelligence.prompt_builder import PromptBuilder
 from core.structural_intelligence.structural_engine import StructuralIntelligenceEngine
 from core.structural_intelligence.dispatch_adapter import try_sie_dispatch
+
+
+@pytest.fixture(autouse=True)
+def _reset_model_router_singleton():
+    """Isola mapa de modelos — outros testes podem alterar o singleton global."""
+    import core.models.model_router as mr_mod
+
+    mr_mod._router = None
+    yield
+    mr_mod._router = None
 
 
 def test_case1_steel_industrial_40m():
@@ -26,7 +38,7 @@ def test_case1_steel_industrial_40m():
     assert norms == ["NBR 8800", "NBR 14762", "NBR 6123"]
 
     model = ModelSelector().select(result["system"], result["complexity"])
-    assert model == "qwen3:14b"
+    assert model == "gemma3:12b"
 
 
 def test_case2_residential_concrete():
@@ -40,7 +52,7 @@ def test_case2_residential_concrete():
     assert norms == ["NBR 6118", "NBR 8681"]
 
     model = ModelSelector().select(result["system"], result["complexity"])
-    assert model == "qwen3:8b"
+    assert model == "qwen2.5-coder:latest"
 
 
 def test_case3_timber_light_roof():
@@ -52,7 +64,7 @@ def test_case3_timber_light_roof():
     assert norms == ["NBR 7190"]
 
     model = ModelSelector().select(result["system"], result["complexity"])
-    assert model == "qwen3:8b"
+    assert model == "qwen2.5-coder:latest"
 
 
 def test_prompt_builder_includes_system_and_norms():
@@ -73,7 +85,7 @@ def test_engine_full_pipeline():
     )
 
     assert ctx.system == "STEEL_STRUCTURE"
-    assert ctx.model == "qwen3:14b"
+    assert ctx.model == "gemma3:12b"
     assert "NBR 8800" in ctx.norms
     assert "NBR 8800 trechos relevantes" in prompt
 
@@ -82,7 +94,7 @@ def test_dispatch_adapter_success():
     agent = MagicMock()
     agent.use_rag = False
     agent.retrieve_context.return_value = ""
-    agent.llm_client.generate.return_value = ("Resposta técnica SIE", "qwen3:14b")
+    agent.llm_client.generate.return_value = ("Resposta técnica SIE", "gemma3:12b")
     agent.build_extra.return_value = {"normas_base": ["NBR 8800"]}
     agent.build_response.return_value = {
         "agent": "estruturas_agent",
@@ -100,7 +112,7 @@ def test_dispatch_adapter_success():
     assert result is not None
     agent.llm_client.generate.assert_called_once()
     call_kwargs = agent.llm_client.generate.call_args
-    assert call_kwargs.kwargs.get("model") == "qwen3:14b" or call_kwargs[1].get("model") == "qwen3:14b"
+    assert call_kwargs.kwargs.get("model") == "gemma3:12b" or call_kwargs[1].get("model") == "gemma3:12b"
 
 
 def test_dispatch_adapter_fallback_on_failure():

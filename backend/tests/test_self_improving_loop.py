@@ -105,7 +105,7 @@ def test_persistence_sqlite():
     db = Session()
 
     import core.database.connection as conn_mod
-    import core.self_improving.failure_memory as fm_mod
+    import experimental.self_improving.failure_memory as exp_fm_mod
 
     original = conn_mod.is_db_enabled
 
@@ -118,10 +118,9 @@ def test_persistence_sqlite():
             db.rollback()
             raise
 
-    conn_mod.is_db_enabled = lambda: True
-    conn_mod.session_scope = _scope
-    fm_mod.is_db_enabled = lambda: True
-    fm_mod.session_scope = _scope
+    for mod in (conn_mod, exp_fm_mod):
+        mod.is_db_enabled = lambda: True
+        mod.session_scope = _scope
 
     failure = record_failure(
         input_text="teste",

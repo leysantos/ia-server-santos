@@ -20,10 +20,10 @@ def test_legacy_mode_uses_settings():
 def test_router_enabled_model_map():
     with patch.object(settings_mod, "USE_MODEL_ROUTER", True):
         router = ModelRouter()
-        assert router.get_model("engineering_primary") == "qwen3:14b"
+        assert router.get_model("engineering_primary") == "gemma3:12b"
         assert router.get_model("chat_natural") == "mistral:7b"
         assert router.get_model("chat_simple") == "phi3:mini"
-        assert router.get_model("aed_simulation") == "qwen3:14b"
+        assert router.get_model("aed_simulation") == "gemma3:12b"
 
 
 def test_is_light_task():
@@ -53,7 +53,7 @@ def test_engineering_fallback_chain():
     with patch.object(settings_mod, "USE_MODEL_ROUTER", True):
         router = ModelRouter()
         fallbacks = router.get_fallback_models("engineering_primary")
-        assert "qwen3-coder" in fallbacks
+        assert "qwen2.5-coder" in fallbacks[0]
 
 
 def test_chat_natural_fallback_chain():
@@ -72,7 +72,7 @@ def test_norms_steel_high_complexity_context():
             complexity="HIGH",
         )
         model = router.get_model(task, {"complexity": "HIGH", "discipline": "ESTRUTURAL"})
-        assert model == "qwen3:14b"
+        assert model == "gemma3:12b"
 
 
 def test_routed_generate_records_inference():
@@ -108,7 +108,9 @@ def test_get_status_structure():
 
 
 def test_base_agent_legacy_unchanged_when_flag_off():
-    with patch.object(settings_mod, "USE_MODEL_ROUTER", False):
+    with patch.object(settings_mod, "USE_MODEL_ROUTER", False), patch.object(
+        settings_mod, "USE_ENGINEERING_SMART_ROUTING", False
+    ):
         from core.agents.base_agent_intelligent import BaseAgentIntelligent
 
         llm = MagicMock()

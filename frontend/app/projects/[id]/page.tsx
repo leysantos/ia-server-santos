@@ -123,7 +123,27 @@ export default function ProjectDetailPage() {
   return (
     <>
       <WorkspaceCollapseStrip />
-      <ShellHeader className="px-6" innerClassName="justify-between gap-4">
+      <ShellHeader
+        className="px-6"
+        showModelsStatus
+        trailing={
+          <div className="flex shrink-0 items-center gap-2">
+            <Link
+              href={`/chat?project=${project.id}`}
+              className="rounded-lg bg-cyan-600 px-3 py-2 text-sm font-medium text-white hover:bg-cyan-500"
+            >
+              Nova conversa
+            </Link>
+            <button
+              type="button"
+              onClick={handleDeleteProject}
+              className="rounded-lg bg-slate-800 px-3 py-2 text-sm text-red-300 ring-1 ring-slate-700 hover:bg-slate-700"
+            >
+              Excluir
+            </button>
+          </div>
+        }
+      >
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <WorkspaceExpandButton />
           <div className="min-w-0">
@@ -139,21 +159,6 @@ export default function ProjectDetailPage() {
               <p className="mt-0.5 truncate text-sm text-slate-400">{project.description}</p>
             )}
           </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Link
-            href={`/chat?project=${project.id}`}
-            className="rounded-lg bg-cyan-600 px-3 py-2 text-sm font-medium text-white hover:bg-cyan-500"
-          >
-            Nova conversa
-          </Link>
-          <button
-            type="button"
-            onClick={handleDeleteProject}
-            className="rounded-lg bg-slate-800 px-3 py-2 text-sm text-red-300 ring-1 ring-slate-700 hover:bg-slate-700"
-          >
-            Excluir
-          </button>
         </div>
       </ShellHeader>
 

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import JsonViewer from "@/components/JsonViewer";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import ShellHeader from "@/components/ShellHeader";
 import { api } from "@/services/api";
 import type { HistoryItem } from "@/types/api";
 import { formatDate } from "@/lib/utils";
@@ -37,34 +38,39 @@ export default function HistoryPage() {
 
   return (
     <>
-      <header className="flex shrink-0 items-center justify-between border-b border-slate-800/80 px-6 py-4">
+      <ShellHeader
+        className="px-6"
+        showModelsStatus
+        trailing={
+          <div className="flex items-center gap-3">
+            <select
+              value={limit}
+              onChange={(e) => setLimit(Number(e.target.value))}
+              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm text-slate-300 focus:border-cyan-500 focus:outline-none"
+            >
+              {[10, 25, 50, 100].map((n) => (
+                <option key={n} value={n}>
+                  Últimos {n}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={loadHistory}
+              disabled={loading}
+              className="rounded-lg bg-slate-800 px-3 py-1.5 text-sm text-slate-300 ring-1 ring-slate-700 hover:bg-slate-700 disabled:opacity-50"
+            >
+              Atualizar
+            </button>
+          </div>
+        }
+      >
         <div>
           <h1 className="text-lg font-semibold text-white">Histórico</h1>
           <p className="text-sm text-slate-500">
             Interações persistidas no PostgreSQL
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <select
-            value={limit}
-            onChange={(e) => setLimit(Number(e.target.value))}
-            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm text-slate-300 focus:border-cyan-500 focus:outline-none"
-          >
-            {[10, 25, 50, 100].map((n) => (
-              <option key={n} value={n}>
-                Últimos {n}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={loadHistory}
-            disabled={loading}
-            className="rounded-lg bg-slate-800 px-3 py-1.5 text-sm text-slate-300 ring-1 ring-slate-700 hover:bg-slate-700 disabled:opacity-50"
-          >
-            Atualizar
-          </button>
-        </div>
-      </header>
+      </ShellHeader>
 
       <div className="flex flex-1 overflow-hidden">
         {loading && items.length === 0 ? (

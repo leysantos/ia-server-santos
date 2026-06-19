@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import ChatBox from "@/components/ChatBox";
+import ChatBox, { type ChatSendOptions } from "@/components/ChatBox";
 import JsonViewer from "@/components/JsonViewer";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ShellHeader from "@/components/ShellHeader";
@@ -13,10 +13,7 @@ export default function OrchestratePage() {
   const [result, setResult] = useState<OrchestrateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const handleSend = async (
-    text: string,
-    options: { useRag: boolean; persist: boolean }
-  ) => {
+  const handleSend = async (text: string, options: ChatSendOptions) => {
     setLoading(true);
     setError(null);
     setResult(null);
@@ -26,6 +23,7 @@ export default function OrchestratePage() {
         text,
         use_rag: options.useRag,
         persist: options.persist,
+        llm_model: options.llmModel !== "auto" ? options.llmModel : undefined,
       });
       setResult(response);
     } catch (err) {
@@ -37,7 +35,7 @@ export default function OrchestratePage() {
 
   return (
     <>
-      <ShellHeader className="px-6">
+      <ShellHeader className="px-6" showModelsStatus>
         <div className="min-w-0">
           <h1 className="text-lg font-semibold text-white">Orquestrador Multidisciplinar</h1>
           <p className="text-sm text-slate-500">

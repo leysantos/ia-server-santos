@@ -247,7 +247,11 @@ class ChatAgent(BaseAgent):
                 timeout=OLLAMA_CHAT_TIMEOUT,
             )
         else:
-            result, model_used = self.llm_client.generate(prompt, model=OLLAMA_CHAT_MODEL)
+            from core.llm_override import get_llm_model_override
+
+            override = get_llm_model_override()
+            model = override or OLLAMA_CHAT_MODEL
+            result, model_used = self.llm_client.generate(prompt, model=model)
 
         self._last_model = model_used
         return post_format_response(result)
@@ -294,7 +298,12 @@ class ChatAgent(BaseAgent):
                 prompt = build_prompt(text, intent)
                 from config import settings
 
-                if settings.USE_MODEL_ROUTER or settings.USE_MODEL_EVALUATION:
+                from core.llm_override import get_llm_model_override
+
+                override = get_llm_model_override()
+                if override:
+                    stream = self.llm_client.generate_stream(prompt, model=override)
+                elif settings.USE_MODEL_ROUTER or settings.USE_MODEL_EVALUATION:
                     from core.models.model_router import get_model_router
 
                     router = get_model_router()

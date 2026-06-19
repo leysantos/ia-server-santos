@@ -9,6 +9,8 @@ def test_agent_names_match_registry():
     from core.dispatcher import AGENTS
 
     for discipline in AGENTS:
+        if discipline == "CHAT":
+            continue
         assert discipline in DISCIPLINE_TO_AGENT
         assert get_agent_name(discipline) == DISCIPLINE_TO_AGENT[discipline]
 

@@ -39,6 +39,8 @@ class HealthService:
                 ),
                 "embed": self._resolve_configured(OLLAMA_EMBED_MODEL, installed),
                 "router_enabled": self._router_enabled(),
+                "engineering_smart_routing": self._engineering_smart_routing(),
+                "budget_smart_routing": self._budget_smart_routing(),
                 "evaluation_enabled": self._evaluation_enabled(),
                 "installed_llm": " · ".join(_normalize_label(m) for m in llm_installed),
             },
@@ -61,6 +63,18 @@ class HealthService:
         from config import settings
 
         return "true" if settings.USE_MODEL_ROUTER else "false"
+
+    @staticmethod
+    def _engineering_smart_routing() -> str:
+        from config import settings
+
+        return "true" if settings.USE_ENGINEERING_SMART_ROUTING else "false"
+
+    @staticmethod
+    def _budget_smart_routing() -> str:
+        from config import settings
+
+        return "true" if settings.USE_BUDGET_SMART_ROUTING else "false"
 
     @staticmethod
     def _evaluation_enabled() -> str:

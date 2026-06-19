@@ -22,6 +22,7 @@ KNOWLEDGE_INDEX_NAMES: dict[str, str] = {
     "tdr": "tdr_index",
     "catalogos": "catalog_index",
     "regional": "regional_index",
+    "budget_models": "budget_models_index",
 }
 
 KNOWLEDGE_INDEX_DIR = FAISS_INDEX_DIR / "knowledge"
@@ -34,6 +35,7 @@ BASE_DOC_TYPES: dict[str, str] = {
     "tdr": "tdr",
     "catalogos": "catalog",
     "regional": "regional",
+    "budget_models": "budget_model",
 }
 
 DOMAIN_STRUCTURAL = "structural"
