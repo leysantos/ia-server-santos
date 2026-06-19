@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+backend/.venv/
 *.egg-info/
 dist/
 build/
@@ -23,11 +24,11 @@ build/
 *.swo
 
 # Data & indexes (gerados localmente)
-data/index/vector_store.json
-memory/faiss_index/*.faiss
-memory/faiss_index/*.json
-memory/faiss_index/embedding_cache.db
-memory/faiss_index/chunks.json
+backend/data/index/vector_store.json
+backend/memory/faiss_index/*.faiss
+backend/memory/faiss_index/*.json
+backend/memory/faiss_index/embedding_cache.db
+backend/memory/faiss_index/chunks.json
 
 # Node / Next.js
 frontend/node_modules/

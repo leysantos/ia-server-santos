@@ -104,11 +104,15 @@ export interface HealthResponse {
   rag_version: number;
   rag_indexed_chunks: number;
   ollama: string;
+  installed_models?: string[];
   models?: {
     chat: string;
     engineering: string;
     fallback: string;
     embed: string;
+    installed_llm?: string;
+    router_enabled?: string;
+    evaluation_enabled?: string;
   };
 }
 

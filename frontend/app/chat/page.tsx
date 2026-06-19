@@ -16,7 +16,16 @@ export default function ChatPage() {
 
   useEffect(() => {
     api.health().then((health) => {
-      if (health.models) {
+      if (health.models?.installed_llm) {
+        setConfiguredModels(`WSL: ${health.models.installed_llm}`);
+      } else if (health.installed_models?.length) {
+        const llms = health.installed_models.filter(
+          (m) => !m.toLowerCase().includes("embed")
+        );
+        setConfiguredModels(
+          `WSL: ${llms.map((m) => m.replace(/:latest$/, "")).join(" · ")}`
+        );
+      } else if (health.models) {
         setConfiguredModels(
           `chat: ${health.models.chat} · eng: ${health.models.engineering}`
         );

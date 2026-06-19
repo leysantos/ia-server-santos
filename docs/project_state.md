@@ -6,12 +6,93 @@
 | Campo | Valor |
 |-------|-------|
 | **Versão do sistema** | 1.0.0 |
-| **Última atualização** | 2026-06-18 |
-| **Marco atual** | Fase 2 — Engenharia autônoma (AED + Structural Selector) ✅ |
-| **Próximo foco** | Indexar RAG + simuladores por sistema estrutural + UI `/aed` |
+| **Última atualização** | 2026-06-19 |
+| **Marco atual** | Fase 2 (70%) — AED + loops de evolução + monorepo ✅ · bloqueio: RAG vazio |
+| **Próximo foco** | Indexar NBRs → simuladores estruturais → UI `/aed` |
 | **Repositório** | [github.com/leysantos/ia-server-santos](https://github.com/leysantos/ia-server-santos) |
 | **Branch principal** | `main` |
 | **Modo padrão de agentes** | Inteligente (`USE_INTELLIGENT_AGENTS=true`) |
+| **Layout do repo** | Monorepo: `backend/` (Python) + `frontend/` (Next.js) |
+
+---
+
+# 📤 HANDOFF — RESUMO PARA GPT / NOVA SESSÃO
+
+> Copie esta seção para contextualizar qualquer LLM sobre o estado atual do projeto.
+
+## O que é
+
+**IA Server Santos** — SaaS de engenharia civil multiagente: chat, orquestração multi-disciplina, Copilot de planejamento, AED (Autonomous Engineering Designer), RAG normativo (NBR), loops de auto-evolução. Stack: **FastAPI + PostgreSQL + Ollama local + FAISS + Next.js**.
+
+## Estrutura do repositório
+
+```
+ia-server-santos/
+├── backend/     ← todo Python (app, core, agents, memory, tests, scripts)
+├── frontend/    ← Next.js (:3000)
+├── docs/        ← este arquivo (control plane)
+└── infra/docker ← PostgreSQL (:5433)
+```
+
+**Subir:** `cd backend && uvicorn app.main:app --reload --port 8000` · `cd frontend && npm run dev` · `make api` / `make db-init` na raiz.
+
+## O que já funciona (produção local)
+
+| Área | Status |
+|------|--------|
+| API REST (`:8000`) | 🟢 chat, chat/stream, orchestrate, copilot, aed, feedback, history, health, models/status |
+| 15 agentes inteligentes + ChatAgent | 🟢 RAG + Ollama via `BaseAgentIntelligent` |
+| Intent Layer v2 | 🟢 chat / engenharia / mixed + SSE streaming |
+| Orchestrator v1 + ContextGraph | 🟢 multi-disciplina com síntese |
+| Copilot v1 + Evaluation v2 + Self-Improving | 🟢 |
+| AED v1 + Structural Selector | 🟢 pipeline completo, persistência `aed_runs` |
+| SIE v1 (Structural Intelligence) | 🟢 só disciplina ESTRUTURAL via `dispatch_adapter` |
+| Model Router + Model Evaluation Loop | 🟢 implementados, **off por default** |
+| Evolution Loop v1 | 🟢 implementado, **off por default** |
+| Agent Generation Loop v1 | 🟢 proposta/sandbox/promotion gate, **off por default** |
+| Learning Loop v1 + v2 | 🟢 feedback + auto-tune prompts (v2 opt-in) |
+| RAG v2 pipeline | 🟡 pronto, **índice FAISS vazio** (0 chunks) — **bloqueio #1** |
+| Frontend | 🟢 `/chat`, `/orchestrate`, `/history` — falta `/copilot`, `/aed` |
+| Auth SaaS | 🔴 não implementado |
+
+## Feature flags importantes (defaults)
+
+| Flag | Default | Nota |
+|------|---------|------|
+| `USE_INTELLIGENT_AGENTS` | `true` | Agentes com LLM real |
+| `USE_INTENT_LAYER` | `true` | Intent Layer no `/chat` |
+| `USE_MODEL_ROUTER` | `false` | Roteamento LLM por task_type |
+| `USE_MODEL_EVALUATION` | `false` | Comparação primary vs fallback |
+| `USE_EVOLUTION_LOOP` | `false` | Auto-otimização modelos/prompts/RAG |
+| `USE_AGENT_GENERATION` | `false` | Proposta controlada de novos agentes |
+| `USE_TUNED_PROMPTS` | `false` | Prompts Learning v2 por disciplina |
+
+## Modelos Ollama no WSL (instalados)
+
+`qwen3:8b` · `qwen3:14b` · `qwen3-coder` · `gemma3:12b` · `mistral:7b` · `phi3:mini` · `qwen2.5-coder` · `deepseek-coder` · `nomic-embed-text`
+
+Config padrão: chat=`qwen3:8b`, eng=`qwen3:14b`, fallback=`qwen3-coder`, embed=`nomic-embed-text`.  
+`GET /health` retorna lista dinâmica via Ollama; frontend exibe badge **WSL:** no `/chat`.
+
+## Bloqueio principal
+
+**RAG sem PDFs indexados** — colocar NBRs em `backend/data/nbrs/` e rodar `cd backend && python scripts/index_nbrs.py`.
+
+## Próximos passos (ordem recomendada)
+
+1. Indexar NBRs (desbloqueia qualidade das respostas técnicas)
+2. Simulador real `concrete_armed_simulator` (AED hoje usa heurísticas)
+3. Frontend `/aed` consumindo `POST /aed`
+4. Execution Planner (Orchestrator v2 — dependências entre disciplinas)
+5. Frontend `/copilot`
+6. Ativar e validar `USE_MODEL_ROUTER` / `USE_EVOLUTION_LOOP` em staging
+
+## Restrições arquiteturais recorrentes
+
+- Pipelines novos = camadas paralelas + feature flags + fallback seguro
+- Não alterar RAG v2 core, router global, agentes existentes, orchestrator base sem flag
+- Loops de evolução **nunca** auto-modificam código de agentes nem deletam modelos
+- Agent Generation **nunca** ativa agentes no dispatcher — só candidate registry auditável
 
 ---
 
@@ -42,23 +123,28 @@ Regra Cursor: `.cursor/rules/project-state-control-plane.mdc` (`alwaysApply: tru
 
 | Componente | Status | Observação |
 |------------|--------|------------|
-| FastAPI (`:8000`) | 🟢 | Gateway REST ativo |
-| PostgreSQL (`:5433`) | 🟢 | `conversations`, `agent_runs`, `orchestrator_logs`, `agent_feedback`, `aed_runs` |
-| Ollama (`:11434`) | 🟢 | LLM + embeddings locais |
+| FastAPI (`:8000`) | 🟢 | Gateway REST — rodar de `backend/` |
+| PostgreSQL (`:5433`) | 🟢 | conversations, agent_runs, orchestrator_logs, agent_feedback, aed_runs, evolution_*, model_*, agent_proposals |
+| Ollama (`:11434`) | 🟢 | 9 modelos no WSL (ver handoff) |
 | RAG v2 (FAISS) | 🟡 | Pipeline pronto; **índice vazio** (0 chunks) |
 | Agentes inteligentes | 🟢 | 15 disciplinas via `BaseAgentIntelligent` |
-| ChatAgent (CHAT) | 🟢 | Intent layer + system prompt fixo + `qwen3:8b` + metadata SaaS |
-| Agentes legados | 🟡 | Disponíveis via `USE_INTELLIGENT_AGENTS=false` |
-| Frontend Next.js | 🟢 | `/chat`, `/orchestrate`, `/history` — falta `/copilot` e `/aed` |
+| ChatAgent (CHAT) | 🟢 | Intent layer + `qwen3:8b` + badge modelos WSL no UI |
+| SIE v1 (ESTRUTURAL) | 🟢 | Classificação + normas + LLM especializado (opt-in no dispatch) |
+| Model Router + Eval Loop | 🟢 | `USE_MODEL_ROUTER=false` · `USE_MODEL_EVALUATION=false` |
+| Evolution Loop v1 | 🟢 | `USE_EVOLUTION_LOOP=false` — sinais, mutações, RAG boost |
+| Agent Generation v1 | 🟢 | `USE_AGENT_GENERATION=false` — sandbox + promotion gate |
+| Agentes legados | 🟡 | `USE_INTELLIGENT_AGENTS=false` |
+| Frontend Next.js | 🟢 | `/chat`, `/orchestrate`, `/history` — falta `/copilot`, `/aed` |
 | Copilot v1 | 🟢 | `POST /copilot` + Evaluation v2 + Self-Improving (background) |
-| AED v1 | 🟢 | `POST /aed` — pipeline completo + persistência `aed_runs` |
-| Structural Selector | 🟢 | Integrado no AED antes da simulação |
-| Learning Loops | 🟢 | v1 (feedback) + v2 (auto-tune prompts, opt-in) |
+| AED v1 | 🟢 | `POST /aed` + Structural Selector + `aed_runs` |
+| Learning Loops | 🟢 | v1 (feedback) + v2 (auto-tune, `USE_TUNED_PROMPTS=false`) |
 | Autenticação SaaS | 🔴 | Não implementada |
-| Orchestrator v2 | 🟡 | ContextGraph ✅ · Execution Planner 🔴 · dependências 🔴 |
+| Orchestrator v2 | 🟡 | ContextGraph ✅ · Execution Planner 🔴 |
 | ContextGraph | 🟢 | Ativo no orchestrator e Copilot |
+| Monorepo | 🟢 | `backend/` + `frontend/` |
 
-**Health check:** `GET /health` → `{ status, database, rag_version, rag_indexed_chunks, ollama, models }`
+**Health check:** `GET /health` → status, DB, RAG chunks, Ollama, `installed_models[]`, `models.installed_llm`  
+**Models status:** `GET /models/status` → router map, perfis PostgreSQL, modelos instalados
 
 ---
 
@@ -84,13 +170,18 @@ Fase 4  SaaS produção        ░░░░░░░░░░░░░░░░�
 | Jun/26 | Copilot v1 + Evaluation Loop v2 + Self-Improving Loop v1 | ✅ |
 | Jun/26 | ContextGraph integrado (Orchestrator + Copilot) | ✅ |
 | Jun/26 | **AED v1** — design autônomo multi-alternativa | ✅ |
-| Jun/26 | **Structural System Selector v1** — classificação pré-simulação | ✅ ← último marco |
+| Jun/26 | **Structural System Selector v1** | ✅ |
+| Jun/26 | **SIE v1** — Structural Intelligence Engine (ESTRUTURAL) | ✅ |
+| Jun/26 | **Model Router + Model Evaluation Loop v1** | ✅ |
+| Jun/26 | **Evolution Loop v1** + **Agent Generation Loop v1** | ✅ |
+| Jun/26 | **Monorepo** `backend/` + `frontend/` | ✅ |
+| Jun/26 | Health dinâmico — modelos Ollama WSL no UI | ✅ ← último marco |
 
 ### O que falta para fechar a Fase 2
 
 | # | Tarefa | Prioridade | Esforço |
 |---|--------|------------|---------|
-| 1 | **Indexar NBRs** (`python scripts/index_nbrs.py`) | 🔴 Crítica | Baixo |
+| 1 | **Indexar NBRs** (`cd backend && python scripts/index_nbrs.py`) | 🔴 Crítica | Baixo |
 | 2 | Simuladores por sistema estrutural (`concrete_armed_simulator`, etc.) | Alta | Médio |
 | 3 | Execution Planner (ordem + dependências entre disciplinas) | Alta | Alto |
 | 4 | Frontend `/aed` e `/copilot` | Média | Médio |
@@ -99,7 +190,7 @@ Fase 4  SaaS produção        ░░░░░░░░░░░░░░░░�
 
 ### Próximo passo recomendado
 
-> **1.** Colocar PDFs em `data/nbrs/` e rodar `python scripts/index_nbrs.py`  
+> **1.** Colocar PDFs em `backend/data/nbrs/` e rodar `cd backend && python scripts/index_nbrs.py`  
 > **2.** Implementar simulador dedicado `concrete_armed_simulator` (primeiro do registry)  
 > **3.** Criar página frontend `/aed` consumindo `POST /aed`
 
@@ -118,11 +209,16 @@ Fase 4  SaaS produção        ░░░░░░░░░░░░░░░░�
 | Orchestrator v1 | `core/orchestrator.py` | Decomposição multi-disciplina + síntese + feedback orchestrator |
 | Learning Loop v1 | `core/learning/` | Coleta `agent_feedback` (execução + rating) |
 | Learning Loop v2 | `core/learning_v2/` | Auto-tuning de prompts por disciplina (rule-based) |
+| Evolution Loop v1 | `core/evolution/` | Auto-otimização contínua: modelos, prompts, agentes, RAG |
+| Agent Generation v1 | `core/agent_generation/` | Proposta controlada de novos agentes (sandbox + promotion gate) |
+| Model Router | `core/models/model_router.py` | Roteamento LLM por `task_type` + fallbacks |
+| Model Evaluation Loop | `core/models/model_evaluation_loop.py` | Comparação primary vs fallback + perfis PostgreSQL |
 | Copilot v1 | `core/copilot/` | Intent → plan → execute → synthesize → evaluate |
 | Evaluation Loop v2 | `core/evaluation_v2/` | Autoavaliação do Copilot (4 níveis + PostgreSQL) |
 | Self-Improving Loop v1 | `core/self_improving/` | Meta-análise + patches propostos (sem auto-apply) |
 | AED v1 | `core/aed/` | Design autônomo: gerar → simular → comparar → selecionar → relatório |
 | Structural Selector | `core/structural_selector/` | Classificação de sistema estrutural antes da simulação AED |
+| SIE v1 | `core/structural_intelligence/` | Inteligência estrutural (classificação, normas, LLM) — só ESTRUTURAL |
 | PostgreSQL | `core/database/` | Models, repository, service, connection |
 | Settings | `config/settings.py` | Ollama, RAG, DB, feature flags |
 
@@ -130,7 +226,8 @@ Fase 4  SaaS produção        ░░░░░░░░░░░░░░░░�
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `GET` | `/health` | Status DB, RAG, Ollama |
+| `GET` | `/health` | Status DB, RAG, Ollama, modelos instalados WSL |
+| `GET` | `/models/status` | Model Router map, perfis, modelos Ollama |
 | `POST` | `/chat` | Single-domain: router → RAG → agente |
 | `POST` | `/orchestrate` | Multi-domain: decompose → N agentes → síntese |
 | `POST` | `/copilot` | Copilot v1: plan → multi-agente → síntese → score |
@@ -162,7 +259,7 @@ Fase 4  SaaS produção        ░░░░░░░░░░░░░░░░�
 | Embedding cache | `memory/embedding_cache.py` | 🟢 SQLite cache |
 | Script indexação | `scripts/index_nbrs.py` | 🟢 CLI para popular índice |
 
-**Dados:** PDFs em `data/nbrs/` e `data/tdrs/` → índice em `memory/faiss_index/`
+**Dados:** PDFs em `backend/data/nbrs/` e `backend/data/tdrs/` → índice em `backend/memory/faiss_index/`
 
 ## Persistência (PostgreSQL)
 
@@ -183,19 +280,66 @@ conversations
 | `system_failures` | `failure_type`, `route_decision`, `evaluation_scores`, `suggested_fix` |
 | `system_patches` | `patch_key`, `patch_version`, `patch_type`, `content` (JSON), `risk_score` |
 | `aed_runs` | `input_text`, `understanding`, `designs`, `simulations`, `comparison`, `selection`, `report`, `use_rag` |
+| `model_evaluations` | `task_type`, `discipline`, `primary_model`, `fallback_model`, `winner_model`, scores, latencies |
+| `model_performance_profile` | Ranking dinâmico por `task_type` + `discipline` + `model_name` |
+| `evolution_signals` | Sinais de execução coletados (modelo, prompt, agente, RAG, qualidade) |
+| `evolution_mutations` | Mutações propostas/aplicadas — audit trail obrigatório |
+| `agent_proposals` | Propostas de novos agentes (nunca auto-ativadas) |
+| `agent_simulations` | Execuções sandbox (20–50 runs) por proposta |
 
 **Docker:** `infra/docker/docker-compose.yml` — porta **5433**  
-**Init:** `python scripts/init_db.py`
+**Init:** `cd backend && python scripts/init_db.py`
 
 ### Learning Loop v2 (arquivos)
 
 ```
-data/learning_v2/
-  profiles/ESTRUTURAL.json    # discipline profile
-  prompts/estrutural/prompt_estrutural_v1.txt   # versionamento imutável
+backend/data/learning_v2/
+  profiles/ESTRUTURAL.json
+  prompts/estrutural/prompt_estrutural_v1.txt
 ```
 
-**Job manual:** `python scripts/run_auto_tune.py [--discipline ESTRUTURAL]`
+**Job manual:** `cd backend && python scripts/run_auto_tune.py [--discipline ESTRUTURAL]`
+
+### Evolution Loop v1 (arquivos)
+
+```
+core/evolution/
+  evolution_engine.py      # Orquestrador: sinais → análise → mutações → rollout
+  signal_collector.py      # Captura modelo, prompt, agente, RAG, qualidade
+  performance_analyzer.py  # win_rate, degradação, best_performer por contexto
+  mutation_engine.py       # Propostas MODEL | PROMPT | AGENT | RAG
+  rollout_manager.py       # Shadow test + safe rollout (USE_SAFE_ROLLOUT)
+  rag_evolution.py         # Boost/penalidade de chunks + cache alto valor
+  audit.py                 # Persistência evolution_signals / evolution_mutations
+
+data/evolution/
+  rag_chunk_profiles.json  # Boosts dinâmicos de normas/chunks
+```
+
+**Feature flags:** `USE_EVOLUTION_LOOP=false` (default), `USE_SAFE_ROLLOUT=true`  
+**Integrações:** dispatcher, model eval, copilot, aed, orchestrator, learning v2, chat stream, RAG retriever  
+**Safety:** nunca auto-delete agentes/modelos; mutações AGENT só auditáveis
+
+### Agent Generation Loop v1 (controlled)
+
+```
+core/agent_generation/
+  agent_proposer.py           # Detecta gaps → AgentProposal (nunca ativa)
+  agent_simulator.py          # 20–50 runs sandbox (heuristic ou LLM leve + RAG read-only)
+  agent_evaluator.py          # quality, consistency, latency, improvement
+  agent_registry_candidate.py # Registro versionado de candidatos (≠ dispatcher AGENTS)
+  agent_promotion_gate.py     # improvement > 8%, risk < threshold, domínio permitido
+  agent_generation_engine.py  # Orquestrador + integração Evolution Loop
+
+data/agent_generation/
+  candidates.json             # Candidatos versionados + promotion_log
+```
+
+**Feature flag:** `USE_AGENT_GENERATION=false` (default)  
+**Limites:** `MAX_AGENTS_TOTAL=25`, `MAX_NEW_AGENTS_PER_WEEK=2`  
+**Domínios permitidos:** ARQUITETURA, ESTRUTURAL, HIDROSSANITARIO, GEOTECNIA, DRENAGEM, ELETRICA, INCENDIO, ORCAMENTO, TRANSPORTES, INFRAESTRUTURA  
+**CLI:** `cd backend && python scripts/run_agent_generation.py [--discipline ESTRUTURAL] [--runs 30]`  
+**Safety:** promoção = registro em candidate registry — dispatcher nunca alterado automaticamente
 
 **Runtime (opt-in):** `USE_TUNED_PROMPTS=true` — agentes inteligentes usam a versão ativa do profile em `build_prompt()`.
 
@@ -210,12 +354,17 @@ data/learning_v2/
 | Database | `tests/test_database.py` | Persistência |
 | Learning Loop | `tests/test_learning_loop.py` | Feedback, low-quality, dispatcher |
 | Learning Loop v2 | `tests/test_learning_loop_v2.py` | Profiles, versionamento, auto-tune |
+| Evolution Loop v1 | `tests/test_evolution_loop.py` | Sinais, mutações, rollout, RAG evolution |
+| Agent Generation v1 | `tests/test_agent_generation.py` | Proposta, sandbox, promotion gate, limites |
 | Copilot v1 | `tests/test_copilot.py` | Intent, plan, execução, avaliação |
 | Evaluation Loop v2 | `tests/test_evaluation_loop_v2.py` | Scores, pipeline, persistência |
 | Self-Improving Loop | `tests/test_self_improving_loop.py` | Meta-análise, patches, persistência |
 | AED v1 | `tests/test_aed.py` | Pipeline completo, ≥2 designs/disciplina, persistência |
-| Structural Selector | `tests/test_structural_selector.py` | Heurísticas, normas, integração AED |
-| Agent Registry | `tests/test_agent_registry.py` | Mapeamento disciplinas |
+| Structural Selector | `backend/tests/test_structural_selector.py` | Heurísticas, normas, integração AED |
+| SIE v1 | `backend/tests/test_structural_intelligence.py` | Classificação, dispatch adapter |
+| Model Router | `backend/tests/test_model_router.py` | Roteamento por task_type |
+| Model Evaluation | `backend/tests/test_model_evaluation_loop.py` | Scorer, perfis PostgreSQL |
+| Agent Registry | `backend/tests/test_agent_registry.py` | Mapeamento disciplinas |
 | BaseAgentIntelligent | `tests/test_base_agent_intelligent.py` | Pipeline inteligente (mock LLM) |
 
 ---
@@ -471,6 +620,12 @@ input → project_understanding → design_generator (≥2 opções/disciplina)
 - [x] Evaluation Loop v2 — autoavaliação 4 níveis + `copilot_evaluations`
 - [x] Self-Improving Loop v1 — meta-análise + patches propostos (sem auto-apply)
 - [x] Integração background no `/copilot` (evaluation + self-improving)
+- [x] Evolution Loop v1 — sinais + mutações + rollout seguro + RAG evolution
+- [x] Agent Generation Loop v1 — proposta + sandbox + promotion gate (controlled)
+- [x] Model Router v1 — roteamento LLM por `task_type` + `GET /models/status`
+- [x] Model Evaluation Loop v1 — comparação primary/fallback + `model_performance_profile`
+- [x] SIE v1 — Structural Intelligence Engine (ESTRUTURAL only)
+- [x] Monorepo `backend/` + `frontend/`
 
 ---
 
@@ -504,6 +659,20 @@ input → project_understanding → design_generator (≥2 opções/disciplina)
 - [ ] Simuladores dedicados por `simulation_module` (hoje só roteamento/metadata)
 - [ ] Expandir heurísticas (spans numéricos, cargas, seismic zone)
 
+### SIE v1 — Structural Intelligence Engine ✅
+
+- [x] `core/structural_intelligence/` — classificação + normas + prompt + LLM
+- [x] Integração via `dispatch_adapter` só para ESTRUTURAL
+- [x] Fallback seguro para fluxo padrão do agente
+- [ ] Expandir para outras disciplinas (futuro)
+
+### Model Router + Evaluation ✅ (opt-in)
+
+- [x] `core/models/model_router.py` — mapa por task_type (phi3, mistral, qwen3, gemma3, etc.)
+- [x] `core/models/model_evaluation_loop.py` — primary vs fallback + PostgreSQL
+- [x] `GET /models/status`
+- [ ] Ativar `USE_MODEL_ROUTER=true` após validação em staging
+
 ---
 
 ## Fase 3 — RAG Avançado 🔴 NÃO INICIADA
@@ -531,7 +700,7 @@ input → project_understanding → design_generator (≥2 opções/disciplina)
 
 | Tarefa | Fase | Prioridade |
 |--------|------|------------|
-| Indexar PDFs NBR em `data/nbrs/` | 1 | 🔴 Crítica |
+| Indexar PDFs NBR em `backend/data/nbrs/` | 1 | 🔴 Crítica |
 | Página frontend `/aed` | 2 | Alta |
 | Página frontend `/copilot` | 1b | Alta |
 | `concrete_armed_simulator` (primeiro simulador real) | 2 | Alta |
@@ -614,33 +783,40 @@ Resposta JSON → Frontend
 
 ```txt
 ia-server-santos/
-├── app/                    # API REST (routes, services, schemas)
-├── agents/                 # Agentes legados (BaseAgent simulado)
-├── core/
-│   ├── agents/             # Agentes inteligentes + factories
-│   ├── database/           # PostgreSQL ORM + service
-│   ├── learning/           # Learning Loop v1 (feedback_service)
-│   ├── learning_v2/        # Learning Loop v2 (auto-tuning prompts)
-│   ├── copilot/            # Copilot v1 (plan + evaluate)
-│   ├── evaluation_v2/      # Evaluation Loop v2 (autoavaliação Copilot)
-│   ├── self_improving/     # Self-Improving Loop v1 (patches propostos)
-│   ├── aed/                # AED v1 (design autônomo)
-│   ├── structural_selector/  # Classificação de sistema estrutural
-│   ├── agent_registry.py   # Fonte única nomes de agentes
-│   ├── router.py           # Router v2
-│   ├── dispatcher.py       # Dispatch + persistência
-│   ├── orchestrator.py     # Orchestrator v1
-│   └── context_graph.py    # ContextGraph (Orchestrator v2)
-├── memory/                 # RAG v2 (FAISS, embeddings, chunker)
-├── models/                 # Ollama client
-├── config/                 # Settings centralizadas
-├── data/nbrs/              # PDFs normativos (input RAG)
-├── data/tdrs/              # TDRs (input RAG)
+├── backend/                # Python / FastAPI
+│   ├── app/                # API REST (routes, services, schemas)
+│   ├── agents/             # Agentes legados (BaseAgent simulado)
+│   ├── core/
+│   │   ├── agents/         # Agentes inteligentes + factories
+│   │   ├── database/       # PostgreSQL ORM + service
+│   │   ├── learning/       # Learning Loop v1 (feedback_service)
+│   │   ├── learning_v2/    # Learning Loop v2 (auto-tuning prompts)
+│   │   ├── evolution/      # Evolution Loop v1 (auto-otimização contínua)
+│   │   ├── agent_generation/  # Agent Generation Loop v1 (controlled)
+│   │   ├── models/         # Model Router + Evaluation Loop
+│   │   ├── copilot/        # Copilot v1 (plan + evaluate)
+│   │   ├── evaluation_v2/  # Evaluation Loop v2 (autoavaliação Copilot)
+│   │   ├── self_improving/ # Self-Improving Loop v1 (patches propostos)
+│   │   ├── aed/            # AED v1 (design autônomo)
+│   │   ├── structural_selector/  # Classificação de sistema estrutural
+│   │   ├── structural_intelligence/  # SIE v1 (ESTRUTURAL)
+│   │   ├── agent_registry.py
+│   │   ├── router.py       # Router v2
+│   │   ├── dispatcher.py   # Dispatch + persistência
+│   │   ├── orchestrator.py # Orchestrator v1
+│   │   └── context_graph.py
+│   ├── memory/             # RAG v2 (FAISS, embeddings, chunker)
+│   ├── models/             # Ollama client
+│   ├── config/             # Settings centralizadas
+│   ├── data/nbrs/          # PDFs normativos (input RAG)
+│   ├── data/tdrs/          # TDRs (input RAG)
+│   ├── scripts/            # init_db, index_nbrs, run_auto_tune
+│   └── tests/              # Test suites
 ├── frontend/               # Next.js SaaS UI
 ├── infra/docker/           # PostgreSQL compose
-├── scripts/                # init_db, index_nbrs
-├── tests/                  # Test suites
-└── docs/                   # Documentação (este arquivo)
+├── docs/                   # Documentação (este arquivo)
+├── Makefile                # atalhos (make api, make test, …)
+└── pyproject.toml          # pytest → backend/
 ```
 
 ---
@@ -652,7 +828,7 @@ ia-server-santos/
 - Python 3.11+
 - Node.js 18+
 - Docker (PostgreSQL)
-- Ollama com modelos: `qwen3:14b`, `qwen3-coder`, `nomic-embed-text`
+- Ollama com modelos instalados no WSL (mínimo: `qwen3:8b`, `qwen3:14b`, `qwen3-coder`, `nomic-embed-text`)
 
 ## Subir stack completa
 
@@ -661,19 +837,24 @@ ia-server-santos/
 cd infra/docker && docker compose up -d
 
 # 2. Banco
-python scripts/init_db.py
+cd backend && python scripts/init_db.py
+# ou na raiz: make db-init
 
 # 3. Ollama (se não estiver rodando)
+ollama pull qwen3:8b
 ollama pull qwen3:14b
 ollama pull qwen3-coder
 ollama pull nomic-embed-text
+# opcionais já usados pelo Model Router:
+# ollama pull gemma3:12b mistral:7b phi3:mini qwen2.5-coder deepseek-coder
 
 # 4. Indexar NBRs (recomendado)
-# Colocar PDFs em data/nbrs/ e executar:
-python scripts/index_nbrs.py
+# Colocar PDFs em backend/data/nbrs/ e executar:
+cd backend && python scripts/index_nbrs.py
 
 # 5. Backend
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+cd backend && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# ou na raiz: make api
 
 # 6. Frontend
 cd frontend && npm run dev
@@ -688,11 +869,16 @@ cd frontend && npm run dev
 | `OLLAMA_LLM_MODEL` | `qwen3:14b` | Modelo primário |
 | `OLLAMA_CHAT_MODEL` | `qwen3:8b` | LLM leve para chat conversacional |
 | `USE_INTENT_LAYER` | `true` | Intent Layer v2 no chat (`false` = router legado) |
+| `USE_MODEL_ROUTER` | `false` | Roteamento centralizado de modelos LLM por task_type |
+| `USE_MODEL_EVALUATION` | `false` | Comparação primary vs fallback + perfis PostgreSQL |
+| `USE_EVOLUTION_LOOP` | `false` | Evolution Loop v1 — auto-otimização contínua |
+| `USE_SAFE_ROLLOUT` | `true` | Shadow test antes de aplicar mutações do Evolution Loop |
+| `USE_AGENT_GENERATION` | `false` | Agent Generation Loop v1 — proposta controlada de agentes |
 | `CHAT_USE_LLM` | `true` | `false` = só templates (testes/offline) |
 
 **Streaming:** `POST /chat/stream` (SSE) — tokens em tempo real + status por agente/modelo.
 
-Settings completas: `config/settings.py`
+Settings completas: `backend/config/settings.py`
 
 ---
 
@@ -733,6 +919,12 @@ Settings completas: `config/settings.py`
 | 2026-06 | Self-Improving Loop v1 (`core/self_improving/`) | Patches propostos auditáveis — nenhuma auto-modificação |
 | 2026-06 | AED v1 (`core/aed/`, `POST /aed`, `aed_runs`) | Design autônomo paralelo — RAG v2 read-only, sem alterar agentes |
 | 2026-06 | Structural System Selector (`core/structural_selector/`) | Classificação de sistema estrutural plugável no AED antes da simulação |
+| 2026-06 | Evolution Loop v1 (`core/evolution/`) | Auto-otimização modelos/prompts/agentes/RAG com feature flags + audit trail |
+| 2026-06 | Agent Generation v1 (`core/agent_generation/`) | Proposta controlada de agentes — sandbox, avaliação, promotion gate auditável |
+| 2026-06 | Monorepo `backend/` + `frontend/` | Separação física Python/Next.js; servidor sobe de `backend/` |
+| 2026-06 | Health dinâmico (`installed_models` via Ollama) | UI reflete modelos reais do WSL |
+| 2026-06 | SIE v1 (`core/structural_intelligence/`) | Pipeline estrutural especializado plugável no dispatcher |
+| 2026-06 | Model Router + Evaluation Loop v1 | Roteamento e ranking LLM por task_type (opt-in) |
 
 ---
 

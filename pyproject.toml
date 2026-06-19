@@ -1,0 +1,10 @@
+[project]
+name = "ia-server-santos"
+version = "1.0.0"
+description = "IA Server Santos — monorepo backend (FastAPI) + frontend (Next.js)"
+readme = "README.md"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+pythonpath = ["backend"]
