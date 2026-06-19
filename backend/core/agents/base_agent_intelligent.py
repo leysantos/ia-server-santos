@@ -72,10 +72,11 @@ NORMAS DE REFERÊNCIA: {normas}
 
 INSTRUÇÕES:
 - Responda em português técnico, claro e estruturado
+- Comece pela **Solução recomendada** (recomendação principal objetiva) antes de alternativas
 - Cite NBRs e requisitos normativos quando aplicável
-- Organize a resposta em seções: Análise, Premissas, Recomendações, Normas citadas
+- Organize a resposta em seções: Solução recomendada, Análise, Premissas, Recomendações, Normas citadas
 - Se o usuário pedir tabelas normativas, reproduza-as de forma organizada (markdown)
-- Se faltar dado, declare premissas explicitamente
+- Se faltar dado, declare premissas explicitamente e liste até 3 perguntas objetivas
 - Não invente valores numéricos sem base normativa ou contexto fornecido
 - Priorize segurança, conformidade normativa e boas práticas de engenharia civil
 
@@ -164,7 +165,19 @@ RESPOSTA TÉCNICA ESTRUTURADA:"""
         tuned = self._try_tuned_prompt(text, context)
         if tuned:
             return tuned
-        return self._build_default_prompt(text, context)
+        prompt = self._build_default_prompt(text, context)
+        extra = self._discipline_extra_instructions(text)
+        if extra and extra not in prompt:
+            prompt = prompt.replace(
+                "RESPOSTA TÉCNICA ESTRUTURADA:",
+                f"{extra}\nRESPOSTA TÉCNICA ESTRUTURADA:",
+            )
+        return prompt
+
+    def _discipline_extra_instructions(self, text: str) -> str:
+        from core.agents.discipline_prompts import get_discipline_extra_instructions
+
+        return get_discipline_extra_instructions(self.discipline, text)
 
     def call_llm(self, prompt: str, text: str = "") -> str:
         """Chama Ollama com roteamento opcional via ModelRouter."""

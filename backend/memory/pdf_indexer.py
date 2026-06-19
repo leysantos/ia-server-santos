@@ -53,6 +53,7 @@ class PDFIndexer:
         self,
         pdf_path: Path,
         discipline: str,
+        content_hash: str = "",
     ) -> tuple[str, str, dict]:
         nbr_code = parse_nbr_code(pdf_path.name)
         resolved_discipline = discipline or infer_discipline(nbr_code)
@@ -61,10 +62,16 @@ class PDFIndexer:
         metadata = {
             "path": str(pdf_path.resolve()),
             "filename": pdf_path.name,
+            "content_hash": content_hash,
         }
         if nbr_code:
             metadata["nbr_code"] = nbr_code
             metadata["norma"] = nbr_label(nbr_code)
+            from memory.nbr_edition import parse_edition_year
+
+            edition_year = parse_edition_year(pdf_path.name, nbr_code)
+            if edition_year:
+                metadata["edition_year"] = edition_year
 
         return resolved_discipline, label, metadata
 
@@ -84,6 +91,12 @@ class PDFIndexer:
         if self.store.is_indexed(pdf_key) and not force:
             return 0
 
+        from core.knowledge.resolver import file_content_hash
+
+        content_hash = file_content_hash(pdf_path)
+        if self.store.is_indexed_by_hash(content_hash) and not force:
+            return 0
+
         if force and self.store.is_indexed(pdf_key):
             self.store.remove_by_path(pdf_key)
 
@@ -92,7 +105,7 @@ class PDFIndexer:
             raise ValueError(f"Nenhum texto extraído do PDF: {pdf_path.name}")
 
         resolved_discipline, label, metadata = self._resolve_nbr_metadata(
-            pdf_path, discipline
+            pdf_path, discipline, content_hash
         )
         source_name = source or label
         chunks_to_store: list[DocumentChunk] = []

@@ -4,6 +4,7 @@ import { useState } from "react";
 import ChatBox from "@/components/ChatBox";
 import JsonViewer from "@/components/JsonViewer";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import ShellHeader from "@/components/ShellHeader";
 import { api } from "@/services/api";
 import type { OrchestrateResponse } from "@/types/api";
 
@@ -36,12 +37,14 @@ export default function OrchestratePage() {
 
   return (
     <>
-      <header className="shrink-0 border-b border-slate-800/80 px-6 py-4">
-        <h1 className="text-lg font-semibold text-white">Orquestrador Multidisciplinar</h1>
-        <p className="text-sm text-slate-500">
-          Decomposição automática → múltiplos agentes → relatório unificado
-        </p>
-      </header>
+      <ShellHeader className="px-6">
+        <div className="min-w-0">
+          <h1 className="text-lg font-semibold text-white">Orquestrador Multidisciplinar</h1>
+          <p className="text-sm text-slate-500">
+            Decomposição automática → múltiplos agentes → relatório unificado
+          </p>
+        </div>
+      </ShellHeader>
 
       <div className="flex-1 overflow-y-auto px-6 py-6">
         {loading && (

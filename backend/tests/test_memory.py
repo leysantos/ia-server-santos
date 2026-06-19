@@ -90,7 +90,9 @@ def test_retriever_dedup_and_limit():
             def embed_query(self, _query):
                 return [1.0, 0.0, 0.0]
 
-        retriever = Retriever(store=store, embedder=FakeEmbedder(), min_score=0.0)
+        retriever = Retriever(
+            store=store, embedder=FakeEmbedder(), min_score=0.0, semantic_cache=None
+        )
         context = retriever.build_context(
             query="viga",
             discipline="ESTRUTURAL",

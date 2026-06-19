@@ -5,8 +5,8 @@ Repository — acesso direto ao PostgreSQL (SQLAlchemy ORM).
 import uuid
 from typing import Any, Optional
 
-from sqlalchemy import desc, select
-from sqlalchemy.orm import Session
+from sqlalchemy import desc, or_, select
+from sqlalchemy.orm import Session, joinedload
 
 from core.database.models import (
     AedRun,
@@ -15,12 +15,15 @@ from core.database.models import (
     AgentRun,
     AgentSimulationRecord,
     Conversation,
+    ConversationMessage,
     CopilotEvaluationRecord,
     ModelEvaluation,
     ModelPerformanceProfile,
     EvolutionMutation,
     EvolutionSignalRecord,
     OrchestratorLog,
+    Project,
+    ProjectFile,
     SystemFailure,
     SystemPatch,
 )
@@ -36,14 +39,232 @@ class DatabaseRepository:
         self,
         input_text: str,
         mode: str = "single",
+        title: Optional[str] = None,
+        project_id: Optional[uuid.UUID] = None,
     ) -> Conversation:
-        conversation = Conversation(input_text=input_text, mode=mode)
+        derived_title = title or (input_text[:80] + ("…" if len(input_text) > 80 else ""))
+        conversation = Conversation(
+            input_text=input_text,
+            mode=mode,
+            title=derived_title,
+            project_id=project_id,
+            message_count=0,
+        )
         self.db.add(conversation)
         self.db.flush()
         return conversation
 
+    def update_conversation(self, conversation: Conversation, **fields: Any) -> Conversation:
+        if "title" in fields and fields["title"] is not None:
+            conversation.title = fields["title"]
+        if "project_id" in fields:
+            conversation.project_id = fields["project_id"]
+        self.db.flush()
+        return conversation
+
+    def list_conversations(
+        self,
+        limit: int = 50,
+        project_id: Optional[uuid.UUID] = None,
+        unassigned_only: bool = False,
+    ) -> list[Conversation]:
+        stmt = select(Conversation).order_by(desc(Conversation.updated_at)).limit(limit)
+        if project_id:
+            stmt = stmt.where(Conversation.project_id == project_id)
+        elif unassigned_only:
+            stmt = stmt.where(Conversation.project_id.is_(None))
+        return list(self.db.scalars(stmt).all())
+
+    def delete_conversation(self, conversation_id: uuid.UUID) -> bool:
+        conversation = self.get_conversation(conversation_id)
+        if not conversation:
+            return False
+        self.db.delete(conversation)
+        self.db.flush()
+        return True
+
+    # --- conversation_messages ---
+
+    def create_message(
+        self,
+        conversation_id: uuid.UUID,
+        role: str,
+        content: str,
+        meta: Optional[dict] = None,
+    ) -> ConversationMessage:
+        message = ConversationMessage(
+            conversation_id=conversation_id,
+            role=role,
+            content=content,
+            meta=meta,
+        )
+        self.db.add(message)
+        conversation = self.get_conversation(conversation_id)
+        if conversation:
+            conversation.message_count = (conversation.message_count or 0) + 1
+        self.db.flush()
+        return message
+
+    def list_messages(
+        self,
+        conversation_id: uuid.UUID,
+        limit: int = 100,
+    ) -> list[ConversationMessage]:
+        stmt = (
+            select(ConversationMessage)
+            .where(ConversationMessage.conversation_id == conversation_id)
+            .order_by(ConversationMessage.created_at)
+            .limit(limit)
+        )
+        return list(self.db.scalars(stmt).all())
+
+    # --- projects ---
+
+    def create_project(self, name: str, description: Optional[str] = None) -> Project:
+        project = Project(name=name, description=description)
+        self.db.add(project)
+        self.db.flush()
+        return project
+
+    def get_project(self, project_id: uuid.UUID) -> Optional[Project]:
+        return self.db.get(Project, project_id)
+
+    def get_project_detail(self, project_id: uuid.UUID) -> Optional[Project]:
+        stmt = (
+            select(Project)
+            .where(Project.id == project_id)
+            .options(
+                joinedload(Project.conversations),
+                joinedload(Project.files),
+            )
+        )
+        return self.db.scalars(stmt).unique().first()
+
+    def list_projects(self, limit: int = 50) -> list[Project]:
+        stmt = select(Project).order_by(desc(Project.updated_at)).limit(limit)
+        return list(self.db.scalars(stmt).all())
+
+    def update_project(
+        self,
+        project: Project,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> Project:
+        if name is not None:
+            project.name = name
+        if description is not None:
+            project.description = description
+        self.db.flush()
+        return project
+
+    def delete_project(self, project_id: uuid.UUID) -> bool:
+        project = self.get_project(project_id)
+        if not project:
+            return False
+        self.db.delete(project)
+        self.db.flush()
+        return True
+
+    # --- project_files ---
+
+    def create_project_file(
+        self,
+        project_id: uuid.UUID,
+        filename: str,
+        storage_path: str,
+        content_type: Optional[str] = None,
+        size_bytes: Optional[int] = None,
+    ) -> ProjectFile:
+        row = ProjectFile(
+            project_id=project_id,
+            filename=filename,
+            storage_path=storage_path,
+            content_type=content_type,
+            size_bytes=size_bytes,
+        )
+        self.db.add(row)
+        self.db.flush()
+        return row
+
+    def list_project_files(self, project_id: uuid.UUID) -> list[ProjectFile]:
+        stmt = (
+            select(ProjectFile)
+            .where(ProjectFile.project_id == project_id)
+            .order_by(desc(ProjectFile.created_at))
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def get_project_file(self, file_id: uuid.UUID) -> Optional[ProjectFile]:
+        return self.db.get(ProjectFile, file_id)
+
+    def delete_project_file(self, file_id: uuid.UUID) -> bool:
+        row = self.get_project_file(file_id)
+        if not row:
+            return False
+        self.db.delete(row)
+        self.db.flush()
+        return True
+
+    # --- search ---
+
+    def search_projects(self, query: str, limit: int = 20) -> list[Project]:
+        pattern = f"%{query.strip()}%"
+        stmt = (
+            select(Project)
+            .where(
+                or_(
+                    Project.name.ilike(pattern),
+                    Project.description.ilike(pattern),
+                )
+            )
+            .order_by(desc(Project.updated_at))
+            .limit(limit)
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def search_conversations(
+        self,
+        query: str,
+        limit: int = 30,
+        project_id: Optional[uuid.UUID] = None,
+    ) -> list[Conversation]:
+        pattern = f"%{query.strip()}%"
+        msg_subq = (
+            select(ConversationMessage.conversation_id)
+            .where(ConversationMessage.content.ilike(pattern))
+            .distinct()
+        )
+        stmt = (
+            select(Conversation)
+            .where(
+                or_(
+                    Conversation.title.ilike(pattern),
+                    Conversation.input_text.ilike(pattern),
+                    Conversation.id.in_(msg_subq),
+                )
+            )
+            .order_by(desc(Conversation.updated_at))
+            .limit(limit)
+        )
+        if project_id:
+            stmt = stmt.where(Conversation.project_id == project_id)
+        return list(self.db.scalars(stmt).all())
+
     def get_conversation(self, conversation_id: uuid.UUID) -> Optional[Conversation]:
         return self.db.get(Conversation, conversation_id)
+
+    def get_conversation_detail(self, conversation_id: uuid.UUID) -> Optional[Conversation]:
+        stmt = (
+            select(Conversation)
+            .where(Conversation.id == conversation_id)
+            .options(
+                joinedload(Conversation.messages),
+                joinedload(Conversation.agent_runs),
+                joinedload(Conversation.orchestrator_logs),
+            )
+        )
+        return self.db.scalars(stmt).unique().first()
 
     # --- orchestrator_logs ---
 
@@ -846,22 +1067,88 @@ class DatabaseRepository:
         return list(self.db.scalars(stmt).all())
 
     @staticmethod
-    def serialize_conversation(conversation: Conversation) -> dict[str, Any]:
+    def serialize_message(message: ConversationMessage) -> dict[str, Any]:
+        return {
+            "id": str(message.id),
+            "conversation_id": str(message.conversation_id),
+            "role": message.role,
+            "content": message.content,
+            "meta": message.meta,
+            "created_at": message.created_at.isoformat() if message.created_at else None,
+        }
+
+    @staticmethod
+    def serialize_project(project: Project, *, include_children: bool = False) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "id": str(project.id),
+            "name": project.name,
+            "description": project.description,
+            "created_at": project.created_at.isoformat() if project.created_at else None,
+            "updated_at": project.updated_at.isoformat() if project.updated_at else None,
+            "conversation_count": len(project.conversations) if project.conversations else 0,
+            "file_count": len(project.files) if project.files else 0,
+        }
+        if include_children:
+            data["conversations"] = [
+                DatabaseRepository.serialize_conversation_summary(c)
+                for c in sorted(
+                    project.conversations,
+                    key=lambda x: x.updated_at or x.created_at,
+                    reverse=True,
+                )
+            ]
+            data["files"] = [
+                DatabaseRepository.serialize_project_file(f) for f in project.files
+            ]
+        return data
+
+    @staticmethod
+    def serialize_project_file(row: ProjectFile) -> dict[str, Any]:
+        return {
+            "id": str(row.id),
+            "project_id": str(row.project_id),
+            "filename": row.filename,
+            "storage_path": row.storage_path,
+            "content_type": row.content_type,
+            "size_bytes": row.size_bytes,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+    @staticmethod
+    def serialize_conversation_summary(conversation: Conversation) -> dict[str, Any]:
         return {
             "id": str(conversation.id),
+            "title": conversation.title or conversation.input_text[:80],
             "input_text": conversation.input_text,
             "mode": conversation.mode,
+            "message_count": conversation.message_count or 0,
+            "project_id": str(conversation.project_id) if conversation.project_id else None,
             "created_at": conversation.created_at.isoformat() if conversation.created_at else None,
             "updated_at": conversation.updated_at.isoformat() if conversation.updated_at else None,
-            "orchestrator_logs": [
+        }
+
+    @staticmethod
+    def serialize_conversation(
+        conversation: Conversation,
+        *,
+        include_messages: bool = True,
+        include_audit: bool = True,
+    ) -> dict[str, Any]:
+        data = DatabaseRepository.serialize_conversation_summary(conversation)
+        if include_messages:
+            data["messages"] = [
+                DatabaseRepository.serialize_message(m) for m in conversation.messages
+            ]
+        if include_audit:
+            data["orchestrator_logs"] = [
                 DatabaseRepository.serialize_orchestrator_log(log)
                 for log in conversation.orchestrator_logs
-            ],
-            "agent_runs": [
+            ]
+            data["agent_runs"] = [
                 DatabaseRepository.serialize_agent_run(run)
                 for run in conversation.agent_runs
-            ],
-        }
+            ]
+        return data
 
     @staticmethod
     def serialize_orchestrator_log(log: OrchestratorLog) -> dict[str, Any]:

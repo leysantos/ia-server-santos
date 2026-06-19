@@ -1,4 +1,4 @@
-from config.settings import USE_INTELLIGENT_AGENTS
+from config.settings import USE_INTELLIGENT_AGENTS, USE_KNOWLEDGE_ROUTER
 from agents.chat import ChatAgent
 from core.agents.intelligent_factory import build_intelligent_agents
 from core.agents.legacy_factory import build_legacy_agents
@@ -58,6 +58,11 @@ def _agent_error_response(
 
 
 def dispatch(route_result: dict, persist: bool = True):
+    if USE_KNOWLEDGE_ROUTER and route_result.get("_use_rag", True):
+        from core.knowledge.knowledge_base_router import enrich_route_with_knowledge
+
+        route_result = enrich_route_with_knowledge(route_result)
+
     discipline = route_result.get("discipline")
     user_input = route_result.get("input")
     context = route_result.get("context")

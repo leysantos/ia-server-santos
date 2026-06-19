@@ -286,6 +286,7 @@ def _dispatch_step(
     use_rag: bool,
     persist: bool,
     conversation_id: Optional[str],
+    project_id: Optional[str] = None,
 ) -> dict[str, Any]:
     from core.dispatcher import dispatch
     from memory.rag_engine import get_rag_engine
@@ -296,6 +297,8 @@ def _dispatch_step(
         "agent": step.agent,
         "_conversation_id": conversation_id,
     }
+    if project_id:
+        route_result["_project_id"] = project_id
 
     if step.domain == "chat":
         route_result["_use_rag"] = False
@@ -313,6 +316,7 @@ def execute_intent(
     use_rag: bool = True,
     persist: bool = True,
     conversation_id: Optional[str] = None,
+    project_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     Executa o plano da Intent Layer e retorna payload unificado.
@@ -321,7 +325,7 @@ def execute_intent(
 
     for step in analysis.execution_plan:
         segment_responses.append(
-            _dispatch_step(step, use_rag, persist, conversation_id)
+            _dispatch_step(step, use_rag, persist, conversation_id, project_id)
         )
 
     primary = segment_responses[-1]
@@ -347,11 +351,13 @@ def _stream_step_events(
     use_rag: bool,
     persist: bool,
     conversation_id: Optional[str],
+    project_id: Optional[str] = None,
 ):
     """Gera eventos token + segment_done para um passo do plano."""
     from agents.chat import ChatAgent, detect_intent
-    from core.dispatcher import AGENTS, _agent_error_response
+    from core.dispatcher import AGENTS, _agent_error_response, dispatch
     from core.database.service import save_agent_run
+    from core.stream_events import iter_text_chunks
     from memory.rag_engine import get_rag_engine
 
     agent = AGENTS.get(step.discipline)
@@ -361,22 +367,61 @@ def _stream_step_events(
         "agent": step.agent,
         "_conversation_id": conversation_id,
     }
+    if project_id:
+        route_result["_project_id"] = project_id
 
     rag_context = ""
     use_rag_step = False
     if step.domain == "chat":
         route_result["_use_rag"] = False
     elif use_rag:
+        if project_id:
+            yield (
+                "status",
+                {
+                    "message": "Consultando documentos do projeto...",
+                    "phase": "project_rag",
+                    "step": step.to_dict(),
+                },
+            )
+        yield (
+            "status",
+            {
+                "message": "Consultando base normativa (RAG)...",
+                "phase": "rag",
+                "step": step.to_dict(),
+            },
+        )
         engine = get_rag_engine()
         route_result = engine.enrich_route_result(route_result)
         rag_context = route_result.get("context") or ""
         use_rag_step = True
+        agent_rag = route_result.get("agent_rag") or {}
+        hits = agent_rag.get("hits_count")
+        ctx_len = len(rag_context)
+        rag_detail = f"{hits} trecho(s)" if hits else f"{ctx_len} chars"
+        yield (
+            "status",
+            {
+                "message": f"Contexto recuperado ({rag_detail}) — iniciando modelo...",
+                "phase": "rag_done",
+                "step": step.to_dict(),
+            },
+        )
     else:
         route_result["_use_rag"] = False
 
     tokens: list[str] = []
     try:
         if agent and hasattr(agent, "iter_tokens"):
+            yield (
+                "status",
+                {
+                    "message": f"Gerando resposta: {step.agent}...",
+                    "phase": "llm_start",
+                    "step": step.to_dict(),
+                },
+            )
             if isinstance(agent, ChatAgent):
                 for token in agent.iter_tokens(step.input):
                     tokens.append(token)
@@ -401,11 +446,22 @@ def _stream_step_events(
                     step.input, full_text, rag_context
                 )
         else:
-            response = _dispatch_step(step, use_rag, persist=False, conversation_id=conversation_id)
+            yield (
+                "status",
+                {
+                    "message": f"Processando: {step.agent}...",
+                    "phase": "llm_start",
+                    "step": step.to_dict(),
+                },
+            )
+            # route_result já enriquecido — evita RAG duplicado em _dispatch_step
+            response = dispatch(route_result, persist=False)
             full_text = response.get("result") or response.get("response") or ""
             model = (response.get("extra") or {}).get("llm_model")
             extra = {"llm_model": model} if model else {}
-            yield ("token", _token_payload(step, full_text, agent=agent, **extra))
+            for chunk in iter_text_chunks(full_text):
+                tokens.append(chunk)
+                yield ("token", _token_payload(step, chunk, agent=agent, **extra))
 
         if persist:
             save_agent_run(route_result=route_result, response=response)
@@ -442,6 +498,7 @@ def iter_intent_events(
     use_rag: bool = True,
     persist: bool = True,
     conversation_id: Optional[str] = None,
+    project_id: Optional[str] = None,
 ):
     """
     Generator de eventos para SSE: status | intent | token | segment_done | done.
@@ -460,13 +517,14 @@ def iter_intent_events(
 
     segment_responses: list[dict[str, Any]] = []
 
+    total_steps = len(analysis.execution_plan)
     for step in analysis.execution_plan:
         label = "ChatAgent" if step.domain == "chat" else step.discipline
         yield (
             "status",
             {
-                "message": f"Modelo respondendo: {label} ({step.agent})...",
-                "phase": "agent_start",
+                "message": f"Passo {step.step}/{total_steps}: {label} ({step.agent})",
+                "phase": "step",
                 "step": step.to_dict(),
             },
         )
@@ -484,7 +542,7 @@ def iter_intent_events(
                 },
             )
 
-        for event in _stream_step_events(step, use_rag, persist, conversation_id):
+        for event in _stream_step_events(step, use_rag, persist, conversation_id, project_id):
             if event[0] == "segment_done":
                 segment_responses.append(event[1])
             yield event

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import type { ChatMessage } from "@/types/api";
 import JsonViewer from "./JsonViewer";
 import LoadingSpinner from "./LoadingSpinner";
@@ -10,6 +11,16 @@ interface MessageListProps {
 }
 
 export default function MessageList({ messages, loading }: MessageListProps) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const isStreaming = messages.some((m) => m.meta?.streaming);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({
+      behavior: isStreaming ? "auto" : "smooth",
+      block: "end",
+    });
+  }, [messages, isStreaming]);
+
   if (messages.length === 0 && !loading) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
@@ -85,7 +96,12 @@ export default function MessageList({ messages, loading }: MessageListProps) {
               </div>
             )}
             <p className="whitespace-pre-wrap text-sm leading-relaxed">
-              {message.content || (message.meta?.streaming ? "▍" : "")}
+              {message.content}
+              {message.meta?.streaming && (
+                <span className="streaming-cursor ml-0.5 inline-block text-cyan-400">
+                  ▍
+                </span>
+              )}
             </p>
             {message.meta?.extra && (
               <details className="mt-3">
@@ -106,6 +122,8 @@ export default function MessageList({ messages, loading }: MessageListProps) {
           </div>
         </div>
       )}
+
+      <div ref={bottomRef} aria-hidden className="h-px shrink-0" />
     </div>
   );
 }

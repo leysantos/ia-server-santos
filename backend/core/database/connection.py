@@ -58,9 +58,11 @@ def session_scope() -> Generator[Session, None, None]:
 
 def init_db() -> None:
     """Cria todas as tabelas definidas nos models."""
+    from core.database.migrate_workspace import migrate_workspace
     from core.database.models import Base
 
     Base.metadata.create_all(bind=engine)
+    migrate_workspace(engine)
 
 
 def is_db_enabled() -> bool:

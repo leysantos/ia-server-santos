@@ -19,6 +19,8 @@ def chat(request: ChatRequest):
         text=request.text,
         use_rag=request.use_rag,
         persist=request.persist,
+        conversation_id=request.conversation_id,
+        project_id=request.project_id,
     )
     return ChatResponse(**result)
 
@@ -33,11 +35,14 @@ def chat_stream(request: ChatRequest):
             text=request.text,
             use_rag=request.use_rag,
             persist=request.persist,
+            conversation_id=request.conversation_id,
+            project_id=request.project_id,
         ),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            "Content-Type": "text/event-stream; charset=utf-8",
         },
     )

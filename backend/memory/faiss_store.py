@@ -11,7 +11,6 @@ from config.settings import (
     RAG_BOOST_DOC_TYPE,
     RAG_BOOST_NBR,
     RAG_SEARCH_OVERSAMPLE,
-    VECTOR_STORE_PATH,
 )
 from memory.models import DocumentChunk
 
@@ -34,7 +33,6 @@ class FaissVectorStore:
         self.index: Optional[faiss.IndexFlatIP] = None
         self._dim: Optional[int] = None
         self._load()
-        self._maybe_migrate_from_json()
 
     def _load(self):
         if not self.meta_path.exists():
@@ -49,22 +47,12 @@ class FaissVectorStore:
             self.index = faiss.read_index(str(self.index_path))
             self._dim = self.index.d
 
-    def _maybe_migrate_from_json(self):
-        if self.chunks or not VECTOR_STORE_PATH.exists():
-            return
-
-        with open(VECTOR_STORE_PATH, encoding="utf-8") as f:
-            legacy = json.load(f)
-
-        legacy_chunks = legacy.get("chunks", [])
-        if not legacy_chunks:
-            return
-
-        for item in legacy_chunks:
-            self.chunks.append(DocumentChunk(**item))
-
-        self._rebuild_index()
-        self.save()
+    def reload(self) -> None:
+        """Recarrega chunks e índice do disco (após indexação externa ou em background)."""
+        self.chunks = []
+        self.index = None
+        self._dim = None
+        self._load()
 
     def _rebuild_index(self):
         embeddings = [chunk.embedding for chunk in self.chunks if chunk.embedding]
@@ -122,11 +110,16 @@ class FaissVectorStore:
         discipline: Optional[str],
         doc_type: Optional[str],
         nbr_code: Optional[str],
+        content_type: Optional[str] = None,
     ) -> bool:
-        if discipline and chunk.discipline and chunk.discipline != discipline:
+        if discipline and chunk.discipline and chunk.discipline.upper() != discipline.upper():
             return False
-        if doc_type and chunk.doc_type and chunk.doc_type != doc_type:
+        if doc_type and chunk.doc_type and chunk.doc_type.lower() != doc_type.lower():
             return False
+        if content_type:
+            meta_ct = (chunk.metadata or {}).get("content_type", "").lower()
+            if meta_ct and meta_ct != content_type.lower():
+                return False
         if nbr_code and chunk.metadata.get("nbr_code") != nbr_code:
             return False
         return True
@@ -141,6 +134,8 @@ class FaissVectorStore:
     ) -> float:
         score = float(base_score)
         if discipline and chunk.discipline == discipline:
+            score += RAG_BOOST_DISCIPLINE
+        elif discipline and chunk.discipline.upper() == discipline.upper():
             score += RAG_BOOST_DISCIPLINE
         if doc_type and chunk.doc_type == doc_type:
             score += RAG_BOOST_DOC_TYPE
@@ -157,6 +152,7 @@ class FaissVectorStore:
         nbr_code: Optional[str] = None,
         nbr_boost: Optional[str] = None,
         min_score: float = 0.0,
+        content_type: Optional[str] = None,
     ) -> list[tuple[DocumentChunk, float]]:
         if not self.index or self.index.ntotal == 0:
             return []
@@ -175,7 +171,9 @@ class FaissVectorStore:
                 continue
 
             chunk = self.chunks[idx]
-            if not self._metadata_match(chunk, discipline, doc_type, nbr_code):
+            if not self._metadata_match(
+                chunk, discipline, doc_type, nbr_code, content_type
+            ):
                 continue
 
             final_score = self._rank_score(
@@ -192,6 +190,11 @@ class FaissVectorStore:
 
     def is_indexed(self, pdf_path: str) -> bool:
         return any(chunk.metadata.get("path") == pdf_path for chunk in self.chunks)
+
+    def is_indexed_by_hash(self, content_hash: str) -> bool:
+        return any(
+            chunk.metadata.get("content_hash") == content_hash for chunk in self.chunks
+        )
 
     def remove_by_path(self, pdf_path: str) -> int:
         before = len(self.chunks)

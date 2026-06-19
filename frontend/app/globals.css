@@ -5,6 +5,28 @@
 :root {
   --background: #020617;
   --foreground: #f8fafc;
+  --shell-header-h: 7.5rem;
+  --shell-footer-h: 9.5rem;
+  --shell-safe-bottom: 2rem;
+  --shell-gutter-x: 1.25rem;
+}
+
+.shell-header {
+  min-height: var(--shell-header-h);
+  padding-left: var(--shell-gutter-x);
+  padding-right: var(--shell-gutter-x);
+}
+
+.shell-footer {
+  min-height: calc(var(--shell-footer-h) + var(--shell-safe-bottom));
+  padding-top: 1rem;
+  padding-bottom: max(var(--shell-safe-bottom), env(safe-area-inset-bottom, 0px));
+  padding-left: var(--shell-gutter-x);
+  padding-right: var(--shell-gutter-x);
+}
+
+.panel-collapse-btn {
+  @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-700/80 bg-slate-900/90 text-slate-400 shadow-sm transition-all hover:border-cyan-500/40 hover:bg-slate-800 hover:text-cyan-300;
 }
 
 body {
@@ -25,4 +47,18 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #475569;
+}
+
+@keyframes stream-cursor-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+.streaming-cursor {
+  animation: stream-cursor-blink 1s step-end infinite;
 }

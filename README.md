@@ -13,13 +13,16 @@ ia-server-santos/
 ## Quick start
 
 ```bash
+# Dependências (primeira vez — cria .venv + pip install)
+make setup-backend          # requer: sudo apt install python3.14-venv
+make setup-frontend         # npm install
+
 # PostgreSQL
 make docker-up
 make db-init
 
-# Backend
-cd backend && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-# ou: make api
+# Backend (usa .venv/bin/uvicorn automaticamente)
+make api
 
 # Frontend
 make frontend

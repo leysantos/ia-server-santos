@@ -73,6 +73,7 @@ class RAGEngine:
         doc_type: Optional[str] = None,
         nbr_code: Optional[str] = None,
         top_k: Optional[int] = None,
+        agent_slug: Optional[str] = None,
     ) -> list[tuple[DocumentChunk, float]]:
         return self.retriever.retrieve(
             query=query,
@@ -80,6 +81,7 @@ class RAGEngine:
             doc_type=doc_type,
             nbr_code=nbr_code,
             top_k=top_k,
+            agent_slug=agent_slug,
         )
 
     def build_context(
@@ -122,25 +124,79 @@ class RAGEngine:
     def index_tdrs(self, discipline: str = "", force: bool = False) -> dict:
         return self.indexer.index_tdrs(discipline=discipline, force=force)
 
+    def retrieve_context(
+        self,
+        query: str,
+        domain: Optional[str] = None,
+        discipline: Optional[str] = None,
+        top_k: Optional[int] = None,
+    ) -> str:
+        """
+        Recupera contexto técnico — multi-index (Knowledge Layer) ou índice legado.
+        """
+        from config import settings
+
+        if settings.USE_KNOWLEDGE_ROUTER:
+            from core.knowledge.knowledge_base_router import get_knowledge_router
+
+            kc = get_knowledge_router().retrieve_context(
+                query=query,
+                domain=domain,
+                discipline=discipline,
+                top_k=top_k,
+            )
+            return kc.context_text
+
+        return self.build_context(
+            query=query,
+            discipline=discipline,
+            doc_type="nbr",
+            top_k=top_k,
+        )
+
     def enrich_route_result(self, route_result: dict) -> dict:
         """
         Enriquece o resultado do router com contexto RAG deduplicado.
         Compatível com o dispatcher existente.
         """
+        from config import settings
+
         query = route_result.get("input", "")
         discipline = route_result.get("discipline")
 
-        if not query or discipline == "GERAL":
+        if not query or discipline in ("CHAT", "GERAL", None):
             return route_result
 
-        context = self.build_context(
-            query=query,
-            discipline=discipline,
-            doc_type="nbr",
-        )
-        if context:
-            route_result = dict(route_result)
-            route_result["context"] = context
+        if route_result.get("_use_rag") is False:
+            return route_result
+
+        if settings.USE_AGENT_SCOPED_RAG:
+            from core.knowledge.rag.agent_retriever import retrieve_context_for_route
+
+            result = retrieve_context_for_route(query, discipline=discipline)
+            if result.context_text:
+                route_result = dict(route_result)
+                route_result["context"] = result.context_text
+                route_result["agent_rag"] = result.to_dict()
+
+        elif settings.USE_KNOWLEDGE_ROUTER:
+            from core.knowledge.knowledge_base_router import enrich_route_with_knowledge
+
+            route_result = enrich_route_with_knowledge(route_result)
+        else:
+            context = self.build_context(
+                query=query,
+                discipline=discipline,
+                doc_type="nbr",
+            )
+            if context:
+                route_result = dict(route_result)
+                route_result["context"] = context
+
+        if route_result.get("_project_id"):
+            from core.project_rag.project_rag import augment_route_with_project_context
+
+            route_result = augment_route_with_project_context(route_result)
 
         return route_result
 

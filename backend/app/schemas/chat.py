@@ -7,6 +7,14 @@ class ChatRequest(BaseModel):
     text: str = Field(..., min_length=1, description="Mensagem ou problema de engenharia")
     use_rag: bool = Field(default=True, description="Ativar contexto RAG v2")
     persist: bool = Field(default=True, description="Persistir execução no PostgreSQL")
+    conversation_id: Optional[str] = Field(
+        default=None,
+        description="UUID de conversa existente — continua o thread multi-turn",
+    )
+    project_id: Optional[str] = Field(
+        default=None,
+        description="UUID do projeto — vincula nova conversa ou move conversa",
+    )
 
 
 class ChatResponse(BaseModel):

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import JsonViewer from "@/components/JsonViewer";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import { api } from "@/services/api";
@@ -105,7 +106,9 @@ export default function HistoryPage() {
                       {formatDate(item.created_at)}
                     </span>
                   </div>
-                  <p className="line-clamp-2 text-sm text-slate-300">{item.input_text}</p>
+                  <p className="line-clamp-2 text-sm text-slate-300">
+                    {item.title || item.input_text}
+                  </p>
                   <p className="mt-1 text-xs text-slate-600">
                     {(item.agent_runs?.length ?? 0)} execuções
                   </p>
@@ -117,9 +120,46 @@ export default function HistoryPage() {
               {selected && (
                 <div className="mx-auto max-w-4xl space-y-6">
                   <div>
-                    <h2 className="text-lg font-semibold text-white">Detalhes</h2>
-                    <p className="mt-1 text-sm text-slate-400">{selected.input_text}</p>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <h2 className="text-lg font-semibold text-white">Detalhes</h2>
+                      {selected.mode === "single" && (
+                        <Link
+                          href={`/chat?c=${selected.id}${selected.project_id ? `&project=${selected.project_id}` : ""}`}
+                          className="rounded-lg bg-cyan-600/90 px-3 py-1.5 text-xs font-medium text-white hover:bg-cyan-500"
+                        >
+                          Continuar no chat
+                        </Link>
+                      )}
+                    </div>
+                    <p className="mt-1 text-sm text-slate-400">
+                      {selected.title || selected.input_text}
+                    </p>
                   </div>
+
+                  {(selected.messages?.length ?? 0) > 0 && (
+                    <section>
+                      <h3 className="mb-3 text-sm font-medium uppercase tracking-wider text-slate-400">
+                        Mensagens
+                      </h3>
+                      <div className="space-y-3">
+                        {selected.messages?.map((msg) => (
+                          <div
+                            key={msg.id}
+                            className={`rounded-xl p-4 ring-1 ${
+                              msg.role === "user"
+                                ? "bg-cyan-600/10 ring-cyan-500/20"
+                                : "bg-slate-800/40 ring-slate-700/60"
+                            }`}
+                          >
+                            <p className="mb-1 text-xs font-medium text-slate-500">
+                              {msg.role === "user" ? "Usuário" : "Assistente"}
+                            </p>
+                            <p className="whitespace-pre-wrap text-sm text-slate-300">{msg.content}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
 
                   {(selected.agent_runs?.length ?? 0) > 0 && (
                     <section>

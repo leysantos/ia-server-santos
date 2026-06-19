@@ -24,12 +24,16 @@ class NomicEmbedder:
         self.model = model
         self.use_cache = use_cache
         self.cache = cache if cache is not None else (EmbeddingCache() if use_cache else None)
+        self.last_cache_hit = False
 
     def _embed(self, text: str, task: str) -> list[float]:
         if self.cache and self.use_cache:
             cached = self.cache.get(text, self.model, task)
             if cached is not None:
+                self.last_cache_hit = True
                 return cached
+
+        self.last_cache_hit = False
 
         response = requests.post(
             f"{self.base_url}/api/embeddings",

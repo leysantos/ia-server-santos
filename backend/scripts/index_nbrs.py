@@ -3,7 +3,7 @@
 Indexação de PDFs NBR para o RAG do IA Server Santos.
 
 Uso:
-    python scripts/index_nbrs.py                  # indexa data/nbrs/
+    python scripts/index_nbrs.py                  # indexa knowledge/raw/documents/
     python scripts/index_nbrs.py --file NBR-6118.pdf
     python scripts/index_nbrs.py --discipline ESTRUTURAL
     python scripts/index_nbrs.py --force          # reindexa PDFs já indexados
@@ -25,7 +25,7 @@ def main():
     parser.add_argument(
         "--file",
         type=str,
-        help="Caminho de um PDF específico (padrão: todos em data/nbrs/)",
+        help="Caminho de um PDF específico (padrão: todos em knowledge/raw/documents/)",
     )
     parser.add_argument(
         "--discipline",

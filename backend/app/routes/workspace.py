@@ -1,0 +1,149 @@
+from typing import Optional
+
+from fastapi import APIRouter, Depends, File, Query, UploadFile
+from sqlalchemy.orm import Session
+
+from app.schemas.workspace import (
+    ConversationDetail,
+    ConversationListResponse,
+    ConversationSummary,
+    ConversationUpdateRequest,
+    ProjectCreateRequest,
+    ProjectDetail,
+    ProjectListResponse,
+    ProjectSummary,
+    ProjectUpdateRequest,
+    WorkspaceSearchResponse,
+)
+from app.services.workspace_service import WorkspaceService
+from core.database import get_db
+
+router = APIRouter(tags=["Workspace"])
+workspace_service = WorkspaceService()
+
+
+@router.get("/workspace/search", response_model=WorkspaceSearchResponse)
+def search_workspace(
+    q: str = Query(..., min_length=1, max_length=200),
+    limit: int = Query(default=30, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    return WorkspaceSearchResponse(**workspace_service.search(q, limit=limit, db=db))
+
+
+@router.get("/projects/formats")
+def project_supported_formats():
+    from core.project_rag.project_file_extractors import PROJECT_UPLOAD_ACCEPT
+    from core.project_rag.project_rag import supported_formats
+
+    return {"formats": supported_formats(), "accept": PROJECT_UPLOAD_ACCEPT}
+
+
+@router.get("/projects", response_model=ProjectListResponse)
+def list_projects(
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    return ProjectListResponse(**workspace_service.list_projects(limit=limit, db=db))
+
+
+@router.post("/projects", response_model=ProjectSummary)
+def create_project(
+    body: ProjectCreateRequest,
+    db: Session = Depends(get_db),
+):
+    return ProjectSummary(**workspace_service.create_project(body.name, body.description, db=db))
+
+
+@router.get("/projects/{project_id}", response_model=ProjectDetail)
+def get_project(project_id: str, db: Session = Depends(get_db)):
+    return ProjectDetail(**workspace_service.get_project(project_id, db=db))
+
+
+@router.patch("/projects/{project_id}", response_model=ProjectSummary)
+def update_project(
+    project_id: str,
+    body: ProjectUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    return ProjectSummary(
+        **workspace_service.update_project(
+            project_id,
+            name=body.name,
+            description=body.description,
+            db=db,
+        )
+    )
+
+
+@router.delete("/projects/{project_id}")
+def delete_project(project_id: str, db: Session = Depends(get_db)):
+    return workspace_service.delete_project(project_id, db=db)
+
+
+@router.post("/projects/{project_id}/files")
+async def upload_project_files(
+    project_id: str,
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+):
+    return await workspace_service.upload_project_files(project_id, files, db=db)
+
+
+@router.post("/projects/{project_id}/reindex")
+def reindex_project_files(project_id: str, db: Session = Depends(get_db)):
+    return workspace_service.reindex_project(project_id, db=db)
+
+
+@router.delete("/projects/{project_id}/files/{file_id}")
+def delete_project_file(
+    project_id: str,
+    file_id: str,
+    db: Session = Depends(get_db),
+):
+    return workspace_service.delete_project_file(project_id, file_id, db=db)
+
+
+@router.get("/conversations", response_model=ConversationListResponse)
+def list_conversations(
+    limit: int = Query(default=50, ge=1, le=200),
+    project_id: Optional[str] = Query(default=None),
+    unassigned_only: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    return ConversationListResponse(
+        **workspace_service.list_conversations(
+            limit=limit,
+            project_id=project_id,
+            unassigned_only=unassigned_only,
+            db=db,
+        )
+    )
+
+
+@router.get("/conversations/{conversation_id}", response_model=ConversationDetail)
+def get_conversation(conversation_id: str, db: Session = Depends(get_db)):
+    return ConversationDetail(**workspace_service.get_conversation(conversation_id, db=db))
+
+
+@router.patch("/conversations/{conversation_id}", response_model=ConversationSummary)
+def update_conversation(
+    conversation_id: str,
+    body: ConversationUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    unset = "project_id" in body.model_fields_set
+    return ConversationSummary(
+        **workspace_service.update_conversation(
+            conversation_id,
+            title=body.title,
+            project_id=body.project_id,
+            update_project=unset,
+            db=db,
+        )
+    )
+
+
+@router.delete("/conversations/{conversation_id}")
+def delete_conversation(conversation_id: str, db: Session = Depends(get_db)):
+    return workspace_service.delete_conversation(conversation_id, db=db)

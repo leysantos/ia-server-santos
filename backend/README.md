@@ -5,9 +5,14 @@ API FastAPI, agentes multi-disciplina, RAG v2 (FAISS), loops de evolução e Pos
 ## Setup
 
 ```bash
+# Na raiz do monorepo (recomendado)
+make setup-backend
+source ../.venv/bin/activate
+
+# Manual
 cd backend
-python3 -m venv ../.venv
-source ../.venv/bin/activate   # ou: ..\.venv\Scripts\activate no Windows
+python3 -m venv ../.venv    # requer: sudo apt install python3.14-venv
+source ../.venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -20,8 +25,11 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 # Banco
 python scripts/init_db.py
 
-# Indexar NBRs (PDFs em data/nbrs/)
+# Indexar NBRs (PDFs em knowledge_base/nbrs/)
 python scripts/index_nbrs.py
+
+# Indexar todas as bases técnicas (multi-FAISS)
+python scripts/index_knowledge_bases.py
 
 # Testes
 python -m pytest tests/ -v

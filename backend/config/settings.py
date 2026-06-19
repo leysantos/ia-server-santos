@@ -32,24 +32,58 @@ USE_MODEL_EVALUATION = os.getenv("USE_MODEL_EVALUATION", "false").lower() == "tr
 # Evolution Loop v1 — auto-otimização contínua (modelos, prompts, RAG)
 USE_EVOLUTION_LOOP = os.getenv("USE_EVOLUTION_LOOP", "false").lower() == "true"
 USE_SAFE_ROLLOUT = os.getenv("USE_SAFE_ROLLOUT", "true").lower() == "true"
-EVOLUTION_DATA_DIR = BASE_DIR / "data" / "evolution"
 
 # Agent Generation Loop v1 — proposta controlada de novos agentes (nunca auto-ativa)
 USE_AGENT_GENERATION = os.getenv("USE_AGENT_GENERATION", "false").lower() == "true"
-AGENT_GENERATION_DATA_DIR = BASE_DIR / "data" / "agent_generation"
+
+# Knowledge Layer — RAG multi-base (NBR, SINAPI, TCPO, TDR, catálogos)
+USE_KNOWLEDGE_ROUTER = os.getenv("USE_KNOWLEDGE_ROUTER", "false").lower() == "true"
+
+# Knowledge por disciplina — evolução paralela (off = comportamento atual inalterado)
+USE_DISCIPLINE_KNOWLEDGE_ROUTER = os.getenv(
+    "USE_DISCIPLINE_KNOWLEDGE_ROUTER", "false"
+).lower() == "true"
+
+# Ingestão — todos os documentos em knowledge/raw/documents/
+USE_DISCIPLINE_INGESTION = os.getenv("USE_DISCIPLINE_INGESTION", "true").lower() == "true"
 
 # RAG v2
 RAG_VERSION = 2
 RAG_TOP_K = 5
+RAG_TOP_K_MIN = 3
+RAG_TOP_K_MAX = 8
 RAG_MIN_SCORE = 0.35
 RAG_SEARCH_OVERSAMPLE = 10
 RAG_CHUNK_MIN_TOKENS = 600
 RAG_CHUNK_MAX_TOKENS = 1200
+RAG_TARGET_LATENCY_MS = 800
+
+# RAG performance — cache semântico + rerank leve
+USE_RAG_SEMANTIC_CACHE = os.getenv("USE_RAG_SEMANTIC_CACHE", "true").lower() == "true"
+RAG_SEMANTIC_CACHE_THRESHOLD = float(os.getenv("RAG_SEMANTIC_CACHE_THRESHOLD", "0.92"))
+RAG_SEMANTIC_CACHE_MAX_ENTRIES = int(os.getenv("RAG_SEMANTIC_CACHE_MAX_ENTRIES", "500"))
+USE_RAG_LIGHT_RERANK = os.getenv("USE_RAG_LIGHT_RERANK", "true").lower() == "true"
+RAG_OBSERVABILITY_ENABLED = os.getenv("RAG_OBSERVABILITY_ENABLED", "true").lower() == "true"
+
+# RAG por agente — cada agente busca apenas no seu escopo (default ON)
+USE_AGENT_SCOPED_RAG = os.getenv("USE_AGENT_SCOPED_RAG", "true").lower() == "true"
+
+# Orquestrador engenharia vs orçamento — separação SINAPI/NBR (default ON)
+USE_ENGINEERING_ORCHESTRATOR = os.getenv(
+    "USE_ENGINEERING_ORCHESTRATOR", "true"
+).lower() == "true"
 
 # Score ranking (hybrid)
 RAG_BOOST_DISCIPLINE = 0.10
 RAG_BOOST_DOC_TYPE = 0.05
 RAG_BOOST_NBR = 0.15
+
+# Rerank por edição da NBR (2014 > 2004 > 2001; match explícito na query)
+USE_NBR_EDITION_RERANK = os.getenv("USE_NBR_EDITION_RERANK", "true").lower() == "true"
+RAG_BOOST_NBR_EDITION_MATCH = float(os.getenv("RAG_BOOST_NBR_EDITION_MATCH", "0.35"))
+RAG_BOOST_NBR_EDITION_RECENCY = float(os.getenv("RAG_BOOST_NBR_EDITION_RECENCY", "0.004"))
+RAG_BOOST_NBR_EDITION_MAX = float(os.getenv("RAG_BOOST_NBR_EDITION_MAX", "0.15"))
+RAG_PENALTY_NBR_EDITION_MISMATCH = float(os.getenv("RAG_PENALTY_NBR_EDITION_MISMATCH", "0.25"))
 
 # Limite de contexto por agente (caracteres)
 AGENT_CONTEXT_LIMITS: dict[str, int] = {
@@ -71,19 +105,26 @@ AGENT_CONTEXT_LIMITS: dict[str, int] = {
     "default": 3500,
 }
 
-# Diretórios
+# Diretórios — estado mutável local (loops). NÃO colocar PDFs/conhecimento aqui.
 DATA_DIR = BASE_DIR / "data"
-NBR_DIR = DATA_DIR / "nbrs"
-TDR_DIR = DATA_DIR / "tdrs"
 LEARNING_V2_DIR = DATA_DIR / "learning_v2"
 LEARNING_V2_PROFILES_DIR = LEARNING_V2_DIR / "profiles"
 LEARNING_V2_PROMPTS_DIR = LEARNING_V2_DIR / "prompts"
+EVOLUTION_DATA_DIR = DATA_DIR / "evolution"
+AGENT_GENERATION_DATA_DIR = DATA_DIR / "agent_generation"
+
+# Base técnica — storage flat
+KNOWLEDGE_DIR = BASE_DIR / "knowledge"
+KNOWLEDGE_DOCUMENTS_DIR = KNOWLEDGE_DIR / "raw" / "documents"
+KNOWLEDGE_DISCIPLINE_DIR = KNOWLEDGE_DOCUMENTS_DIR  # compat alias
+NBR_DIR = KNOWLEDGE_DOCUMENTS_DIR
+TDR_DIR = KNOWLEDGE_DOCUMENTS_DIR
+
+# Índices vetoriais FAISS (gerados por scripts — memory/faiss_index/)
 FAISS_INDEX_DIR = BASE_DIR / "memory" / "faiss_index"
 EMBEDDING_CACHE_PATH = FAISS_INDEX_DIR / "embedding_cache.db"
-
-# Legado (migração v1 → v2)
-INDEX_DIR = DATA_DIR / "index"
-VECTOR_STORE_PATH = INDEX_DIR / "vector_store.json"
+SEMANTIC_CACHE_PATH = KNOWLEDGE_DIR / "cache" / "semantic_cache.db"
+RAG_OBSERVABILITY_LOG_PATH = KNOWLEDGE_DIR / "cache" / "rag_failing_queries.jsonl"
 
 # PostgreSQL
 DB_HOST = "localhost"

@@ -30,7 +30,6 @@ VALID_DISCIPLINES = [
     "MEIO_AMBIENTE",
 ]
 
-# Heurística de fallback (quando LLM indisponível ou resposta inválida)
 KEYWORD_DISCIPLINES: dict[str, list[str]] = {
     "ARQUITETURA": [
         "arquitet", "layout", "fachada", "plant", "habitabilidade", "residencial",
@@ -139,11 +138,7 @@ PROBLEMA:
 
 
 def decompose_problem(text: str) -> list[str]:
-    """
-    Decompõe um problema de engenharia em disciplinas necessárias.
-
-    Tenta LLM primeiro; usa heurística por palavras-chave como fallback.
-    """
+    """Decompõe problema em disciplinas; filtra domínio via engineering orchestrator."""
     disciplines: list[str] = []
 
     try:
@@ -157,6 +152,13 @@ def decompose_problem(text: str) -> list[str]:
     if not disciplines:
         disciplines = ["ESTRUTURAL"]
 
+    from config import settings
+
+    if settings.USE_ENGINEERING_ORCHESTRATOR:
+        from core.orchestrator.engineering_orchestrator import filter_disciplines_by_domain
+
+        disciplines = filter_disciplines_by_domain(text, disciplines)
+
     return disciplines
 
 
@@ -167,13 +169,7 @@ def execute_agents(
     persist: bool = True,
     context_graph: Optional[ContextGraph] = None,
 ) -> list[dict]:
-    """
-    Executa agentes para cada disciplina identificada.
-
-    route_result deve conter:
-        - input: texto do problema
-        - disciplines (opcional): lista de disciplinas; se ausente, decompõe automaticamente
-    """
+    """Executa agentes por disciplina com plano do orquestrador inteligente."""
     user_input = route_result.get("input", "")
     disciplines = route_result.get("disciplines")
 
@@ -205,6 +201,13 @@ def execute_agents(
             "_orchestrator_log_id": route_result.get("_orchestrator_log_id"),
         }
 
+        from config import settings
+
+        if settings.USE_ENGINEERING_ORCHESTRATOR:
+            from core.orchestrator.engineering_orchestrator import prepare_agent_execution
+
+            agent_route = prepare_agent_execution(agent_route, user_input)
+
         if use_rag:
             engine = rag_engine or get_rag_engine()
             agent_route = engine.enrich_route_result(agent_route)
@@ -226,9 +229,7 @@ def execute_agents(
 
 
 def synthesize_results(results: list[dict], context: Optional[str] = None) -> dict:
-    """
-    Agrega respostas individuais em relatório técnico unificado.
-    """
+    """Agrega respostas individuais em relatório técnico unificado."""
     if context:
         context_section = f"\n## CONTEXTO GLOBAL DO PROJETO\n{context}\n"
     else:
@@ -295,10 +296,7 @@ def process_multi_domain_request(
     rag_engine: Optional[RAGEngine] = None,
     persist: bool = True,
 ) -> dict:
-    """
-    Pipeline principal multi-disciplinar:
-    decompose → execute agents → synthesize
-    """
+    """Pipeline principal: decompose → execute agents → synthesize."""
     from core.database.service import save_conversation, save_orchestrator_log
 
     disciplines = decompose_problem(text)
