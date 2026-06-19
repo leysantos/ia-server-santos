@@ -47,6 +47,26 @@ def run_aed(
         understanding.disciplines,
     )
 
+    try:
+        from config import settings
+
+        if settings.USE_MODEL_ROUTER:
+            from core.models.model_router import get_model_router
+
+            router = get_model_router()
+            router.record_inference(
+                task_type="aed_simulation",
+                model=router.get_model(
+                    "aed_simulation",
+                    {"text": text, "discipline": "ESTRUTURAL"},
+                ),
+                module="aed",
+                discipline="ESTRUTURAL" if "ESTRUTURAL" in understanding.disciplines else None,
+                latency_ms=0.0,
+            )
+    except Exception:
+        pass
+
     # 2. Design generation (≥2 opções por disciplina)
     designs = generate_designs(understanding)
 

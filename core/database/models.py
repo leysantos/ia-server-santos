@@ -211,3 +211,50 @@ class AedRun(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class ModelEvaluation(Base):
+    """Model Evaluation Loop v1 — comparações primary vs fallback."""
+
+    __tablename__ = "model_evaluations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    input_text: Mapped[str] = mapped_column(Text, nullable=False)
+    task_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    discipline: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    primary_model: Mapped[str] = mapped_column(String(120), nullable=False)
+    fallback_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    winner_model: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    primary_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    fallback_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    primary_latency_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    fallback_latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    decision_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    primary_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fallback_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ModelPerformanceProfile(Base):
+    """Ranking dinâmico de modelos por task_type + disciplina."""
+
+    __tablename__ = "model_performance_profile"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    task_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    discipline: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    model_name: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    win_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_evaluations: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    win_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, index=True)
+    avg_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    avg_latency_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

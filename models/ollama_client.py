@@ -40,17 +40,32 @@ class OllamaClient:
         response.raise_for_status()
         return response.json()["response"].strip()
 
-    def generate(self, prompt: str, model: Optional[str] = None) -> tuple[str, str]:
+    def generate(
+        self,
+        prompt: str,
+        model: Optional[str] = None,
+        fallback_models: Optional[list[str]] = None,
+    ) -> tuple[str, str]:
         """
         Gera resposta LLM. Retorna (texto, modelo_utilizado).
-        Tenta modelo primário; em falha, usa fallback.
+        Tenta modelo primário; em falha, usa fallback(s).
         """
-        models_to_try = [model] if model else [self.primary_model, self.fallback_model]
+        models_to_try: list[str] = []
+        if model:
+            models_to_try.append(model)
+        if fallback_models:
+            for fb in fallback_models:
+                if fb and fb not in models_to_try:
+                    models_to_try.append(fb)
+        if not models_to_try:
+            models_to_try = [self.primary_model, self.fallback_model]
+        elif self.fallback_model and self.fallback_model not in models_to_try:
+            models_to_try.append(self.fallback_model)
+
+        models_to_try = [m for m in models_to_try if m]
 
         last_error: Optional[Exception] = None
         for current_model in models_to_try:
-            if not current_model:
-                continue
             try:
                 logger.info("Ollama generate model=%s", current_model)
                 text = self._generate_with_model(prompt, current_model)
@@ -64,17 +79,30 @@ class OllamaClient:
         )
 
     def generate_stream(
-        self, prompt: str, model: Optional[str] = None
+        self,
+        prompt: str,
+        model: Optional[str] = None,
+        fallback_models: Optional[list[str]] = None,
     ) -> Iterator[tuple[str, str]]:
         """
         Stream de tokens Ollama. Yields (token, model_name).
         """
-        models_to_try = [model] if model else [self.primary_model, self.fallback_model]
+        models_to_try: list[str] = []
+        if model:
+            models_to_try.append(model)
+        if fallback_models:
+            for fb in fallback_models:
+                if fb and fb not in models_to_try:
+                    models_to_try.append(fb)
+        if not models_to_try:
+            models_to_try = [self.primary_model, self.fallback_model]
+        elif self.fallback_model and self.fallback_model not in models_to_try:
+            models_to_try.append(self.fallback_model)
+
+        models_to_try = [m for m in models_to_try if m]
         last_error: Optional[Exception] = None
 
         for current_model in models_to_try:
-            if not current_model:
-                continue
             try:
                 logger.info("Ollama stream model=%s", current_model)
                 with requests.post(

@@ -35,7 +35,33 @@ def try_sie_dispatch(
         engine = StructuralIntelligenceEngine()
         sie_ctx, prompt = engine.process(text, rag_context=rag_context)
 
-        result, model_used = agent.llm_client.generate(prompt, model=sie_ctx.model)
+        from config import settings
+
+        if settings.USE_MODEL_ROUTER or settings.USE_MODEL_EVALUATION:
+            from core.models.model_router import get_model_router, routed_generate
+
+            router = get_model_router()
+            task_type = router.resolve_engineering_task(
+                text,
+                "ESTRUTURAL",
+                complexity=sie_ctx.complexity,
+            )
+            text_out, model_used = routed_generate(
+                prompt,
+                task_type,
+                context={
+                    "text": text,
+                    "discipline": "ESTRUTURAL",
+                    "complexity": sie_ctx.complexity,
+                    "module": "sie",
+                },
+                module="sie",
+                discipline="ESTRUTURAL",
+                client=agent.llm_client,
+            )
+            result = text_out
+        else:
+            result, model_used = agent.llm_client.generate(prompt, model=sie_ctx.model)
         agent._last_model_used = model_used
 
         extra = agent.build_extra(sie_ctx.norms, rag_context or None)

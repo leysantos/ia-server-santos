@@ -63,6 +63,24 @@ def run_copilot(
     # 5. Evaluate
     evaluation = evaluate_quality(synthesis, execution, plan)
 
+    models_used = _collect_models_from_execution(execution)
+    try:
+        from config import settings
+
+        if settings.USE_MODEL_ROUTER and models_used:
+            from core.models.model_router import get_model_router
+
+            router = get_model_router()
+            for model in models_used:
+                router.record_inference(
+                    task_type="orchestration_synthesis",
+                    model=model,
+                    module="copilot",
+                    latency_ms=0.0,
+                )
+    except Exception:
+        pass
+
     return {
         "input": text,
         "conversation_id": conv_id,
@@ -75,4 +93,15 @@ def run_copilot(
         "evaluation": evaluation,
         "context_graph": executor.context_graph.to_dict(),
         "execution": [r.to_dict() for r in execution.step_results],
+        "models_used": models_used,
     }
+
+
+def _collect_models_from_execution(execution) -> list[str]:
+    models: list[str] = []
+    for step in execution.step_results:
+        extra = (step.response or {}).get("extra") or {}
+        model = extra.get("llm_model")
+        if model and model not in models:
+            models.append(model)
+    return models

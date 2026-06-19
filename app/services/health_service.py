@@ -28,8 +28,20 @@ class HealthService:
                 "engineering": OLLAMA_LLM_MODEL,
                 "fallback": OLLAMA_LLM_FALLBACK_MODEL,
                 "embed": OLLAMA_EMBED_MODEL,
+                "router_enabled": self._router_enabled(),
+                "evaluation_enabled": self._evaluation_enabled(),
             },
         }
+
+    @staticmethod
+    def _router_enabled() -> str:
+        from config import settings
+        return "true" if settings.USE_MODEL_ROUTER else "false"
+
+    @staticmethod
+    def _evaluation_enabled() -> str:
+        from config import settings
+        return "true" if settings.USE_MODEL_EVALUATION else "false"
 
     @staticmethod
     def _check_database() -> str:

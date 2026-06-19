@@ -277,6 +277,19 @@ DISCIPLINE_RULES: dict[str, list[str]] = {
 
 
 def call_llm(prompt: str) -> str:
+    from config import settings
+
+    if settings.USE_MODEL_ROUTER or settings.USE_MODEL_EVALUATION:
+        from core.models.model_router import routed_generate
+
+        result, _model = routed_generate(
+            prompt,
+            "orchestration_synthesis",
+            context={"text": prompt},
+            module="router",
+        )
+        return result.strip().lower()
+
     response = requests.post(
         OLLAMA_URL,
         json={"model": MODEL, "prompt": prompt, "stream": False},

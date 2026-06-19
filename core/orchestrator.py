@@ -97,7 +97,7 @@ def _decompose_by_keywords(text: str) -> list[str]:
 
 
 def _decompose_by_llm(text: str) -> list[str]:
-    from core.router import call_llm
+    from config import settings
 
     prompt = f"""
 Você é um engenheiro coordenador multidisciplinar.
@@ -121,6 +121,19 @@ EXEMPLOS:
 PROBLEMA:
 {text}
 """
+    if settings.USE_MODEL_ROUTER or settings.USE_MODEL_EVALUATION:
+        from core.models.model_router import routed_generate
+
+        response, _model = routed_generate(
+            prompt,
+            "orchestration_synthesis",
+            context={"text": text},
+            module="orchestrator",
+        )
+        return _parse_disciplines_from_llm(response.strip().lower())
+
+    from core.router import call_llm
+
     response = call_llm(prompt)
     return _parse_disciplines_from_llm(response)
 

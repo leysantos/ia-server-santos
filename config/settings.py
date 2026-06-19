@@ -23,6 +23,12 @@ USE_INTELLIGENT_AGENTS = os.getenv("USE_INTELLIGENT_AGENTS", "true").lower() == 
 # Learning Loop v2 — usar prompts otimizados por disciplina quando disponíveis
 USE_TUNED_PROMPTS = os.getenv("USE_TUNED_PROMPTS", "false").lower() == "true"
 
+# Model Router — roteamento centralizado de LLMs por task_type
+USE_MODEL_ROUTER = os.getenv("USE_MODEL_ROUTER", "false").lower() == "true"
+
+# Model Evaluation Loop v1 — comparação automática e ranking dinâmico
+USE_MODEL_EVALUATION = os.getenv("USE_MODEL_EVALUATION", "false").lower() == "true"
+
 # RAG v2
 RAG_VERSION = 2
 RAG_TOP_K = 5

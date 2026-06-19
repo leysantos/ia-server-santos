@@ -166,8 +166,29 @@ RESPOSTA TÉCNICA ESTRUTURADA:"""
             return tuned
         return self._build_default_prompt(text, context)
 
-    def call_llm(self, prompt: str) -> str:
-        """Chama Ollama (qwen3:14b → fallback qwen3-coder)."""
+    def call_llm(self, prompt: str, text: str = "") -> str:
+        """Chama Ollama com roteamento opcional via ModelRouter."""
+        from config import settings
+
+        if settings.USE_MODEL_ROUTER or settings.USE_MODEL_EVALUATION:
+            from core.models.model_router import get_model_router, routed_generate
+
+            router = get_model_router()
+            task_type = router.resolve_engineering_task(
+                text or prompt,
+                self.discipline,
+            )
+            result, model_used = routed_generate(
+                prompt,
+                task_type,
+                context={"text": text or prompt, "discipline": self.discipline},
+                module="agent",
+                discipline=self.discipline,
+                client=self.llm_client,
+            )
+            self._last_model_used = model_used
+            return result
+
         result, model_used = self.llm_client.generate(prompt)
         self._last_model_used = model_used
         logger.info(
@@ -199,7 +220,7 @@ RESPOSTA TÉCNICA ESTRUTURADA:"""
             rag_context = ""
 
         prompt = self.build_prompt(text, rag_context)
-        result = self.call_llm(prompt)
+        result = self.call_llm(prompt, text=text)
 
         extra = self.build_extra(self.normas_base, rag_context or None)
         extra["intelligent"] = True

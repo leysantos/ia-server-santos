@@ -230,7 +230,25 @@ class ChatAgent(BaseAgent):
 
     def call_llm(self, text: str, intent: ChatIntent) -> str:
         prompt = build_prompt(text, intent)
-        result, model_used = self.llm_client.generate(prompt, model=OLLAMA_CHAT_MODEL)
+        from config import settings
+
+        if settings.USE_MODEL_ROUTER or settings.USE_MODEL_EVALUATION:
+            from core.models.model_router import get_model_router, routed_generate
+
+            router = get_model_router()
+            task_type = router.resolve_chat_task(text)
+            result, model_used = routed_generate(
+                prompt,
+                task_type,
+                context={"text": text, "module": "chat"},
+                module="chat",
+                discipline="CHAT",
+                client=self.llm_client,
+                timeout=OLLAMA_CHAT_TIMEOUT,
+            )
+        else:
+            result, model_used = self.llm_client.generate(prompt, model=OLLAMA_CHAT_MODEL)
+
         self._last_model = model_used
         return post_format_response(result)
 
@@ -274,9 +292,24 @@ class ChatAgent(BaseAgent):
         if self.use_llm:
             try:
                 prompt = build_prompt(text, intent)
-                for token, model_used in self.llm_client.generate_stream(
-                    prompt, model=OLLAMA_CHAT_MODEL
-                ):
+                from config import settings
+
+                if settings.USE_MODEL_ROUTER or settings.USE_MODEL_EVALUATION:
+                    from core.models.model_router import get_model_router
+
+                    router = get_model_router()
+                    task_type = router.resolve_chat_task(text)
+                    model = router.get_model(task_type, {"text": text})
+                    fallbacks = router.get_fallback_models(task_type)
+                    stream = self.llm_client.generate_stream(
+                        prompt, model=model, fallback_models=fallbacks
+                    )
+                else:
+                    stream = self.llm_client.generate_stream(
+                        prompt, model=OLLAMA_CHAT_MODEL
+                    )
+
+                for token, model_used in stream:
                     self._last_model = model_used
                     yield token
                 return

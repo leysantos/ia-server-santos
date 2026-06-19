@@ -14,6 +14,8 @@ from core.database.models import (
     AgentRun,
     Conversation,
     CopilotEvaluationRecord,
+    ModelEvaluation,
+    ModelPerformanceProfile,
     OrchestratorLog,
     SystemFailure,
     SystemPatch,
@@ -436,6 +438,186 @@ class DatabaseRepository:
             "selection": row.selection,
             "report": row.report,
             "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+    # --- model_evaluations (Model Evaluation Loop v1) ---
+
+    def create_model_evaluation(
+        self,
+        *,
+        input_text: str,
+        task_type: str,
+        discipline: str,
+        primary_model: str,
+        fallback_model: Optional[str],
+        winner_model: str,
+        primary_score: float,
+        fallback_score: Optional[float],
+        primary_latency_ms: float,
+        fallback_latency_ms: Optional[float],
+        decision_reason: Optional[str],
+        primary_response: Optional[str] = None,
+        fallback_response: Optional[str] = None,
+    ) -> ModelEvaluation:
+        row = ModelEvaluation(
+            input_text=input_text,
+            task_type=task_type,
+            discipline=discipline,
+            primary_model=primary_model,
+            fallback_model=fallback_model,
+            winner_model=winner_model,
+            primary_score=primary_score,
+            fallback_score=fallback_score,
+            primary_latency_ms=primary_latency_ms,
+            fallback_latency_ms=fallback_latency_ms,
+            decision_reason=decision_reason,
+            primary_response=primary_response,
+            fallback_response=fallback_response,
+        )
+        self.db.add(row)
+        self.db.flush()
+        return row
+
+    def count_model_evaluations(self, task_type: str, discipline: str) -> int:
+        from sqlalchemy import func
+
+        stmt = (
+            select(func.count())
+            .select_from(ModelEvaluation)
+            .where(
+                ModelEvaluation.task_type == task_type,
+                ModelEvaluation.discipline == discipline,
+            )
+        )
+        return int(self.db.scalar(stmt) or 0)
+
+    def list_model_evaluations(
+        self,
+        task_type: Optional[str] = None,
+        discipline: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[ModelEvaluation]:
+        stmt = select(ModelEvaluation).order_by(desc(ModelEvaluation.created_at)).limit(limit)
+        if task_type:
+            stmt = stmt.where(ModelEvaluation.task_type == task_type)
+        if discipline:
+            stmt = stmt.where(ModelEvaluation.discipline == discipline)
+        return list(self.db.scalars(stmt).all())
+
+    def rebuild_performance_profiles(self, task_type: str, discipline: str) -> None:
+        """Recalcula perfis de performance a partir de model_evaluations."""
+        from sqlalchemy import delete
+
+        evals = self.list_model_evaluations(task_type=task_type, discipline=discipline, limit=5000)
+        stats: dict[str, dict[str, float]] = {}
+
+        for ev in evals:
+            for model, score, latency, is_winner in (
+                (ev.primary_model, ev.primary_score, ev.primary_latency_ms, ev.winner_model == ev.primary_model),
+                (ev.fallback_model, ev.fallback_score, ev.fallback_latency_ms, ev.winner_model == ev.fallback_model),
+            ):
+                if not model or score is None:
+                    continue
+                bucket = stats.setdefault(
+                    model,
+                    {"wins": 0.0, "total": 0.0, "score_sum": 0.0, "latency_sum": 0.0},
+                )
+                bucket["total"] += 1
+                bucket["score_sum"] += score
+                bucket["latency_sum"] += latency or 0.0
+                if is_winner:
+                    bucket["wins"] += 1
+
+        self.db.execute(
+            delete(ModelPerformanceProfile).where(
+                ModelPerformanceProfile.task_type == task_type,
+                ModelPerformanceProfile.discipline == discipline,
+            )
+        )
+
+        for model_name, bucket in stats.items():
+            total = int(bucket["total"])
+            wins = int(bucket["wins"])
+            profile = ModelPerformanceProfile(
+                task_type=task_type,
+                discipline=discipline,
+                model_name=model_name,
+                win_count=wins,
+                total_evaluations=total,
+                win_rate=round(wins / total, 4) if total else 0.0,
+                avg_score=round(bucket["score_sum"] / total, 4) if total else 0.0,
+                avg_latency_ms=round(bucket["latency_sum"] / total, 2) if total else 0.0,
+            )
+            self.db.add(profile)
+        self.db.flush()
+
+    def get_best_performance_profile(
+        self,
+        task_type: str,
+        discipline: str,
+    ) -> Optional[ModelPerformanceProfile]:
+        stmt = (
+            select(ModelPerformanceProfile)
+            .where(
+                ModelPerformanceProfile.task_type == task_type,
+                ModelPerformanceProfile.discipline == discipline,
+            )
+            .order_by(
+                desc(ModelPerformanceProfile.win_rate),
+                desc(ModelPerformanceProfile.avg_score),
+                desc(ModelPerformanceProfile.total_evaluations),
+            )
+            .limit(1)
+        )
+        return self.db.scalars(stmt).first()
+
+    def list_model_performance_profiles(
+        self,
+        task_type: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[ModelPerformanceProfile]:
+        stmt = (
+            select(ModelPerformanceProfile)
+            .order_by(
+                desc(ModelPerformanceProfile.win_rate),
+                desc(ModelPerformanceProfile.total_evaluations),
+            )
+            .limit(limit)
+        )
+        if task_type:
+            stmt = stmt.where(ModelPerformanceProfile.task_type == task_type)
+        return list(self.db.scalars(stmt).all())
+
+    @staticmethod
+    def serialize_model_evaluation(row: ModelEvaluation) -> dict[str, Any]:
+        return {
+            "id": str(row.id),
+            "input_text": row.input_text[:200],
+            "task_type": row.task_type,
+            "discipline": row.discipline,
+            "primary_model": row.primary_model,
+            "fallback_model": row.fallback_model,
+            "winner_model": row.winner_model,
+            "primary_score": row.primary_score,
+            "fallback_score": row.fallback_score,
+            "primary_latency_ms": row.primary_latency_ms,
+            "fallback_latency_ms": row.fallback_latency_ms,
+            "decision_reason": row.decision_reason,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+    @staticmethod
+    def serialize_model_performance_profile(row: ModelPerformanceProfile) -> dict[str, Any]:
+        return {
+            "task_type": row.task_type,
+            "discipline": row.discipline,
+            "model_name": row.model_name,
+            "win_count": row.win_count,
+            "total_evaluations": row.total_evaluations,
+            "win_rate": row.win_rate,
+            "avg_score": row.avg_score,
+            "avg_latency_ms": row.avg_latency_ms,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         }
 
     # --- history ---

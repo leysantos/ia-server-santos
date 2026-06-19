@@ -40,9 +40,22 @@ Sistema:"""
 
     try:
         from models.ollama_client import OllamaClient
+        from config import settings
 
-        client = OllamaClient(timeout=30)
-        raw, _model = client.generate(prompt)
+        if settings.USE_MODEL_ROUTER or settings.USE_MODEL_EVALUATION:
+            from core.models.model_router import routed_generate
+
+            raw, _model = routed_generate(
+                prompt,
+                "aed_evaluation",
+                context={"text": understanding.input_text, "module": "aed"},
+                module="aed",
+                discipline="ESTRUTURAL",
+                client=OllamaClient(timeout=30),
+            )
+        else:
+            client = OllamaClient(timeout=30)
+            raw, _model = client.generate(prompt)
     except Exception as exc:
         logger.warning("Structural selector LLM fallback indisponível: %s", exc)
         return StructuralSystem.CONCRETE_ARMED, 0.45, ""
