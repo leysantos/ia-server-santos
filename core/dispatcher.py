@@ -68,16 +68,33 @@ def dispatch(route_result: dict, persist: bool = True):
         handle_kwargs = {"context": context}
         if "_use_rag" in route_result:
             handle_kwargs["use_rag"] = route_result["_use_rag"]
-        try:
-            response = agent.handle(user_input, **handle_kwargs)
-        except TypeError:
-            # Agentes legados não aceitam use_rag
+
+        response = None
+        if discipline == "ESTRUTURAL" and USE_INTELLIGENT_AGENTS:
             try:
-                response = agent.handle(user_input, context=context)
+                from core.structural_intelligence.dispatch_adapter import try_sie_dispatch
+
+                response = try_sie_dispatch(
+                    agent,
+                    user_input,
+                    context=handle_kwargs.get("context"),
+                    use_rag=handle_kwargs.get("use_rag"),
+                )
+            except Exception as exc:
+                logger.warning("SIE v1 indisponível, fluxo padrão ESTRUTURAL: %s", exc)
+                response = None
+
+        if response is None:
+            try:
+                response = agent.handle(user_input, **handle_kwargs)
+            except TypeError:
+                # Agentes legados não aceitam use_rag
+                try:
+                    response = agent.handle(user_input, context=context)
+                except Exception as exc:
+                    response = _agent_error_response(discipline, user_input, exc)
             except Exception as exc:
                 response = _agent_error_response(discipline, user_input, exc)
-        except Exception as exc:
-            response = _agent_error_response(discipline, user_input, exc)
     else:
         response = {
             "discipline": "GERAL",
