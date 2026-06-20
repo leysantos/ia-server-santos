@@ -167,6 +167,23 @@ class WorkspaceService:
                 )
                 indexing.append(index_result)
 
+        if saved:
+            try:
+                from core.project_memory.service import record_activity
+
+                names = ", ".join(f["filename"] for f in saved[:3])
+                record_activity(
+                    source="upload",
+                    event_type="completed",
+                    title=f"Upload: {len(saved)} arquivo(s)",
+                    summary=names + ("…" if len(saved) > 3 else ""),
+                    project_id=project_id,
+                    meta={"file_count": len(saved), "filenames": [f["filename"] for f in saved]},
+                    db=db,
+                )
+            except Exception:
+                pass
+
         return {"uploaded": len(saved), "files": saved, "indexing": indexing}
 
     def reindex_project(self, project_id: str, db: Optional[Session] = None) -> dict:
@@ -185,6 +202,64 @@ class WorkspaceService:
             "conversations": result["conversations"],
             "total": len(result["projects"]) + len(result["conversations"]),
         }
+
+    def get_file_preview(
+        self,
+        project_id: str,
+        file_id: str,
+        db: Optional[Session] = None,
+    ) -> tuple[bytes, str, str]:
+        """Retorna bytes, media_type e filename para preview (imagem ou PDF→PNG)."""
+        from core.database.repository import DatabaseRepository
+
+        if db is None:
+            raise HTTPException(status_code=503, detail="Sessão DB requerida")
+
+        repo = DatabaseRepository(db)
+        row = repo.get_project_file(uuid.UUID(file_id))
+        if not row or str(row.project_id) != project_id:
+            raise HTTPException(status_code=404, detail="Arquivo não encontrado")
+
+        path = Path(row.storage_path)
+        if not path.is_file():
+            alt = PROJECTS_DATA_DIR / project_id / row.filename
+            if alt.is_file():
+                path = alt
+            else:
+                raise HTTPException(status_code=404, detail="Arquivo não encontrado no disco")
+
+        ext = path.suffix.lower()
+        image_types = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".webp": "image/webp",
+            ".gif": "image/gif",
+            ".bmp": "image/bmp",
+            ".tif": "image/tiff",
+            ".tiff": "image/tiff",
+        }
+
+        if ext in image_types:
+            return path.read_bytes(), image_types[ext], row.filename
+
+        if ext == ".pdf":
+            try:
+                import fitz
+            except ImportError as exc:
+                raise HTTPException(status_code=503, detail="PyMuPDF não disponível") from exc
+            doc = fitz.open(path)
+            try:
+                if len(doc) == 0:
+                    raise HTTPException(status_code=422, detail="PDF vazio")
+                page = doc.load_page(0)
+                pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
+                png_name = Path(row.filename).stem + "_preview.png"
+                return pix.tobytes("png"), "image/png", png_name
+            finally:
+                doc.close()
+
+        raise HTTPException(status_code=415, detail="Preview disponível apenas para imagens e PDF")
 
     def delete_project_file(
         self,

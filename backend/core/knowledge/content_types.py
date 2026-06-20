@@ -17,7 +17,31 @@ KNOWLEDGE_CONTENT_TYPES: tuple[str, ...] = (
     "projetos",
     "regional",
     "modelos_orcamento",
+    "artigos",
+    "livros",
+    "bases_precos",
+    "memoriais",
+    "especificacoes",
+    "laudos",
 )
+
+CONTENT_TYPE_LABELS: dict[str, str] = {
+    "nbrs": "NBR (Normas técnicas)",
+    "sinapi": "SINAPI (Composições de custo)",
+    "tcpo": "TCPO (Orçamento)",
+    "tdrs": "TDR / Termos de referência",
+    "catalogos": "Catálogos",
+    "manuais": "Manuais",
+    "projetos": "Projetos",
+    "regional": "Dados regionais",
+    "modelos_orcamento": "Modelo de orçamento (PPD/WBS)",
+    "artigos": "Artigos técnicos / papers",
+    "livros": "Livros e apostilas",
+    "bases_precos": "Base de preços (genérica)",
+    "memoriais": "Memorial descritivo",
+    "especificacoes": "Especificações técnicas",
+    "laudos": "Laudos e pareceres",
+}
 
 CONTENT_TYPE_ALIASES: dict[str, str] = {
     "nbr": "nbrs",
@@ -34,6 +58,14 @@ CONTENT_TYPE_ALIASES: dict[str, str] = {
     "modelos_orcamento": "modelos_orcamento",
     "ppd_modelo": "modelos_orcamento",
     "wbs": "modelos_orcamento",
+    "artigo": "artigos",
+    "livro": "livros",
+    "base_precos": "bases_precos",
+    "base_de_precos": "bases_precos",
+    "memorial": "memoriais",
+    "memorial_descritivo": "memoriais",
+    "especificacao": "especificacoes",
+    "laudo": "laudos",
 }
 
 BASE_KEY_TO_CONTENT_TYPE: dict[str, str] = {
@@ -48,11 +80,11 @@ BASE_KEY_TO_CONTENT_TYPE: dict[str, str] = {
 
 # Quais tipos (metadata) alimentam cada índice FAISS
 BASE_KEY_ACCEPTS_CONTENT_TYPES: dict[str, frozenset[str]] = {
-    "nbr": frozenset({"nbrs"}),
-    "sinapi": frozenset({"sinapi"}),
-    "tcpo": frozenset({"tcpo"}),
-    "tdr": frozenset({"tdrs", "projetos"}),
-    "catalogos": frozenset({"catalogos", "manuais"}),
+    "nbr": frozenset({"nbrs", "memoriais"}),
+    "sinapi": frozenset({"sinapi", "bases_precos"}),
+    "tcpo": frozenset({"tcpo", "bases_precos"}),
+    "tdr": frozenset({"tdrs", "projetos", "especificacoes", "laudos"}),
+    "catalogos": frozenset({"catalogos", "manuais", "artigos", "livros"}),
     "regional": frozenset({"regional"}),
     "budget_models": frozenset({"modelos_orcamento"}),
 }
@@ -74,6 +106,12 @@ KB_SUBDIR_TO_PRIMARY_PATH: dict[str, tuple[str, str]] = {
     "catalogos": ("arquitetura", "raw"),
     "regional": ("meio_ambiente", "raw"),
     "modelos_orcamento": ("orcamento", "raw"),
+    "artigos": ("geral", "raw"),
+    "livros": ("geral", "raw"),
+    "bases_precos": ("orcamento", "raw"),
+    "memoriais": ("geral", "raw"),
+    "especificacoes": ("geral", "raw"),
+    "laudos": ("geral", "raw"),
 }
 
 # Compat legado (migrate scripts)
@@ -122,8 +160,26 @@ def infer_content_type_from_filename(filename: str) -> str | None:
         return "sinapi"
     if "tcpo" in name:
         return "tcpo"
-    if any(k in name for k in ("tdr", "termo_de_referencia", "memorial")):
+    if any(k in name for k in ("memorial descritivo", "memorial_descriptivo", "memorial de calculo", "memorial de cálculo")):
+        return "memoriais"
+    if any(k in name for k in ("tdr", "termo_de_referencia")):
         return "tdrs"
+    if "memorial" in name:
+        return "memoriais"
+    if any(k in name for k in ("laudo", "parecer tecnico", "parecer técnico")):
+        return "laudos"
+    if any(k in name for k in ("especificacao", "especificação", "spec tecnica")):
+        return "especificacoes"
+    if any(k in name for k in ("artigo", "paper", "publicacao", "publicação")):
+        return "artigos"
+    if any(k in name for k in ("livro", "apostila", "e-book", "ebook")):
+        return "livros"
+    if any(k in name for k in ("base de preco", "base de preço", "tabela de preco", "tabela de preço")):
+        return "bases_precos"
+    if any(k in name for k in ("cbmam", "bombeiro", "cbm-", "decreto", "pci", "ppci", "incendio", "incêndio")):
+        return "nbrs"
+    if any(k in name for k in ("instrucao tecnica", "instrução técnica", "instrucoes tecnicas", "instruções técnicas", " it ", " it-", "it_cbmam")):
+        return "nbrs"
     if any(k in name for k in ("catalogo", "catalog", "fabricante")):
         return "catalogos"
     if "manual" in name:

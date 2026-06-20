@@ -6,9 +6,11 @@ import { cn } from "@/lib/utils";
 interface BudgetSavedPanelProps {
   items: BudgetSummary[];
   activeId?: string | null;
+  projectFilterLabel?: string | null;
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
   onNew: () => void;
+  onClearProjectFilter?: () => void;
 }
 
 function fmt(n: number) {
@@ -18,27 +20,47 @@ function fmt(n: number) {
 export default function BudgetSavedPanel({
   items,
   activeId,
+  projectFilterLabel,
   onOpen,
   onDelete,
   onNew,
+  onClearProjectFilter,
 }: BudgetSavedPanelProps) {
   return (
     <section className="rounded-xl bg-slate-800/30 ring-1 ring-slate-700/50">
       <div className="flex items-center justify-between border-b border-slate-700/50 px-4 py-2.5">
-        <h3 className="text-xs font-medium uppercase tracking-wider text-slate-400">
-          Orçamentos salvos
-        </h3>
+        <div className="min-w-0">
+          <h3 className="text-xs font-medium uppercase tracking-wider text-slate-400">
+            Orçamentos salvos
+          </h3>
+          {projectFilterLabel && (
+            <p className="truncate text-[11px] text-cyan-400/90">Projeto: {projectFilterLabel}</p>
+          )}
+        </div>
         <button
           type="button"
           onClick={onNew}
-          className="rounded bg-cyan-600/20 px-2 py-1 text-xs text-cyan-300 hover:bg-cyan-600/30"
+          className="shrink-0 rounded bg-cyan-600/20 px-2 py-1 text-xs text-cyan-300 hover:bg-cyan-600/30"
         >
           + Novo
         </button>
       </div>
+      {projectFilterLabel && onClearProjectFilter && (
+        <div className="border-b border-slate-800/60 px-4 py-2">
+          <button
+            type="button"
+            onClick={onClearProjectFilter}
+            className="text-[11px] text-slate-500 hover:text-slate-300"
+          >
+            Ver todos os orçamentos
+          </button>
+        </div>
+      )}
       {items.length === 0 ? (
         <p className="px-4 py-6 text-center text-xs text-slate-500">
-          Nenhum orçamento salvo. Gere e clique em Salvar.
+          {projectFilterLabel
+            ? "Nenhum orçamento salvo neste projeto."
+            : "Nenhum orçamento salvo. Gere e clique em Salvar."}
         </p>
       ) : (
         <ul className="max-h-48 divide-y divide-slate-800/60 overflow-y-auto">

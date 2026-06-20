@@ -12,6 +12,7 @@ from fastapi import UploadFile
 from core.agent_registry import DISCIPLINE_TO_AGENT
 from core.knowledge.catalog import read_catalog
 from core.knowledge.content_types import (
+    CONTENT_TYPE_LABELS,
     CONTENT_TYPE_TO_BASE_KEY,
     KNOWLEDGE_CONTENT_TYPES,
     normalize_content_type,
@@ -22,21 +23,22 @@ from core.knowledge.ingestion import INGESTABLE_SUFFIXES, get_ingester, ingest_b
 from core.knowledge.knowledge_base_router import get_knowledge_router
 from core.knowledge.knowledge_indexer import KnowledgeIndexer
 from core.knowledge.multi_index_store import get_multi_index_store
-from core.knowledge.document_admin import delete_document, update_document_metadata
+from core.knowledge.document_admin import (
+    delete_document,
+    purge_generic_legislation_imports,
+    update_document_metadata,
+)
+from core.knowledge.document_type_presets import (
+    DocumentTypePresetError,
+    create_preset,
+    delete_preset,
+    list_presets,
+    update_preset,
+)
 
 logger = logging.getLogger(__name__)
 
-_CONTENT_TYPE_LABELS: dict[str, str] = {
-    "nbrs": "NBR (Normas técnicas)",
-    "sinapi": "SINAPI (Composições de custo)",
-    "tcpo": "TCPO (Orçamento)",
-    "tdrs": "TDR / Termos de referência",
-    "catalogos": "Catálogos",
-    "manuais": "Manuais",
-    "projetos": "Projetos",
-    "regional": "Dados regionais",
-    "modelos_orcamento": "Modelo de orçamento (PPD/WBS)",
-}
+_CONTENT_TYPE_LABELS = CONTENT_TYPE_LABELS
 
 _BASE_LABELS: dict[str, str] = {
     "nbr": "NBR",
@@ -170,7 +172,29 @@ class KnowledgeService:
             "content_types": content_types,
             "bases": bases,
             "extensions": sorted(INGESTABLE_SUFFIXES),
+            "document_type_presets": list_presets(),
         }
+
+    def list_document_type_presets(self) -> dict[str, Any]:
+        return {"presets": list_presets()}
+
+    def create_document_type_preset(self, data: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return create_preset(data)
+        except DocumentTypePresetError as exc:
+            raise ValueError(str(exc)) from exc
+
+    def update_document_type_preset(self, preset_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return update_preset(preset_id, data)
+        except DocumentTypePresetError as exc:
+            raise ValueError(str(exc)) from exc
+
+    def delete_document_type_preset(self, preset_id: str) -> dict[str, Any]:
+        try:
+            return delete_preset(preset_id)
+        except DocumentTypePresetError as exc:
+            raise ValueError(str(exc)) from exc
 
     def get_catalog(self, limit: int = 100) -> dict[str, Any]:
         rows = read_catalog()
@@ -265,6 +289,12 @@ class KnowledgeService:
                         dest = tmp_dir / f"{stem}_{counter}{ext}"
                         counter += 1
                 content = await upload.read()
+                if not content:
+                    pre_errors.append({
+                        "filename": filename,
+                        "error": "Arquivo vazio — verifique o PDF e tente novamente.",
+                    })
+                    continue
                 dest.write_bytes(content)
                 saved.append((dest, filename))
 
@@ -362,6 +392,9 @@ class KnowledgeService:
     def delete_document(self, document_id: str) -> dict[str, Any]:
         return delete_document(document_id)
 
+    def purge_generic_legislation_imports(self, *, dry_run: bool = False) -> dict[str, Any]:
+        return purge_generic_legislation_imports(dry_run=dry_run)
+
     def update_document(
         self,
         document_id: str,
@@ -435,3 +468,139 @@ class KnowledgeService:
         summary["mode"] = "all"
         get_multi_index_store().reload_from_disk()
         return summary
+
+    async def ingest_from_web(
+        self,
+        *,
+        page_url: str,
+        discipline: str | None = None,
+        content_type: str | None = None,
+        description_prefix: str = "",
+        max_files: int = 50,
+        force: bool = False,
+        auto_index: bool = True,
+    ) -> dict[str, Any]:
+        from core.knowledge.web_ingest import bulk_ingest_from_page
+        from core.knowledge.web_ingest.security import UnsafeURLError
+
+        ct = normalize_content_type(content_type) if content_type else None
+
+        try:
+            result = await run_sync(
+                bulk_ingest_from_page,
+                page_url,
+                discipline=discipline,
+                content_type=ct,
+                description_prefix=description_prefix,
+                max_files=max_files,
+                force=force,
+            )
+        except UnsafeURLError as exc:
+            raise ValueError(str(exc)) from exc
+
+        if auto_index and result.get("ingested", 0) > 0:
+            result["indexing"] = self._run_indexing(
+                force=force,
+                index_base="nbr" if ct == "nbrs" else None,
+                content_types={ct} if ct else None,
+            )
+
+        return result
+
+    def ingest_from_web_stream_events(
+        self,
+        *,
+        page_url: str,
+        discipline: str | None = None,
+        content_type: str | None = None,
+        description_prefix: str = "",
+        max_files: int = 50,
+        force: bool = False,
+        auto_index: bool = True,
+    ):
+        """Gera eventos SSE (progress / done / error) durante importação web."""
+        import queue
+        import threading
+
+        from core.knowledge.web_ingest import bulk_ingest_from_page
+        from core.stream_events import format_sse
+
+        q: queue.Queue[tuple[str, Any]] = queue.Queue()
+        ct = normalize_content_type(content_type) if content_type else None
+
+        def _scale_progress(data: dict[str, Any]) -> dict[str, Any]:
+            phase = str(data.get("phase") or "")
+            raw = int(data.get("percent") or 0)
+            if phase == "parse":
+                pct = 8 if raw >= 100 else 3
+            elif phase in ("download", "ingest"):
+                pct = 8 + round(raw * 0.82)
+            else:
+                pct = raw
+            return {**data, "percent": min(100, max(0, pct))}
+
+        def worker() -> None:
+            try:
+                def on_progress(data: dict[str, Any]) -> None:
+                    q.put(("progress", _scale_progress(data)))
+
+                result = bulk_ingest_from_page(
+                    page_url,
+                    discipline=discipline,
+                    content_type=ct,
+                    description_prefix=description_prefix,
+                    max_files=max_files,
+                    force=force,
+                    on_progress=on_progress,
+                )
+
+                if auto_index and result.get("ingested", 0) > 0:
+                    q.put(
+                        (
+                            "progress",
+                            {
+                                "phase": "index",
+                                "current": 0,
+                                "total": 1,
+                                "percent": 92,
+                                "message": "Indexando FAISS para busca pela IA…",
+                                "name": None,
+                            },
+                        )
+                    )
+                    result["indexing"] = self._run_indexing(
+                        force=force,
+                        index_base="nbr" if ct == "nbrs" else None,
+                        content_types={ct} if ct else None,
+                    )
+                    q.put(
+                        (
+                            "progress",
+                            {
+                                "phase": "index",
+                                "current": 1,
+                                "total": 1,
+                                "percent": 100,
+                                "message": "Indexação concluída",
+                                "name": None,
+                            },
+                        )
+                    )
+
+                q.put(("done", result))
+            except Exception as exc:
+                logger.exception("Falha na ingestão web (stream)")
+                q.put(("error", {"error": str(exc)}))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+        while True:
+            kind, payload = q.get()
+            if kind == "progress":
+                yield format_sse("progress", payload)
+            elif kind == "done":
+                yield format_sse("done", payload)
+                break
+            elif kind == "error":
+                yield format_sse("error", payload)
+                break

@@ -579,7 +579,21 @@ def save_orchestrator_log(
                 conversation_id=conv_id,
             )
             db.commit()
-            return DatabaseRepository.serialize_orchestrator_log(log)
+            serialized = DatabaseRepository.serialize_orchestrator_log(log)
+            try:
+                from core.project_memory.service import record_orchestrator_completion
+
+                record_orchestrator_completion(
+                    input_text=input_text,
+                    disciplines=disciplines,
+                    synthesis=synthesis,
+                    conversation_id=conv_id,
+                    orchestrator_log_id=log.id,
+                    db=db,
+                )
+            except Exception:
+                pass
+            return serialized
 
         with session_scope() as session:
             repo = DatabaseRepository(session)
@@ -592,7 +606,21 @@ def save_orchestrator_log(
                 agent_count=agent_count,
                 conversation_id=conv_id,
             )
-            return DatabaseRepository.serialize_orchestrator_log(log)
+            serialized = DatabaseRepository.serialize_orchestrator_log(log)
+            try:
+                from core.project_memory.service import record_orchestrator_completion
+
+                record_orchestrator_completion(
+                    input_text=input_text,
+                    disciplines=disciplines,
+                    synthesis=synthesis,
+                    conversation_id=conv_id,
+                    orchestrator_log_id=log.id,
+                    db=session,
+                )
+            except Exception:
+                pass
+            return serialized
     except Exception as exc:
         logger.warning("Falha ao salvar orchestrator_log: %s", exc)
         return None

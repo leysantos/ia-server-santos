@@ -54,6 +54,7 @@ class BudgetSession:
     project: BudgetProjectMetadata = field(default_factory=BudgetProjectMetadata)
     calculation_memory: list[dict[str, Any]] = field(default_factory=list)
     schedule: ProjectSchedule | None = None
+    tech_spec: dict[str, Any] | None = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -96,6 +97,7 @@ class BudgetSession:
             "project": self.project.to_dict(),
             "calculation_memory": self.calculation_memory,
             "schedule": self.schedule.to_dict() if self.schedule else None,
+            "tech_spec": self.tech_spec,
             "source_priority": self.source_priority,
             "intent": self.intent,
             "template": self.project.template,
@@ -663,6 +665,44 @@ class BudgetSessionStore:
         session.schedule = result.schedule
         session.updated_at = datetime.now(timezone.utc).isoformat()
         return session, result.log_dicts(), result.summary, result.llm_model
+
+    def get_tech_spec(self, session_id: str) -> dict[str, Any] | None:
+        session = self._sessions.get(session_id)
+        if not session:
+            raise KeyError(f"Sessão não encontrada: {session_id}")
+        return session.tech_spec
+
+    def update_tech_spec(self, session_id: str, payload: dict[str, Any]) -> BudgetSession:
+        from pricing.spec.tech_spec_models import TechSpecDocument
+
+        session = self._sessions.get(session_id)
+        if not session:
+            raise KeyError(f"Sessão não encontrada: {session_id}")
+        current = TechSpecDocument.from_dict(session.tech_spec) or TechSpecDocument()
+        if payload.get("title"):
+            current.title = str(payload["title"])
+        if payload.get("markdown") is not None:
+            current.markdown = str(payload["markdown"])
+        if payload.get("html_content") is not None:
+            current.html_content = str(payload["html_content"])
+        if payload.get("formatting"):
+            current.formatting = dict(payload["formatting"])
+        current.touch()
+        session.tech_spec = current.to_dict()
+        session.updated_at = datetime.now(timezone.utc).isoformat()
+        return session
+
+    def export_tech_spec_docx(self, session_id: str) -> bytes:
+        from pricing.spec.tech_spec_docx import export_tech_spec_docx
+        from pricing.spec.tech_spec_models import TechSpecDocument
+
+        session = self._sessions.get(session_id)
+        if not session:
+            raise KeyError(f"Sessão não encontrada: {session_id}")
+        doc = TechSpecDocument.from_dict(session.tech_spec)
+        if not doc or not (doc.markdown.strip() or doc.html_content.strip()):
+            raise ValueError("Especificação técnica vazia — gere o documento primeiro.")
+        return export_tech_spec_docx(doc)
 
     @classmethod
     def roots_from_dict(cls, items: list[dict[str, Any]]) -> list[BudgetItem]:

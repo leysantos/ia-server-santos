@@ -134,6 +134,30 @@ export default function ProjectDetailPage() {
             >
               Nova conversa
             </Link>
+            <Link
+              href={`/budget?project=${project.id}`}
+              className="rounded-lg bg-violet-600/90 px-3 py-2 text-sm font-medium text-white hover:bg-violet-500"
+            >
+              Orçamento
+            </Link>
+            <Link
+              href={`/projects/${project.id}/review`}
+              className="rounded-lg bg-amber-600/90 px-3 py-2 text-sm font-medium text-white hover:bg-amber-500"
+            >
+              Revisão Técnica
+            </Link>
+            <Link
+              href={`/projects/${project.id}/activity`}
+              className="rounded-lg bg-slate-700/90 px-3 py-2 text-sm font-medium text-white hover:bg-slate-600"
+            >
+              Atividade
+            </Link>
+            <Link
+              href={`/projects/${project.id}/vision`}
+              className="rounded-lg bg-emerald-600/90 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500"
+            >
+              Análise Visual
+            </Link>
             <button
               type="button"
               onClick={handleDeleteProject}

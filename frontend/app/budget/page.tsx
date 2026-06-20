@@ -1,16 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import ActionDialog from "@/components/ActionDialog";
 import BudgetEtapasPanel from "@/components/BudgetEtapasPanel";
 import BudgetMemoryPanel from "@/components/BudgetMemoryPanel";
 import BudgetProjectForm, { type ProjectFormValues } from "@/components/BudgetProjectForm";
 import BudgetSchedulePanel from "@/components/BudgetSchedulePanel";
+import BudgetTechSpecPanel from "@/components/BudgetTechSpecPanel";
 import BudgetSavedPanel from "@/components/BudgetSavedPanel";
+import BudgetTracePanel from "@/components/BudgetTracePanel";
 import BudgetSpreadsheet from "@/components/BudgetSpreadsheet";
 import BudgetToolbar from "@/components/BudgetToolbar";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ShellHeader from "@/components/ShellHeader";
+import { useActivity } from "@/context/ActivityContext";
 import { api, BUDGET_SESSION_RESTORED, formatApiError, syncBudgetSessionSnapshot } from "@/services/api";
 import type {
   BdiObraType,
@@ -22,7 +27,7 @@ import type {
 } from "@/types/api";
 import { cn } from "@/lib/utils";
 
-type TabId = "etapas" | "planilha" | "memoria" | "cronograma";
+type TabId = "etapas" | "planilha" | "memoria" | "cronograma" | "especificacao";
 
 type DialogState = {
   open: boolean;
@@ -35,6 +40,23 @@ type DialogState = {
 type PriceBaseOption = PriceBaseInfo & { documentId?: string };
 
 export default function BudgetPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex flex-1 items-center justify-center">
+          <LoadingSpinner label="Carregando orçamento..." size="lg" />
+        </div>
+      }
+    >
+      <BudgetPageContent />
+    </Suspense>
+  );
+}
+
+function BudgetPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const projectId = searchParams.get("project");
   const [loading, setLoading] = useState(false);
   const [session, setSession] = useState<BudgetSessionResponse | null>(null);
   const [savedItems, setSavedItems] = useState<BudgetSummary[]>([]);
@@ -52,10 +74,23 @@ export default function BudgetPage() {
     message: "",
     variant: "info",
   });
+  const [projectName, setProjectName] = useState<string | null>(null);
   const projectDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { pushActivity } = useActivity();
 
-  const refreshSaved = () =>
-    api.pricingListSaved().then((r) => setSavedItems(r.items)).catch(() => {});
+  const refreshSaved = useCallback(
+    () =>
+      api
+        .pricingListSaved(projectId ?? undefined)
+        .then((r) => setSavedItems(r.items))
+        .catch(() => {}),
+    [projectId]
+  );
+
+  const linkedProjectId = useMemo(
+    () => projectId ?? session?.project_id ?? null,
+    [projectId, session?.project_id]
+  );
 
   const refreshBases = useCallback(async () => {
     const [pricingRes, catalogRes] = await Promise.all([
@@ -90,7 +125,18 @@ export default function BudgetPage() {
     }).catch(() => {});
     refreshSaved();
     refreshBases();
-  }, [refreshBases]);
+  }, [refreshBases, refreshSaved]);
+
+  useEffect(() => {
+    if (!projectId) {
+      setProjectName(null);
+      return;
+    }
+    api
+      .project(projectId)
+      .then((project) => setProjectName(project.name))
+      .catch(() => setProjectName(null));
+  }, [projectId]);
 
   useEffect(() => {
     syncBudgetSessionSnapshot(session);
@@ -272,20 +318,37 @@ export default function BudgetPage() {
       if (!session) return;
       setLoading(true);
       try {
-        const body = { title: session.title, input_text: "", payload: session };
+        const body = {
+          title: session.title,
+          input_text: "",
+          payload: session,
+          ...(linkedProjectId ? { project_id: linkedProjectId } : {}),
+        };
         const saved = activeDbId
           ? await api.pricingUpdateSaved(activeDbId, body)
           : await api.pricingSaveBudget(body);
         setSession(saved);
         setActiveDbId(saved.db_id ?? activeDbId);
+        if (saved.project_id && saved.project_id !== projectId) {
+          router.replace(`/budget?project=${saved.project_id}`);
+        }
         await refreshSaved();
+        pushActivity({
+          source: "budget",
+          message: `Orçamento salvo: ${saved.title}`,
+          status: "done",
+          phase: "persist",
+          projectId: linkedProjectId ?? undefined,
+        });
         if (opts?.showDialog !== false) {
           setDialog({
             open: true,
             title: opts?.etapaName ? "Etapa salva" : "Orçamento salvo",
             message: opts?.etapaName
               ? `"${opts.etapaName}" e demais alterações foram persistidas no banco.`
-              : `"${saved.title}" persistido no banco de dados.`,
+              : `"${saved.title}" persistido no banco de dados${
+                  linkedProjectId && projectName ? ` · projeto ${projectName}` : ""
+                }.`,
             variant: "success",
           });
         }
@@ -304,7 +367,7 @@ export default function BudgetPage() {
         setLoading(false);
       }
     },
-    [session, activeDbId]
+    [session, activeDbId, linkedProjectId, projectId, projectName, refreshSaved, router, pushActivity]
   );
 
   const handleSave = () => persistBudget();
@@ -337,6 +400,9 @@ export default function BudgetPage() {
       setSession(loaded);
       setActiveDbId(id);
       if (loaded.project?.obra_type) setObraType(loaded.project.obra_type);
+      if (loaded.project_id && loaded.project_id !== projectId) {
+        router.replace(`/budget?project=${loaded.project_id}`);
+      }
       setActiveTab("etapas");
     } catch (err) {
       setDialog({
@@ -377,16 +443,25 @@ export default function BudgetPage() {
     });
   };
 
-  const isScheduleTab = activeTab === "cronograma" && !!session;
+  const isFullHeightTab =
+    !!session && (activeTab === "cronograma" || activeTab === "especificacao");
 
   return (
     <>
-      <ShellHeader className={cn("px-6", isScheduleTab && "shrink-0")} showModelsStatus>
+      <ShellHeader className={cn("px-6", isFullHeightTab && "shrink-0")} showModelsStatus>
         <div className="min-w-0">
           <h1 className="text-lg font-semibold text-white">Orçamento de Obra</h1>
-          {!isScheduleTab && (
+          {!isFullHeightTab && (
             <p className="text-sm text-slate-500">
               Montagem semi-autônoma · etapas manuais · composição via base de preços
+            </p>
+          )}
+          {projectId && (
+            <p className="mt-1 text-sm text-cyan-300">
+              Vinculado ao projeto{" "}
+              <Link href={`/projects/${projectId}`} className="underline hover:text-cyan-200">
+                {projectName ?? projectId.slice(0, 8)}
+              </Link>
             </p>
           )}
         </div>
@@ -395,17 +470,17 @@ export default function BudgetPage() {
       <div
         className={cn(
           "flex-1",
-          isScheduleTab ? "flex min-h-0 flex-col overflow-hidden px-4 py-3" : "overflow-y-auto px-6 py-6"
+          isFullHeightTab ? "flex min-h-0 flex-col overflow-hidden px-4 py-3" : "overflow-y-auto px-6 py-6"
         )}
       >
         <div
           className={cn(
-            isScheduleTab
+            isFullHeightTab
               ? "flex min-h-0 flex-1 flex-col gap-2"
               : "mx-auto grid max-w-6xl gap-4 lg:grid-cols-[1fr_260px]"
           )}
         >
-          <div className={cn(isScheduleTab ? "flex min-h-0 flex-1 flex-col gap-2" : "space-y-4")}>
+          <div className={cn(isFullHeightTab ? "flex min-h-0 flex-1 flex-col gap-2" : "space-y-4")}>
             <BudgetToolbar
               hasSession={!!session}
               loading={loading}
@@ -453,14 +528,14 @@ export default function BudgetPage() {
             )}
 
             {session && (
-              <div className={cn("relative", isScheduleTab ? "flex min-h-0 flex-1 flex-col gap-2" : "space-y-4")}>
+              <div className={cn("relative", isFullHeightTab ? "flex min-h-0 flex-1 flex-col gap-2" : "space-y-4")}>
                 {loading && (
                   <div className="absolute inset-0 z-10 flex items-start justify-center rounded-xl bg-slate-950/60 pt-24 backdrop-blur-sm">
                     <LoadingSpinner label="Processando…" size="lg" />
                   </div>
                 )}
 
-                {!isScheduleTab && (
+                {!isFullHeightTab && (
                   <BudgetProjectForm
                     project={session.project}
                     bdiTypes={bdiTypes}
@@ -474,7 +549,7 @@ export default function BudgetPage() {
                 )}
 
                 <div className="flex shrink-0 gap-1 border-b border-slate-700/60">
-                  {(["etapas", "planilha", "memoria", "cronograma"] as TabId[]).map((tab) => (
+                  {(["etapas", "planilha", "memoria", "cronograma", "especificacao"] as TabId[]).map((tab) => (
                     <button
                       key={tab}
                       type="button"
@@ -492,7 +567,9 @@ export default function BudgetPage() {
                           ? "Planilha PPD"
                           : tab === "memoria"
                             ? "Memória de cálculo"
-                            : "Cronograma"}
+                            : tab === "cronograma"
+                              ? "Cronograma"
+                              : "Especificação técnica"}
                     </button>
                   ))}
                 </div>
@@ -518,8 +595,15 @@ export default function BudgetPage() {
                     onUpdate={setSession}
                     onCellEdit={handleCellEdit}
                   />
-                ) : (
+                ) : activeTab === "cronograma" ? (
                   <BudgetSchedulePanel
+                    session={session}
+                    loading={loading}
+                    onUpdate={setSession}
+                    onError={showActionError}
+                  />
+                ) : (
+                  <BudgetTechSpecPanel
                     session={session}
                     loading={loading}
                     onUpdate={setSession}
@@ -530,14 +614,23 @@ export default function BudgetPage() {
             )}
           </div>
 
-          {!isScheduleTab && (
-            <BudgetSavedPanel
-              items={savedItems}
-              activeId={activeDbId}
-              onOpen={handleOpenSaved}
-              onDelete={handleDeleteSaved}
-              onNew={handleNew}
-            />
+          {!isFullHeightTab && (
+            <>
+              <BudgetTracePanel
+                projectId={linkedProjectId}
+                savedItems={savedItems}
+                className="mt-4"
+              />
+              <BudgetSavedPanel
+                items={savedItems}
+                activeId={activeDbId}
+                projectFilterLabel={projectId ? projectName ?? "Projeto selecionado" : null}
+                onOpen={handleOpenSaved}
+                onDelete={handleDeleteSaved}
+                onNew={handleNew}
+                onClearProjectFilter={projectId ? () => router.push("/budget") : undefined}
+              />
+            </>
           )}
         </div>
       </div>

@@ -224,3 +224,12 @@ class BudgetEngineV2:
             replace_links=replace_links,
             llm_client=llm_client,
         )
+
+    def get_tech_spec(self, session_id: str) -> dict[str, Any] | None:
+        return SESSION_STORE.get_tech_spec(session_id)
+
+    def update_tech_spec(self, session_id: str, payload: dict[str, Any]) -> BudgetSession:
+        return SESSION_STORE.update_tech_spec(session_id, payload)
+
+    def export_tech_spec_docx(self, session_id: str) -> bytes:
+        return SESSION_STORE.export_tech_spec_docx(session_id)

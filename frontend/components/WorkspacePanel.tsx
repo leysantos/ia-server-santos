@@ -229,6 +229,12 @@ export default function WorkspacePanel() {
     router.push(`/chat${params.toString() ? `?${params}` : ""}`);
   };
 
+  const openBudget = (projectId?: string) => {
+    const params = new URLSearchParams();
+    if (projectId) params.set("project", projectId);
+    router.push(`/budget${params.toString() ? `?${params}` : ""}`);
+  };
+
   const openConversation = (conversationId: string, projectId?: string | null) => {
     const params = new URLSearchParams({ c: conversationId });
     if (projectId) params.set("project", projectId);
@@ -281,6 +287,14 @@ export default function WorkspacePanel() {
           >
             <span className="text-base leading-none">+</span>
             Nova conversa
+          </button>
+          <button
+            type="button"
+            onClick={() => openBudget(activeProjectId ?? undefined)}
+            className="flex min-h-[2.5rem] shrink-0 items-center justify-center rounded-xl bg-slate-800 px-3 text-sm text-slate-300 ring-1 ring-slate-700 transition hover:bg-slate-700"
+            title="Orçamento do projeto"
+          >
+            ₢
           </button>
           <button
             type="button"
@@ -407,6 +421,14 @@ export default function WorkspacePanel() {
                       title="Nova conversa no projeto"
                     >
                       +
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openBudget(project.id)}
+                      className="rounded p-1 text-slate-500 hover:text-violet-400"
+                      title="Orçamento do projeto"
+                    >
+                      ₢
                     </button>
                   </div>
                   {expandedProjects[project.id] && (

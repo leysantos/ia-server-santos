@@ -1,33 +1,68 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import ActionDialog from "@/components/ActionDialog";
 import { cn, formatDate } from "@/lib/utils";
 import type {
   KnowledgeCatalogEntry,
   KnowledgeIngestResponse,
   KnowledgeOptionsResponse,
+  DocumentTypePreset,
+  WebIngestProgress,
 } from "@/types/api";
 
 const ACCEPT = ".pdf,.csv,.xlsx,.xls,.xlsm,.json,.md,.txt,.docx,.xml";
 
-const TYPE_HINTS: Record<string, { contentType: string; discipline: string; priceBase: boolean; budgetModel?: boolean }> = {
-  nbrs: { contentType: "nbrs", discipline: "ESTRUTURAL", priceBase: false },
-  sinapi: { contentType: "sinapi", discipline: "ORÇAMENTO", priceBase: true },
-  tcpo: { contentType: "tcpo", discipline: "ORÇAMENTO", priceBase: true },
-  tdrs: { contentType: "tdrs", discipline: "GERAL", priceBase: false },
-  catalogos: { contentType: "catalogos", discipline: "ARQUITETURA", priceBase: false },
-  manuais: { contentType: "manuais", discipline: "GERAL", priceBase: false },
-  projetos: { contentType: "projetos", discipline: "GERAL", priceBase: false },
-  regional: { contentType: "regional", discipline: "MEIO_AMBIENTE", priceBase: false },
-  modelos_orcamento: { contentType: "modelos_orcamento", discipline: "ORÇAMENTO", priceBase: false, budgetModel: true },
-  auto: { contentType: "", discipline: "", priceBase: false },
-};
+function resolveDocPreset(
+  docType: string,
+  presets: DocumentTypePreset[]
+): {
+  contentType: string;
+  discipline: string;
+  priceBase: boolean;
+  budgetModel: boolean;
+} | null {
+  if (docType === "auto") return null;
+  const preset = presets.find((p) => p.id === docType);
+  if (!preset) return null;
+  return {
+    contentType: preset.content_type,
+    discipline: preset.discipline,
+    priceBase: preset.register_price_base,
+    budgetModel: preset.register_budget_model,
+  };
+}
+
+function presetSelectOptions(presets: DocumentTypePreset[]) {
+  return presets.map((p) => (
+    <option key={p.id} value={p.id}>
+      {p.label}
+    </option>
+  ));
+}
 
 interface DocumentLibraryProps {
+  view?: "all" | "import" | "catalog";
   options: KnowledgeOptionsResponse;
   catalog: KnowledgeCatalogEntry[];
-  onIngest: (formData: FormData) => Promise<KnowledgeIngestResponse>;
+  onIngest?: (formData: FormData) => Promise<KnowledgeIngestResponse>;
+  onIngestWeb?: (
+    body: {
+      page_url: string;
+      discipline?: string;
+      content_type?: string;
+      force?: boolean;
+      max_files?: number;
+    },
+    onProgress?: (progress: WebIngestProgress) => void
+  ) => Promise<{
+    discovered: number;
+    downloaded: number;
+    ingested: number;
+    skipped?: number;
+    pages_fetched?: number;
+    errors: { error?: string; stage?: string; url?: string }[];
+  }>;
   onActivatePriceBase?: (documentId: string) => Promise<void>;
   onIndexBudgetModel?: (documentId: string) => Promise<{
     service_count: number;
@@ -48,9 +83,11 @@ function formatBytes(bytes: number): string {
 }
 
 export default function DocumentLibrary({
+  view = "all",
   options,
   catalog,
   onIngest,
+  onIngestWeb,
   onActivatePriceBase,
   onIndexBudgetModel,
   onUpdateDocument,
@@ -80,6 +117,32 @@ export default function DocumentLibrary({
   const [savingEdit, setSavingEdit] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<KnowledgeCatalogEntry | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [webUrl, setWebUrl] = useState("");
+  const [webDocType, setWebDocType] = useState("auto");
+  const [webForceOverwrite, setWebForceOverwrite] = useState(false);
+  const [webImporting, setWebImporting] = useState(false);
+  const [webProgress, setWebProgress] = useState<WebIngestProgress | null>(null);
+  const [webResult, setWebResult] = useState<string | null>(null);
+  const [webErrors, setWebErrors] = useState<{ url?: string; error?: string; stage?: string }[]>([]);
+  const [catalogQuery, setCatalogQuery] = useState("");
+
+  const filteredCatalog = useMemo(() => {
+    const q = catalogQuery.trim().toLowerCase();
+    if (!q) return catalog;
+    return catalog.filter((item) => {
+      const hay = [
+        item.name,
+        item.filename,
+        item.description,
+        item.content_type,
+        item.discipline?.join(" "),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [catalog, catalogQuery]);
 
   const pickFile = useCallback((incoming: File) => {
     setFile(incoming);
@@ -151,6 +214,10 @@ export default function DocumentLibrary({
 
   const handleUpload = async () => {
     if (!file) return;
+    if (!onIngest) {
+      setError("Upload não disponível nesta tela.");
+      return;
+    }
     if (!name.trim()) {
       setError("Informe um nome para o documento.");
       return;
@@ -160,15 +227,15 @@ export default function DocumentLibrary({
     setError(null);
     setResult(null);
 
-    const hint = TYPE_HINTS[docType] ?? TYPE_HINTS.auto;
+    const hint = resolveDocPreset(docType, options.document_type_presets ?? []);
     const formData = new FormData();
     formData.append("files", file);
     formData.append("name", name.trim());
     if (description.trim()) formData.append("description", description.trim());
-    if (hint.contentType) formData.append("content_type", hint.contentType);
-    if (hint.discipline) formData.append("discipline", hint.discipline);
-    if (hint.priceBase) formData.append("register_price_base", "true");
-    if (hint.budgetModel) formData.append("register_budget_model", "true");
+    if (hint?.contentType) formData.append("content_type", hint.contentType);
+    if (hint?.discipline) formData.append("discipline", hint.discipline);
+    if (hint?.priceBase) formData.append("register_price_base", "true");
+    if (hint?.budgetModel) formData.append("register_budget_model", "true");
     if (forceOverwrite) formData.append("force", "true");
     formData.append("auto_index", "true");
 
@@ -223,15 +290,89 @@ export default function DocumentLibrary({
     }
   };
 
+  const handleWebImport = async () => {
+    if (!webUrl.trim() || !onIngestWeb) return;
+    setWebImporting(true);
+    setWebProgress({
+      phase: "parse",
+      current: 0,
+      total: 1,
+      percent: 0,
+      message: "Iniciando importação…",
+    });
+    setWebResult(null);
+    setWebErrors([]);
+    setError(null);
+    try {
+      const hint = resolveDocPreset(webDocType, options.document_type_presets ?? []);
+      const res = await onIngestWeb(
+        {
+          page_url: webUrl.trim(),
+          ...(hint?.contentType ? { content_type: hint.contentType } : {}),
+          ...(hint?.discipline ? { discipline: hint.discipline } : {}),
+          max_files: 200,
+          force: webForceOverwrite,
+        },
+        (progress) => setWebProgress(progress)
+      );
+      const ok = res.ingested > 0 || res.downloaded > 0;
+      const skipped = res.skipped ?? 0;
+      let summary = `${res.ingested} documento(s) importado(s) · ${res.downloaded} baixado(s) · ${res.discovered} link(s) encontrado(s)`;
+      const pagesFetched = res.pages_fetched;
+      if (pagesFetched && pagesFetched > 1) {
+        summary += ` · ${pagesFetched} página(s) varridas`;
+      }
+      if (skipped > 0) {
+        summary += ` · ${skipped} ignorado(s)`;
+        if (res.ingested === 0 && !webForceOverwrite) {
+          summary += " — marque «Forçar reimportação» para substituir arquivos já existentes";
+        }
+      }
+      setWebResult(summary);
+      setWebProgress({
+        phase: "done",
+        current: 1,
+        total: 1,
+        percent: 100,
+        message: "Importação concluída",
+      });
+      if (res.errors?.length) {
+        setWebErrors(res.errors);
+        if (!ok) {
+          setError(
+            res.errors[0]?.error ||
+              "Nenhum arquivo baixado. Verifique se a URL aponta para a página com os anexos (não a home do site)."
+          );
+        }
+      }
+      if (ok) {
+        setWebUrl("");
+        setWebForceOverwrite(false);
+        onRefresh?.();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro na importação web");
+      setWebProgress(null);
+    } finally {
+      setWebImporting(false);
+    }
+  };
+
+  const showUpload = view === "all" || view === "import";
+  const showWeb = (view === "all" || view === "import") && !!onIngestWeb;
+  const showCatalog = view === "all" || view === "catalog";
+
   return (
     <>
+      {showUpload && (
       <section className="rounded-2xl bg-slate-900/40 p-6 ring-1 ring-slate-800">
-        <h2 className="mb-1 text-base font-semibold text-white">Biblioteca de documentos</h2>
+        <h2 className="mb-1 text-base font-semibold text-white">
+          {view === "import" ? "Upload de arquivo" : "Biblioteca de documentos"}
+        </h2>
         <p className="mb-6 text-sm text-slate-500">
-          Um único local para NBRs, bases de preço (SINAPI/TCPO), modelos de orçamento PPD, projetos, catálogos e manuais.
-          Se o PPD tiver o mesmo nome de outro documento (ex.: base de preços + modelo WBS), o sistema salva com nome único automaticamente.
-          Tudo fica no catálogo central (<code className="text-slate-400">catalog.jsonl</code>) com sidecar
-          para acesso rápido pela IA.
+          {view === "import"
+            ? "Envie um PDF, DOCX, Excel ou outro formato suportado. A indexação FAISS roda automaticamente após a ingestão."
+            : "Um único local para NBRs, bases de preço (SINAPI/TCPO), modelos de orçamento PPD, projetos, catálogos e manuais. Se o PPD tiver o mesmo nome de outro documento (ex.: base de preços + modelo WBS), o sistema salva com nome único automaticamente. Tudo fica no catálogo central (catalog.jsonl) com sidecar para acesso rápido pela IA."}
         </p>
 
         <div className="mb-4 grid gap-4 sm:grid-cols-2">
@@ -263,11 +404,7 @@ export default function DocumentLibrary({
               className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 focus:border-cyan-500 focus:outline-none"
             >
               <option value="auto">Detectar automaticamente</option>
-              {options.content_types.map((ct) => (
-                <option key={ct.value} value={ct.value}>
-                  {ct.label}
-                </option>
-              ))}
+              {presetSelectOptions(options.document_type_presets ?? [])}
             </select>
           </label>
           <label className="flex items-center gap-2 sm:col-span-2">
@@ -391,36 +528,192 @@ export default function DocumentLibrary({
           </div>
         )}
       </section>
+      )}
 
+      {showWeb && (
+        <section className="rounded-2xl bg-slate-900/40 p-6 ring-1 ring-slate-800">
+          <h2 className="mb-1 text-base font-semibold text-white">Importar de site (lote)</h2>
+          <p className="mb-4 text-sm text-slate-500">
+            Cole a URL da <strong className="text-slate-400">página que lista os anexos</strong> (tabela
+            com Nome + Baixar ou links diretos para PDF/DOCX). Use o endereço completo da listagem, não
+            a home do site.
+          </p>
+          <div className="mb-4 grid gap-4 sm:grid-cols-2">
+            <label className="block sm:col-span-2">
+              <span className="mb-1.5 block text-xs font-medium text-slate-400">URL da página *</span>
+              <input
+                type="url"
+                value={webUrl}
+                onChange={(e) => setWebUrl(e.target.value)}
+                placeholder="https://…/ver-anexos/175"
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none"
+              />
+            </label>
+            <label className="block sm:col-span-2">
+              <span className="mb-1.5 block text-xs font-medium text-slate-400">Tipo de documento</span>
+              <select
+                value={webDocType}
+                onChange={(e) => setWebDocType(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 focus:border-cyan-500 focus:outline-none"
+              >
+                <option value="auto">Detectar automaticamente</option>
+                {presetSelectOptions(options.document_type_presets ?? [])}
+              </select>
+              {webDocType !== "auto" && (() => {
+                const hint = resolveDocPreset(webDocType, options.document_type_presets ?? []);
+                if (!hint) return null;
+                return (
+                  <p className="mt-1.5 text-xs text-slate-500">
+                    Disciplina: <span className="text-slate-400">{hint.discipline}</span>
+                    {" · "}
+                    Tipo: <span className="text-slate-400">{hint.contentType}</span>
+                  </p>
+                );
+              })()}
+            </label>
+            <label className="flex items-center gap-2 sm:col-span-2">
+              <input
+                type="checkbox"
+                checked={webForceOverwrite}
+                onChange={(e) => setWebForceOverwrite(e.target.checked)}
+                className="rounded border-slate-600 bg-slate-900 text-amber-500"
+              />
+              <span className="text-xs text-slate-400">
+                Forçar reimportação (substituir arquivos já existentes)
+              </span>
+            </label>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              disabled={webImporting || !webUrl.trim()}
+              onClick={handleWebImport}
+              className="rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              {webImporting ? "Importando…" : "Importar todos"}
+            </button>
+          </div>
+          {(webImporting || webProgress) && (
+            <div className="mt-4 space-y-2 rounded-xl bg-slate-950/50 p-4 ring-1 ring-slate-800">
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span className="min-w-0 truncate text-slate-300">
+                  {webProgress?.message ?? "Processando…"}
+                </span>
+                <span className="shrink-0 font-medium tabular-nums text-amber-300">
+                  {webProgress?.percent ?? 0}%
+                </span>
+              </div>
+              <div
+                className="h-2.5 overflow-hidden rounded-full bg-slate-800"
+                role="progressbar"
+                aria-valuenow={webProgress?.percent ?? 0}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label="Progresso da importação web"
+              >
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-amber-500 to-orange-500 transition-[width] duration-300 ease-out"
+                  style={{ width: `${webProgress?.percent ?? 0}%` }}
+                />
+              </div>
+              {webProgress?.name && (
+                <p className="truncate text-xs text-slate-500" title={webProgress.name}>
+                  {webProgress.name}
+                </p>
+              )}
+            </div>
+          )}
+          {webResult && (
+            <p className={`mt-3 text-sm ${webErrors.length && !webResult.startsWith("0") ? "text-emerald-400" : webErrors.length ? "text-amber-300" : "text-emerald-400"}`}>
+              {webResult}
+            </p>
+          )}
+          {webErrors.length > 0 && (
+            <ul className="mt-2 space-y-1 rounded-lg bg-red-500/10 p-3 text-xs text-red-300 ring-1 ring-red-500/20">
+              {webErrors.slice(0, 5).map((e, i) => (
+                <li key={i}>
+                  {e.stage ? `[${e.stage}] ` : ""}
+                  {e.error}
+                  {e.url ? ` — ${e.url}` : ""}
+                </li>
+              ))}
+              {webErrors.length > 5 && <li>… e mais {webErrors.length - 5} erro(s)</li>}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {showCatalog && (
       <section className="rounded-2xl bg-slate-900/40 p-6 ring-1 ring-slate-800">
-        <h3 className="mb-4 text-base font-semibold text-white">Catálogo ({catalog.length})</h3>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-white">
+              Catálogo ({filteredCatalog.length}
+              {catalogQuery.trim() ? ` de ${catalog.length}` : ""})
+            </h3>
+            <p className="mt-1 text-xs text-slate-500">
+              Pesquise por nome, número/ano (ex.: “6118”, “2019”), arquivo, tipo ou disciplina.
+            </p>
+          </div>
+          <label className="w-full sm:max-w-md">
+            <span className="sr-only">Pesquisar no catálogo</span>
+            <div className="relative">
+              <input
+                type="search"
+                value={catalogQuery}
+                onChange={(e) => setCatalogQuery(e.target.value)}
+                placeholder="Pesquisar no catálogo…"
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 pr-9 text-sm text-white focus:border-cyan-500 focus:outline-none"
+              />
+              {catalogQuery.trim() && (
+                <button
+                  type="button"
+                  onClick={() => setCatalogQuery("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-1 text-slate-400 hover:text-white"
+                  aria-label="Limpar pesquisa"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          </label>
+        </div>
         {catalog.length === 0 ? (
           <p className="py-6 text-center text-sm text-slate-500">Nenhum documento importado ainda.</p>
+        ) : filteredCatalog.length === 0 ? (
+          <div className="rounded-xl bg-slate-950/40 p-6 text-center ring-1 ring-slate-800">
+            <p className="text-sm text-slate-300">Nenhum resultado para “{catalogQuery.trim()}”.</p>
+            <p className="mt-1 text-xs text-slate-500">Tente buscar só pelo número (ex.: 6118) ou por uma palavra-chave.</p>
+          </div>
         ) : (
-          <div className="max-h-[28rem] overflow-auto rounded-xl ring-1 ring-slate-800">
-            <table className="w-full text-left text-sm">
+          <div className="max-h-[28rem] overflow-y-auto overflow-x-hidden rounded-xl ring-1 ring-slate-800">
+            <table className="w-full table-fixed text-left text-sm">
               <thead className="sticky top-0 bg-slate-950/95 text-xs uppercase text-slate-500">
                 <tr className="border-b border-slate-800">
                   <th className="px-4 py-3 font-medium">Nome</th>
-                  <th className="px-4 py-3 font-medium">Tipo</th>
-                  <th className="px-4 py-3 font-medium">Preços</th>
-                  <th className="px-4 py-3 font-medium">Data</th>
-                  <th className="px-4 py-3 font-medium">Ações</th>
+                  <th className="w-28 px-4 py-3 font-medium">Tipo</th>
+                  <th className="w-40 px-4 py-3 font-medium">Preços</th>
+                  <th className="w-28 px-4 py-3 font-medium">Data</th>
+                  <th className="w-60 px-4 py-3 font-medium">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
-                {catalog.map((item) => (
+                {filteredCatalog.map((item) => (
                   <tr key={item.id || item.path} className="hover:bg-slate-800/30">
-                    <td className="px-4 py-3">
-                      <p className="font-medium text-slate-200">{item.name || item.filename}</p>
+                    <td className="min-w-0 px-4 py-3 align-top">
+                      <p className="break-words font-medium text-slate-200">
+                        {item.name || item.filename}
+                      </p>
                       {item.description && (
-                        <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{item.description}</p>
+                        <p className="mt-0.5 line-clamp-2 break-words text-xs text-slate-500">
+                          {item.description}
+                        </p>
                       )}
                       <p className="mt-0.5 truncate text-xs text-slate-600" title={item.filename}>
                         {item.filename}
                       </p>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 align-top">
                       <span className="rounded bg-slate-800 px-2 py-0.5 text-xs text-slate-400">
                         {item.content_type}
                       </span>
@@ -430,7 +723,7 @@ export default function DocumentLibrary({
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-xs text-slate-400">
+                    <td className="px-4 py-3 align-top text-xs text-slate-400">
                       {item.has_price_items ? (
                         <span className="text-emerald-400">
                           {item.price_item_count?.toLocaleString("pt-BR")} itens
@@ -444,10 +737,10 @@ export default function DocumentLibrary({
                         "—"
                       )}
                     </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">
+                    <td className="whitespace-nowrap px-4 py-3 align-top text-xs text-slate-500">
                       {item.catalog_ts ? formatDate(item.catalog_ts) : "—"}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 align-top">
                       <div className="flex flex-wrap gap-1">
                         {onUpdateDocument && (
                           <button
@@ -511,6 +804,7 @@ export default function DocumentLibrary({
           </div>
         )}
       </section>
+      )}
 
       <ActionDialog
         open={dialog.open}

@@ -1,10 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import ChatBox, { type ChatSendOptions } from "@/components/ChatBox";
 import JsonViewer from "@/components/JsonViewer";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import PipelineSteps, { type PipelineStep } from "@/components/PipelineSteps";
 import ShellHeader from "@/components/ShellHeader";
+import { useActivity } from "@/context/ActivityContext";
 import { api } from "@/services/api";
 import type { OrchestrateResponse } from "@/types/api";
 
@@ -12,11 +15,27 @@ export default function OrchestratePage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<OrchestrateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [steps, setSteps] = useState<PipelineStep[]>([]);
+  const { pushActivity, updateActivity } = useActivity();
 
   const handleSend = async (text: string, options: ChatSendOptions) => {
     setLoading(true);
     setError(null);
     setResult(null);
+
+    const activityId = `orch-${Date.now()}`;
+    pushActivity({
+      id: activityId,
+      source: "orchestrator",
+      message: "Decompondo problema multidisciplinar…",
+      status: "running",
+      phase: "decompose",
+    });
+    setSteps([
+      { id: "decompose", label: "Decomposição", status: "running" },
+      { id: "agents", label: "Agentes", status: "pending" },
+      { id: "synthesis", label: "Síntese", status: "pending" },
+    ]);
 
     try {
       const response = await api.orchestrate({
@@ -26,8 +45,28 @@ export default function OrchestratePage() {
         llm_model: options.llmModel !== "auto" ? options.llmModel : undefined,
       });
       setResult(response);
+      setSteps([
+        { id: "decompose", label: "Decomposição", status: "done" },
+        ...response.disciplines.map((d) => ({
+          id: `agent-${d}`,
+          label: d,
+          status: "done" as const,
+        })),
+        { id: "synthesis", label: "Síntese", status: "done" },
+      ]);
+      updateActivity(activityId, {
+        status: "done",
+        message: `Orquestração concluída (${response.disciplines.length} disciplinas)`,
+        phase: "synthesis",
+        discipline: response.disciplines[0],
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro na orquestração");
+      const msg = err instanceof Error ? err.message : "Erro na orquestração";
+      setError(msg);
+      setSteps((prev) =>
+        prev.map((s) => (s.status === "running" ? { ...s, status: "error" } : s))
+      );
+      updateActivity(activityId, { status: "error", message: msg });
     } finally {
       setLoading(false);
     }
@@ -45,6 +84,17 @@ export default function OrchestratePage() {
       </ShellHeader>
 
       <div className="flex-1 overflow-y-auto px-6 py-6">
+        {(loading || steps.length > 0) && (
+          <div className="mx-auto mb-6 max-w-5xl">
+            <PipelineSteps steps={steps} />
+            <p className="mt-2 text-center text-xs text-slate-500">
+              <Link href="/console" className="text-cyan-500 hover:text-cyan-400">
+                Ver logs no Console
+              </Link>
+            </p>
+          </div>
+        )}
+
         {loading && (
           <div className="flex justify-center py-20">
             <LoadingSpinner label="Decompondo problema e executando agentes..." size="lg" />

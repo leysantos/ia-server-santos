@@ -8,11 +8,14 @@ não em subpastas do filesystem.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from config.settings import KNOWLEDGE_DIR
+
+logger = logging.getLogger(__name__)
 
 CATALOG_PATH = KNOWLEDGE_DIR / "catalog.jsonl"
 
@@ -28,14 +31,40 @@ def append_catalog_entry(record: dict[str, Any]) -> None:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-def read_catalog() -> list[dict[str, Any]]:
+def _parse_catalog_line(line: str, line_no: int) -> dict[str, Any] | None:
+    cleaned = line.strip("\ufeff").strip()
+    if not cleaned:
+        return None
+    if "\x00" in cleaned:
+        logger.warning("catalog.jsonl linha %s ignorada (bytes nulos)", line_no)
+        return None
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        logger.warning("catalog.jsonl linha %s inválida: %s", line_no, exc)
+        return None
+
+
+def read_catalog(*, repair: bool = True) -> list[dict[str, Any]]:
     if not CATALOG_PATH.is_file():
         return []
+
     rows: list[dict[str, Any]] = []
-    for line in CATALOG_PATH.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line:
-            rows.append(json.loads(line))
+    raw_lines = CATALOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()
+    dropped = 0
+
+    for line_no, line in enumerate(raw_lines, start=1):
+        parsed = _parse_catalog_line(line, line_no)
+        if parsed is None:
+            if line.strip():
+                dropped += 1
+            continue
+        rows.append(parsed)
+
+    if repair and dropped:
+        rewrite_catalog(rows)
+        logger.info("catalog.jsonl reparado — %s linha(s) inválida(s) removida(s)", dropped)
+
     return rows
 
 

@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import aed, chat, copilot, feedback, health, history, knowledge, models, orchestrator, pricing, system, workspace
+from app.routes import aed, chat, console, copilot, feedback, health, history, knowledge, models, orchestrator, pricing, project_review, system, vision, workspace
 from config.settings import get_settings
 from core.database import init_db, is_db_enabled
 
@@ -47,7 +47,10 @@ app.include_router(copilot.router)
 app.include_router(feedback.router)
 app.include_router(orchestrator.router)
 app.include_router(history.router)
+app.include_router(console.router)
 app.include_router(workspace.router)
+app.include_router(project_review.router)
+app.include_router(vision.router)
 app.include_router(knowledge.router)
 app.include_router(pricing.router)
 
@@ -71,6 +74,7 @@ def root():
             "health": "GET /health",
             "models_status": "GET /models/status",
             "knowledge_ingest": "POST /knowledge/ingest",
+            "knowledge_ingest_web": "POST /knowledge/ingest-web",
             "knowledge_index": "POST /knowledge/index",
             "knowledge_catalog": "GET /knowledge/catalog",
             "knowledge_stats": "GET /knowledge/stats",
@@ -79,5 +83,11 @@ def root():
             "pricing_generate": "POST /pricing/budget/generate",
             "pricing_providers": "GET /pricing/providers",
             "pricing_upload": "POST /pricing/providers/{name}/upload",
+            "vision_status": "GET /projects/vision/status",
+            "vision_workspace_status": "GET /projects/vision/workspace-status",
+            "vision_analyze": "POST /projects/{id}/vision/analyze",
+            "vision_analyze_stream": "POST /projects/{id}/vision/analyze/stream",
+            "vision_report": "POST /projects/{id}/vision/report",
+            "project_file_preview": "GET /projects/{id}/files/{file_id}/preview",
         },
     }

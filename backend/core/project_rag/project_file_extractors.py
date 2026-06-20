@@ -29,6 +29,13 @@ PROJECT_INDEXABLE_SUFFIXES: frozenset[str] = frozenset(
         ".dwg",
         ".ifc",
         ".rtf",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".heic",
+        ".heif",
+        ".zip",
     }
 )
 
@@ -47,6 +54,18 @@ PROJECT_UPLOAD_ACCEPT = ",".join(
             ".ifc",
             ".json",
             ".rtf",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".webp",
+            ".heic",
+            ".heif",
+            ".zip",
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/heic",
+            "application/zip",
             "application/pdf",
             "text/plain",
             "text/csv",
@@ -92,6 +111,10 @@ def extract_project_file_segments(path: Path | str) -> tuple[list[ExtractedSegme
         ".dwg": _extract_dwg,
         ".ifc": _extract_ifc,
         ".rtf": _extract_rtf,
+        ".png": _extract_image,
+        ".jpg": _extract_image,
+        ".jpeg": _extract_image,
+        ".zip": _extract_zip,
     }
 
     if suffix not in extractors:
@@ -442,3 +465,41 @@ def _extract_rtf(path: Path) -> tuple[list[ExtractedSegment], str]:
     if not text:
         raise ValueError("RTF sem texto legível")
     return [ExtractedSegment(text=text, section="rtf", section_num=1)], "rtf"
+
+
+def _extract_image(path: Path) -> tuple[list[ExtractedSegment], str]:
+    """Metadados básicos de imagem; OCR profundo via Project Review Engine."""
+    try:
+        from core.project_review.extraction.ocr_pipeline import extract_structured
+
+        data = extract_structured(path)
+        text = data.get("texto") or f"Imagem {path.name}"
+        if data.get("carimbos"):
+            text += "\nCarimbos: " + ", ".join(data["carimbos"][:5])
+    except Exception:
+        text = f"Imagem de projeto: {path.name}"
+    fmt = path.suffix.lstrip(".").lower()
+    return [ExtractedSegment(text=text, section="imagem", section_num=1)], fmt
+
+
+def _extract_zip(path: Path) -> tuple[list[ExtractedSegment], str]:
+    import zipfile
+
+    names: list[str] = []
+    combined: list[str] = []
+    with zipfile.ZipFile(path, "r") as zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            inner = Path(info.filename).name
+            if inner:
+                names.append(inner)
+            if Path(inner).suffix.lower() in {".txt", ".md", ".csv"}:
+                try:
+                    combined.append(zf.read(info).decode("utf-8", errors="ignore")[:8000])
+                except Exception:
+                    pass
+    text = f"Arquivo ZIP: {path.name}\nConteúdo: {', '.join(names[:40])}"
+    if combined:
+        text += "\n\n" + "\n---\n".join(combined[:5])
+    return [ExtractedSegment(text=text, section="zip", section_num=1)], "zip"

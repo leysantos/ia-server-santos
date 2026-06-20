@@ -10,11 +10,42 @@ class KnowledgeOptionItem(BaseModel):
     label: str
 
 
+class DocumentTypePreset(BaseModel):
+    id: str
+    label: str
+    content_type: str
+    discipline: str
+    register_price_base: bool = False
+    register_budget_model: bool = False
+
+
+class DocumentTypePresetCreateRequest(BaseModel):
+    id: Optional[str] = Field(default=None, max_length=64, description="Identificador (opcional; gerado do nome)")
+    label: str = Field(..., min_length=1, max_length=120)
+    content_type: str = Field(..., min_length=1)
+    discipline: str = Field(..., min_length=1)
+    register_price_base: bool = False
+    register_budget_model: bool = False
+
+
+class DocumentTypePresetUpdateRequest(BaseModel):
+    label: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    content_type: Optional[str] = None
+    discipline: Optional[str] = None
+    register_price_base: Optional[bool] = None
+    register_budget_model: Optional[bool] = None
+
+
+class DocumentTypePresetListResponse(BaseModel):
+    presets: list[DocumentTypePreset]
+
+
 class KnowledgeOptionsResponse(BaseModel):
     disciplines: list[KnowledgeOptionItem]
     content_types: list[KnowledgeOptionItem]
     bases: list[KnowledgeOptionItem]
     extensions: list[str]
+    document_type_presets: list[DocumentTypePreset] = Field(default_factory=list)
 
 
 class KnowledgeClassificationResponse(BaseModel):
@@ -72,6 +103,38 @@ class KnowledgeIndexResponse(BaseModel):
     errors: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class KnowledgeWebIngestRequest(BaseModel):
+    page_url: str = Field(..., min_length=8, description="URL da página com links Baixar/Download")
+    discipline: Optional[str] = Field(default=None, description="Disciplina (omitir = detectar por arquivo)")
+    content_type: Optional[str] = Field(default=None, description="Tipo de conteúdo no catálogo (omitir = detectar)")
+    description_prefix: Optional[str] = Field(default="", description="Prefixo opcional na descrição")
+    max_files: int = Field(default=50, ge=1, le=300)
+    force: bool = False
+    auto_index: bool = True
+
+
+class KnowledgeWebIngestFileLog(BaseModel):
+    url: Optional[str] = None
+    name: Optional[str] = None
+    filename: Optional[str] = None
+    status: Optional[str] = None
+    ingest_status: Optional[str] = None
+    document_id: Optional[str] = None
+    error: Optional[str] = None
+
+
+class KnowledgeWebIngestResponse(BaseModel):
+    page_url: str
+    pages_fetched: int = 1
+    discovered: int
+    downloaded: int
+    ingested: int
+    skipped: int
+    errors: list[dict[str, Any]] = Field(default_factory=list)
+    files: list[dict[str, Any]] = Field(default_factory=list)
+    indexing: Optional[dict[str, Any]] = None
+
+
 class KnowledgeCatalogEntry(BaseModel):
     id: str
     name: str = ""
@@ -116,6 +179,15 @@ class KnowledgeDocumentDeleteResponse(BaseModel):
     catalog_entries_removed: int = 0
     faiss_chunks_removed: int = 0
     files_removed: list[str] = Field(default_factory=list)
+
+
+class KnowledgePurgeGenericLegislationResponse(BaseModel):
+    dry_run: bool
+    count: Optional[int] = None
+    requested: Optional[int] = None
+    deleted: Optional[int] = None
+    documents: list[dict[str, Any]] = Field(default_factory=list)
+    errors: list[dict[str, str]] = Field(default_factory=list)
 
 
 class KnowledgeStatsResponse(BaseModel):

@@ -12,7 +12,7 @@ from core.knowledge.metadata import read_metadata
 
 PRICE_ITEMS_SUFFIX = ".price_items.json"
 PRICING_ACTIVE_PATH = KNOWLEDGE_DIR / "pricing_active.json"
-PRICE_CONTENT_TYPES = frozenset({"sinapi", "tcpo"})
+PRICE_CONTENT_TYPES = frozenset({"sinapi", "tcpo", "bases_precos"})
 
 
 def price_items_path(document_path: Path) -> Path:

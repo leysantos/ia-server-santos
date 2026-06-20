@@ -1,0 +1,20 @@
+{
+  "presets": [
+    {
+      "id": "normas_pci_cbmam",
+      "label": "Normas PCI / CBMAM (Incêndio)",
+      "content_type": "nbrs",
+      "discipline": "INCÊNDIO",
+      "register_price_base": false,
+      "register_budget_model": false
+    },
+    {
+      "id": "instrucoes_pci_cbmam",
+      "label": "Instruções Técnicas PCI / CBMAM (Incêndio)",
+      "content_type": "nbrs",
+      "discipline": "INCÊNDIO",
+      "register_price_base": false,
+      "register_budget_model": false
+    }
+  ]
+}

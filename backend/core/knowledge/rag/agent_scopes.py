@@ -88,18 +88,23 @@ def _scope(
 _PRICING_BLOCKED = frozenset({"nbrs", "nbr"})
 _NORM_BLOCKED = frozenset({"sinapi", "tcpo"})
 
+_NORM_ALLOWED = frozenset({"nbrs", "nbr", "memoriais"})
+_DOC_ALLOWED = frozenset({"catalogos", "manuais", "nbrs", "nbr", "catalog", "artigos", "livros", "especificacoes", "laudos", "memoriais"})
+_PRICING_ALLOWED = frozenset({"sinapi", "tcpo", "cost", "composition", "bases_precos"})
+
 # Tipos técnicos (para bloqueio total no agente chat)
 _ALL_CONTENT_TYPES = frozenset({
     "nbrs", "nbr", "sinapi", "tcpo", "tdrs", "tdr",
     "catalogos", "catalog", "manuais", "projetos", "project", "regional",
-    "cost", "composition",
+    "cost", "composition", "modelos_orcamento",
+    "artigos", "livros", "bases_precos", "memoriais", "especificacoes", "laudos",
 })
 
 AGENT_SCOPES: dict[str, AgentScope] = {
     "estruturas": _scope(
         "estruturas",
         base_keys=("nbr",),
-        allowed=frozenset({"nbrs", "nbr"}),
+        allowed=_NORM_ALLOWED,
         blocked=_NORM_BLOCKED,
         sources=(SOURCE_NORMATIVE,),
         keywords=_norm_keywords(
@@ -110,7 +115,7 @@ AGENT_SCOPES: dict[str, AgentScope] = {
     "orcamento": _scope(
         "orcamento",
         base_keys=("sinapi", "tcpo"),
-        allowed=frozenset({"sinapi", "tcpo", "cost", "composition"}),
+        allowed=_PRICING_ALLOWED,
         blocked=_PRICING_BLOCKED,
         sources=(SOURCE_PRICING,),
         keywords=_norm_keywords(
@@ -121,7 +126,7 @@ AGENT_SCOPES: dict[str, AgentScope] = {
     "eletrica": _scope(
         "eletrica",
         base_keys=("nbr",),
-        allowed=frozenset({"nbrs", "nbr"}),
+        allowed=_NORM_ALLOWED,
         blocked=_NORM_BLOCKED,
         sources=(SOURCE_NORMATIVE,),
         keywords=_norm_keywords(
@@ -132,7 +137,7 @@ AGENT_SCOPES: dict[str, AgentScope] = {
     "hidrossanitario": _scope(
         "hidrossanitario",
         base_keys=("nbr",),
-        allowed=frozenset({"nbrs", "nbr"}),
+        allowed=_NORM_ALLOWED,
         blocked=_NORM_BLOCKED,
         sources=(SOURCE_NORMATIVE,),
         keywords=_norm_keywords(
@@ -143,7 +148,7 @@ AGENT_SCOPES: dict[str, AgentScope] = {
     "drenagem": _scope(
         "drenagem",
         base_keys=("nbr",),
-        allowed=frozenset({"nbrs", "nbr"}),
+        allowed=_NORM_ALLOWED,
         blocked=_NORM_BLOCKED,
         sources=(SOURCE_NORMATIVE,),
         keywords=_norm_keywords("drenagem", "10844", "9575", "pluvial", "bocas de lobo"),
@@ -151,7 +156,7 @@ AGENT_SCOPES: dict[str, AgentScope] = {
     "geotecnia": _scope(
         "geotecnia",
         base_keys=("nbr",),
-        allowed=frozenset({"nbrs", "nbr"}),
+        allowed=_NORM_ALLOWED,
         blocked=_NORM_BLOCKED,
         sources=(SOURCE_NORMATIVE,),
         keywords=_norm_keywords("geotecnia", "fundação", "fundacao", "solo", "spt", "6122", "7185"),
@@ -159,7 +164,7 @@ AGENT_SCOPES: dict[str, AgentScope] = {
     "incendio": _scope(
         "incendio",
         base_keys=("nbr",),
-        allowed=frozenset({"nbrs", "nbr"}),
+        allowed=_NORM_ALLOWED,
         blocked=_NORM_BLOCKED,
         sources=(SOURCE_NORMATIVE,),
         keywords=_norm_keywords("incêndio", "incendio", "17240", "10898", "sprinkler"),
@@ -167,7 +172,7 @@ AGENT_SCOPES: dict[str, AgentScope] = {
     "telecom": _scope(
         "telecom",
         base_keys=("nbr",),
-        allowed=frozenset({"nbrs", "nbr"}),
+        allowed=_NORM_ALLOWED,
         blocked=_NORM_BLOCKED,
         sources=(SOURCE_NORMATIVE,),
         keywords=_norm_keywords("telecom", "cabeamento", "14567", "11801", "datacenter"),
@@ -175,7 +180,7 @@ AGENT_SCOPES: dict[str, AgentScope] = {
     "transportes": _scope(
         "transportes",
         base_keys=("nbr",),
-        allowed=frozenset({"nbrs", "nbr"}),
+        allowed=_NORM_ALLOWED,
         blocked=_NORM_BLOCKED,
         sources=(SOURCE_NORMATIVE,),
         keywords=_norm_keywords("transporte", "pavimento", "7188", "7200", "rodovia"),
@@ -183,7 +188,7 @@ AGENT_SCOPES: dict[str, AgentScope] = {
     "infraestrutura": _scope(
         "infraestrutura",
         base_keys=("nbr",),
-        allowed=frozenset({"nbrs", "nbr"}),
+        allowed=_NORM_ALLOWED,
         blocked=_NORM_BLOCKED,
         sources=(SOURCE_NORMATIVE,),
         keywords=_norm_keywords("infraestrutura", "obra civil", "ponte", "viaduto"),
@@ -191,7 +196,7 @@ AGENT_SCOPES: dict[str, AgentScope] = {
     "saneamento": _scope(
         "saneamento",
         base_keys=("nbr",),
-        allowed=frozenset({"nbrs", "nbr"}),
+        allowed=_NORM_ALLOWED,
         blocked=_NORM_BLOCKED,
         sources=(SOURCE_NORMATIVE,),
         keywords=_norm_keywords("saneamento", "9649", "9814", "ete", "esgoto"),
@@ -199,7 +204,7 @@ AGENT_SCOPES: dict[str, AgentScope] = {
     "arquitetura": _scope(
         "arquitetura",
         base_keys=("catalogos", "nbr"),
-        allowed=frozenset({"catalogos", "manuais", "nbrs", "nbr", "catalog"}),
+        allowed=_DOC_ALLOWED,
         blocked=_NORM_BLOCKED,
         sources=(SOURCE_NORMATIVE, SOURCE_DOCUMENTATION),
         keywords=_norm_keywords("arquitetura", "acessibilidade", "9050", "15575", "catálogo", "catalogo"),
@@ -207,7 +212,7 @@ AGENT_SCOPES: dict[str, AgentScope] = {
     "meio_ambiente": _scope(
         "meio_ambiente",
         base_keys=("regional", "tdr"),
-        allowed=frozenset({"regional", "tdrs", "tdr"}),
+        allowed=frozenset({"regional", "tdrs", "tdr", "especificacoes", "laudos"}),
         blocked=frozenset({"sinapi", "tcpo", "nbrs"}),
         sources=(SOURCE_DOCUMENTATION,),
         keywords=_norm_keywords("ambiental", "conama", "licenciamento", "14001", "impacto"),
@@ -215,7 +220,7 @@ AGENT_SCOPES: dict[str, AgentScope] = {
     "geoprocessamento": _scope(
         "geoprocessamento",
         base_keys=("tdr",),
-        allowed=frozenset({"tdrs", "tdr", "projetos", "project"}),
+        allowed=frozenset({"tdrs", "tdr", "projetos", "project", "especificacoes", "laudos", "memoriais"}),
         blocked=frozenset({"sinapi", "tcpo", "nbrs"}),
         sources=(SOURCE_DOCUMENTATION,),
         keywords=_norm_keywords("geoprocessamento", "gis", "shapefile", "coordenadas", "ogc"),
@@ -223,7 +228,7 @@ AGENT_SCOPES: dict[str, AgentScope] = {
     "topografia": _scope(
         "topografia",
         base_keys=("tdr",),
-        allowed=frozenset({"tdrs", "tdr", "projetos", "project"}),
+        allowed=frozenset({"tdrs", "tdr", "projetos", "project", "especificacoes", "laudos", "memoriais"}),
         blocked=frozenset({"sinapi", "tcpo", "nbrs"}),
         sources=(SOURCE_DOCUMENTATION,),
         keywords=_norm_keywords("topografia", "13133", "nivelamento", "altimetria", "planialtimetrico"),

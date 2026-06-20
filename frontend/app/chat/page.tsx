@@ -8,6 +8,7 @@ import MessageList from "@/components/MessageList";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ShellHeader from "@/components/ShellHeader";
 import WorkspaceExpandButton, { WorkspaceCollapseStrip } from "@/components/WorkspaceExpandButton";
+import { useActivity } from "@/context/ActivityContext";
 import { chatStream, api } from "@/services/api";
 import type { ChatMessage, ChatResponse, ConversationDetail } from "@/types/api";
 import { generateId } from "@/lib/utils";
@@ -48,6 +49,7 @@ function ChatPageContent() {
   const streamRafRef = useRef<number | null>(null);
   const pendingContentRef = useRef<{ id: string; content: string; meta: ChatMessage["meta"] } | null>(null);
   const conversationIdRef = useRef<string | null>(urlConversationId);
+  const { pushActivity, updateActivity } = useActivity();
 
   useEffect(() => {
     conversationIdRef.current = conversationId;
@@ -134,6 +136,16 @@ function ChatPageContent() {
       setLoading(true);
       setError(null);
 
+      const liveActivityId = `chat-${assistantId}`;
+      pushActivity({
+        id: liveActivityId,
+        source: "chat",
+        message: text.slice(0, 120),
+        status: "running",
+        phase: "intent",
+        projectId: projectId ?? undefined,
+      });
+
       try {
         let accumulated = "";
         let finalResponse: ChatResponse | null = null;
@@ -151,6 +163,18 @@ function ChatPageContent() {
             const message = String(event.data.message ?? "Processando...");
             const model = event.data.llm_model ? String(event.data.llm_model) : undefined;
             if (model) setActiveModel(model);
+            const stepAgent = event.data.step
+              ? String((event.data.step as { agent?: string }).agent ?? "")
+              : undefined;
+            const stepDiscipline = event.data.step
+              ? String((event.data.step as { discipline?: string }).discipline ?? "")
+              : undefined;
+            updateActivity(liveActivityId, {
+              message,
+              phase: stepDiscipline || stepAgent || "processing",
+              agent: stepAgent,
+              discipline: stepDiscipline,
+            });
             streamMeta = {
               streaming: true,
               streamStatus: message,
@@ -222,9 +246,16 @@ function ChatPageContent() {
             raw: finalResponse ?? undefined,
           },
         });
+        updateActivity(liveActivityId, {
+          status: "done",
+          message: "Resposta concluída",
+          agent: finalResponse?.agent || finalResponse?.route?.agent,
+          discipline: finalResponse?.discipline || finalResponse?.route?.discipline,
+        });
       } catch (err) {
         const message = err instanceof Error ? err.message : "Erro ao comunicar com a API";
         setError(message);
+        updateActivity(liveActivityId, { status: "error", message });
         updateAssistant(assistantId, {
           content: `Erro: ${message}. Verifique se o backend está rodando em http://localhost:8000`,
           meta: { streaming: false, streamStatus: undefined },
@@ -233,7 +264,7 @@ function ChatPageContent() {
         setLoading(false);
       }
     },
-    [updateAssistant, scheduleContentUpdate, projectId, router, urlConversationId]
+    [updateAssistant, scheduleContentUpdate, projectId, router, urlConversationId, pushActivity, updateActivity]
   );
 
   return (

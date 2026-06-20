@@ -38,6 +38,44 @@ def test_rewrite_and_remove_catalog_entries(tmp_path, monkeypatch):
     assert read_catalog()[0]["id"] == "c"
 
 
+def test_read_metadata_ignores_empty_sidecar(tmp_path):
+    from core.knowledge.metadata import read_metadata, write_metadata
+
+    pdf = tmp_path / "doc.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    sidecar = pdf.with_name(pdf.name + ".knowledge.json")
+    sidecar.write_text("", encoding="utf-8")
+
+    assert read_metadata(pdf) is None
+
+    write_metadata(pdf, {"id": "x", "content_type": "nbrs"})
+    meta = read_metadata(pdf)
+    assert meta is not None
+    assert meta["content_type"] == "nbrs"
+
+
+def test_read_catalog_skips_corrupt_lines(tmp_path, monkeypatch):
+    from core.knowledge import catalog as catalog_mod
+
+    catalog_path = tmp_path / "catalog.jsonl"
+    monkeypatch.setattr(catalog_mod, "CATALOG_PATH", catalog_path)
+    monkeypatch.setattr(catalog_mod, "KNOWLEDGE_DIR", tmp_path)
+
+    catalog_path.write_text(
+        '{"id": "ok", "filename": "a.pdf"}\n'
+        "\x00" * 40 + "\n"
+        '{"id": "ok2", "filename": "b.pdf"}\n',
+        encoding="utf-8",
+    )
+
+    rows = read_catalog(repair=True)
+    assert len(rows) == 2
+    assert rows[0]["id"] == "ok"
+    assert rows[1]["id"] == "ok2"
+    # arquivo reparado sem linha corrompida
+    assert "\x00" not in catalog_path.read_text(encoding="utf-8")
+
+
 def test_update_document_metadata(tmp_path, monkeypatch):
     from core.knowledge import catalog as catalog_mod
 

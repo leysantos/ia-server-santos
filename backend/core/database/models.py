@@ -38,6 +38,30 @@ class Project(Base):
         back_populates="project",
         cascade="all, delete-orphan",
     )
+    digital_twins: Mapped[list["ProjectDigitalTwin"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="ProjectDigitalTwin.versao.desc()",
+    )
+    reviews: Mapped[list["ProjectReview"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="ProjectReview.version.desc()",
+    )
+    nonconformities: Mapped[list["ProjectNonconformity"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    activity_events: Mapped[list["ProjectActivityEvent"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="ProjectActivityEvent.created_at.desc()",
+    )
+    decisions: Mapped[list["ProjectDecision"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="ProjectDecision.created_at.desc()",
+    )
 
 
 class Conversation(Base):
@@ -120,6 +144,145 @@ class ProjectFile(Base):
     )
 
     project: Mapped["Project"] = relationship(back_populates="files")
+    extractions: Mapped[list["ProjectDocumentExtraction"]] = relationship(
+        back_populates="project_file",
+        cascade="all, delete-orphan",
+    )
+
+
+class ProjectDigitalTwin(Base):
+    """Representação digital unificada do projeto (Project Review Engine — Módulo A)."""
+
+    __tablename__ = "project_digital_twin"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    disciplinas: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    elementos: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    documentos: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    normas_aplicaveis: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    versao: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    project: Mapped["Project"] = relationship(back_populates="digital_twins")
+
+
+class ProjectReview(Base):
+    """Ciclo de revisão técnica de um projeto (Módulos G, L, S)."""
+
+    __tablename__ = "project_reviews"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String(40), nullable=False, default="recebido", index=True)
+    scores: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    analysis_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    report_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    parent_review_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("project_reviews.id", ondelete="SET NULL"), nullable=True
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    project: Mapped["Project"] = relationship(back_populates="reviews")
+    parent_review: Mapped["ProjectReview | None"] = relationship(remote_side=[id])
+    nonconformities: Mapped[list["ProjectNonconformity"]] = relationship(
+        back_populates="review",
+        cascade="all, delete-orphan",
+    )
+
+
+class ProjectNonconformity(Base):
+    """Não conformidade registrada na revisão (Módulo H)."""
+
+    __tablename__ = "project_nonconformities"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    review_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("project_reviews.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    project_file_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("project_files.id", ondelete="SET NULL"), nullable=True
+    )
+    codigo: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    categoria: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    criticidade: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    descricao: Mapped[str] = mapped_column(Text, nullable=False)
+    evidencia: Mapped[str | None] = mapped_column(Text, nullable=True)
+    norma: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    impacto: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recomendacao: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="aberta", index=True)
+    extra: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    project: Mapped["Project"] = relationship(back_populates="nonconformities")
+    review: Mapped["ProjectReview | None"] = relationship(back_populates="nonconformities")
+
+
+class ProjectDocumentExtraction(Base):
+    """Extração estruturada por arquivo (Módulos B, C, D, E, 0)."""
+
+    __tablename__ = "project_document_extractions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_file_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("project_files.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    discipline: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    format_key: Mapped[str] = mapped_column(String(20), nullable=False)
+    extraction_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    vision_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    project_file: Mapped["ProjectFile"] = relationship(back_populates="extractions")
 
 
 class OrchestratorLog(Base):
@@ -434,7 +597,10 @@ class AgentSimulationRecord(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     proposal_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True, index=True
+        UUID(as_uuid=True),
+        ForeignKey("agent_proposals.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     proposal_name: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     discipline: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
@@ -455,6 +621,12 @@ class BudgetDocument(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     title: Mapped[str] = mapped_column(String(200), nullable=False)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     grand_total: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
@@ -474,6 +646,7 @@ class BudgetDocument(Base):
         return {
             "id": str(self.id),
             "title": self.title,
+            "project_id": str(self.project_id) if self.project_id else None,
             "session_id": self.session_id,
             "grand_total": self.grand_total,
             "obra_type": self.obra_type,
@@ -481,3 +654,59 @@ class BudgetDocument(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class ProjectActivityEvent(Base):
+    """Timeline operacional por projeto — uploads, vision, orçamento, orquestração."""
+
+    __tablename__ = "project_activity_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    source: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    agent_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    discipline: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    phase: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    project: Mapped["Project | None"] = relationship(back_populates="activity_events")
+
+
+class ProjectDecision(Base):
+    """Memória de decisões técnicas/orçamentárias por projeto."""
+
+    __tablename__ = "project_decisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    source: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    disciplines: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    project: Mapped["Project | None"] = relationship(back_populates="decisions")

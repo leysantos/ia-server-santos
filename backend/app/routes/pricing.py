@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.services.budget_db_service import delete_budget, get_budget, list_budgets, save_budget
 from app.services.budget_stream_service import BudgetStreamService
+from app.services.tech_spec_stream_service import TechSpecStreamService
 from core.concurrency import run_sync
 from core.llm_override import llm_model_scope
 from core.database.connection import get_db
@@ -128,6 +129,7 @@ class BudgetGenerateRequest(BaseModel):
 class BudgetSaveRequest(BaseModel):
     title: Optional[str] = None
     input_text: Optional[str] = None
+    project_id: Optional[str] = None
     payload: dict[str, Any]
 
 
@@ -210,6 +212,28 @@ class ScheduleComposeRequest(BaseModel):
         default=None,
         description='Modelo Ollama. Use "auto" ou omita para roteamento automático.',
     )
+
+
+class TechSpecComposeRequest(BaseModel):
+    prompt: Optional[str] = Field(
+        default=None,
+        max_length=8000,
+        description="Instruções para gerar ou editar o documento.",
+    )
+    mode: str = Field(
+        default="generate",
+        pattern="^(generate|edit)$",
+        description="generate = criar do orçamento; edit = alterar documento existente via prompt.",
+    )
+    use_llm: bool = True
+    llm_model: Optional[str] = Field(default=None, description="Modelo Ollama ou auto.")
+
+
+class TechSpecUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    markdown: Optional[str] = None
+    html_content: Optional[str] = None
+    formatting: Optional[dict[str, Any]] = None
 
 
 class ComposeEtapaRequest(BaseModel):
@@ -628,9 +652,12 @@ def generate_budget_stream(body: BudgetGenerateRequest):
 
 
 @router.get("/budget/saved")
-def list_saved_budgets(db: Session = Depends(get_db)):
+def list_saved_budgets(
+    project_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
     try:
-        return {"items": list_budgets(db)}
+        return {"items": list_budgets(db, project_id=project_id)}
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Banco indisponível: {exc}") from exc
 
@@ -649,7 +676,13 @@ def get_saved_budget(budget_id: str, db: Session = Depends(get_db)):
 @router.post("/budget/saved")
 def create_saved_budget(body: BudgetSaveRequest, db: Session = Depends(get_db)):
     try:
-        return save_budget(db, body.payload, title=body.title, input_text=body.input_text)
+        return save_budget(
+            db,
+            body.payload,
+            title=body.title,
+            input_text=body.input_text,
+            project_id=body.project_id,
+        )
     except Exception as exc:
         if "indisponível" in str(exc).lower() or "connection" in str(exc).lower():
             raise HTTPException(status_code=503, detail=f"Banco indisponível — rode make db-init ou docker-up: {exc}") from exc
@@ -660,7 +693,12 @@ def create_saved_budget(body: BudgetSaveRequest, db: Session = Depends(get_db)):
 def update_saved_budget(budget_id: str, body: BudgetSaveRequest, db: Session = Depends(get_db)):
     try:
         return save_budget(
-            db, body.payload, title=body.title, input_text=body.input_text, budget_id=budget_id
+            db,
+            body.payload,
+            title=body.title,
+            input_text=body.input_text,
+            budget_id=budget_id,
+            project_id=body.project_id,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="Orçamento não encontrado") from None
@@ -850,6 +888,65 @@ def compose_budget_schedule(session_id: str, body: ScheduleComposeRequest):
         "summary": summary,
         "llm_model": llm_model,
     }
+
+
+@router.get("/budget/{session_id}/tech-spec")
+def get_budget_tech_spec(session_id: str):
+    engine = _get_budget_engine()
+    try:
+        spec = engine.get_tech_spec(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
+    return {"tech_spec": spec}
+
+
+@router.put("/budget/{session_id}/tech-spec")
+def update_budget_tech_spec(session_id: str, body: TechSpecUpdateRequest):
+    engine = _get_budget_engine()
+    try:
+        session = engine.update_tech_spec(session_id, body.model_dump(exclude_none=True))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
+    return {"tech_spec": session.tech_spec, "session": session.to_dict()}
+
+
+@router.post("/budget/{session_id}/tech-spec/compose/stream")
+def compose_budget_tech_spec_stream(session_id: str, body: TechSpecComposeRequest):
+    service = TechSpecStreamService()
+    with llm_model_scope(body.llm_model):
+        return StreamingResponse(
+            service.stream(
+                session_id,
+                body.prompt or "",
+                mode="edit" if body.mode == "edit" else "generate",
+                use_llm=body.use_llm,
+            ),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+                "Content-Type": "text/event-stream; charset=utf-8",
+            },
+        )
+
+
+@router.get("/budget/{session_id}/tech-spec/export")
+def export_budget_tech_spec(session_id: str):
+    engine = _get_budget_engine()
+    try:
+        content = engine.export_tech_spec_docx(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": f'attachment; filename="especificacao_tecnica_{session_id[:8]}.docx"'
+        },
+    )
 
 
 @router.patch("/budget/{session_id}/project")

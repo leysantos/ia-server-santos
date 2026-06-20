@@ -138,8 +138,20 @@ class KnowledgeIndexer:
         pdf_indexer = PDFIndexer(store=store, embedder=self.embedder)
 
         for pdf_path in sorted(directory.glob("*.pdf")):
-            if not file_matches_base(pdf_path, base_key):
+            if pdf_path.stat().st_size == 0:
+                summary["skipped_files"] += 1
+                file_results.append(
+                    {"file": pdf_path.name, "status": "skipped_empty", "tier": tier, "chunks": 0}
+                )
+                logger.warning("PDF vazio ignorado na indexação: %s", pdf_path.name)
                 continue
+            try:
+                if not file_matches_base(pdf_path, base_key):
+                    continue
+            except Exception as exc:
+                summary["errors"].append({"file": str(pdf_path), "error": str(exc)})
+                continue
+
             dedup = self._dedup_key(pdf_path, use_hash_dedup, base_key=base_key)
             if dedup in seen_dedup:
                 summary["deduped_files"] += 1
@@ -209,6 +221,24 @@ class KnowledgeIndexer:
                     self._record_file(summary, file_results, xlsx_path.name, count, tier)
                 except Exception as exc:
                     summary["errors"].append({"file": str(xlsx_path), "error": str(exc)})
+
+        for pattern in ("*.docx",):
+            for docx_path in sorted(directory.glob(pattern)):
+                if docx_path.stat().st_size == 0:
+                    summary["skipped_files"] += 1
+                    continue
+                if not file_matches_base(docx_path, base_key):
+                    continue
+                dedup = self._dedup_key(docx_path, use_hash_dedup, base_key=base_key)
+                if dedup in seen_dedup:
+                    summary["deduped_files"] += 1
+                    continue
+                seen_dedup.add(dedup)
+                try:
+                    count = self._index_docx(store, docx_path, base_key, doc_type, force, tier)
+                    self._record_file(summary, file_results, docx_path.name, count, tier)
+                except Exception as exc:
+                    summary["errors"].append({"file": str(docx_path), "error": str(exc)})
 
         if is_legacy_path(directory):
             logger.debug("Indexado path legado read-only: %s", directory)
@@ -316,6 +346,54 @@ class KnowledgeIndexer:
                     )
                 )
         wb.close()
+        return store.add_many(chunks) if chunks else 0
+
+    def _index_docx(
+        self,
+        store,
+        docx_path: Path,
+        base_key: str,
+        doc_type: str,
+        force: bool,
+        tier: str,
+    ) -> int:
+        try:
+            from docx import Document
+        except ImportError as exc:
+            raise ImportError("python-docx necessário: pip install python-docx") from exc
+
+        file_key = str(docx_path.resolve())
+        if store.is_indexed(file_key) and not force:
+            return 0
+        if force and store.is_indexed(file_key):
+            store.remove_by_path(file_key)
+
+        doc = Document(str(docx_path))
+        paragraphs = [p.text.strip() for p in doc.paragraphs if p.text and p.text.strip()]
+        text = "\n".join(paragraphs)
+        if not text.strip():
+            return 0
+
+        chunks: list[DocumentChunk] = []
+        for piece in split_text(text):
+            embedding = self.embedder.embed_document(piece)
+            chunks.append(
+                DocumentChunk(
+                    text=piece,
+                    embedding=embedding,
+                    source=docx_path.stem,
+                    doc_type=doc_type,
+                    discipline=base_key.upper(),
+                    metadata={
+                        "path": file_key,
+                        "filename": docx_path.name,
+                        "knowledge_base": base_key,
+                        "source_tier": tier,
+                        "format": "docx",
+                        "content_type": (read_metadata(docx_path) or {}).get("content_type"),
+                    },
+                )
+            )
         return store.add_many(chunks) if chunks else 0
 
     @staticmethod

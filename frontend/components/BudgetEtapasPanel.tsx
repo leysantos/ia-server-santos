@@ -5,6 +5,11 @@ import { api } from "@/services/api";
 import type { BudgetRow, BudgetSessionResponse } from "@/types/api";
 import { cn } from "@/lib/utils";
 import {
+  modeColorClass,
+  rowDualTotals,
+} from "@/lib/budget-desoneracao";
+import BudgetTotalsSummary from "@/components/BudgetTotalsSummary";
+import {
   budgetBtn,
   budgetField,
   budgetFieldActionBtnCol,
@@ -604,14 +609,17 @@ function ServiceTable({
             <th className="py-2 px-2 min-w-[12rem]">Serviço</th>
             <th className="py-2 px-2">Und</th>
             <th className="py-2 px-2 text-right">Qtd</th>
-            <th className="py-2 px-2 text-right">PU</th>
-            <th className="py-2 px-2 text-right">Total efetivo</th>
-            <th className="py-2 px-2">Cenário</th>
+            <th className="py-2 px-2 text-right">PU ComD</th>
+            <th className="py-2 px-2 text-right">PU SemD</th>
+            <th className="py-2 px-2 text-right">Total ComD</th>
+            <th className="py-2 px-2 text-right">Total SemD</th>
             <th className="py-2 px-2" />
           </tr>
         </thead>
         <tbody>
-          {services.map((svc) => (
+          {services.map((svc) => {
+            const { comd, semd } = rowDualTotals(svc);
+            return (
             <Fragment key={svc.row_id}>
               <tr className="border-b border-slate-800/60 align-top">
                 <td className="py-2 px-2 font-mono text-slate-400">{svc.code}</td>
@@ -641,15 +649,10 @@ function ServiceTable({
                     className="w-16 rounded bg-slate-900 px-1.5 py-0.5 text-right tabular-nums ring-1 ring-slate-600"
                   />
                 </td>
-                <td className="py-2 px-2 text-right tabular-nums">{fmt(svc.unit_price)}</td>
-                <td className="py-2 px-2 text-right tabular-nums">{fmt(svc.total_effective ?? svc.total_price)}</td>
-                <td className="py-2 px-2">
-                  {svc.desoneracao_mode === "semd" ? (
-                    <span className="text-xs text-emerald-400">SemD</span>
-                  ) : (
-                    <span className="text-xs text-blue-400">ComD</span>
-                  )}
-                </td>
+                <td className={cn("py-2 px-2 text-right", modeColorClass("comd"))}>{fmt(svc.unit_price)}</td>
+                <td className={cn("py-2 px-2 text-right", modeColorClass("semd"))}>{fmt(svc.unit_price_semd)}</td>
+                <td className={cn("py-2 px-2 text-right", modeColorClass("comd"))}>{fmt(comd)}</td>
+                <td className={cn("py-2 px-2 text-right", modeColorClass("semd"))}>{fmt(semd)}</td>
                 <td className="py-2 px-2 whitespace-nowrap">
                   <button
                     type="button"
@@ -665,7 +668,7 @@ function ServiceTable({
               </tr>
               {replacingId === svc.row_id && (
                 <tr className="bg-slate-900/60">
-                  <td colSpan={9} className="px-3 py-3">
+                  <td colSpan={10} className="px-3 py-3">
                     <label className="block space-y-1">
                       <span className="text-xs text-slate-500">Substituir serviço — digite código ou descrição</span>
                       <input
@@ -690,7 +693,8 @@ function ServiceTable({
                 </tr>
               )}
             </Fragment>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -762,19 +766,8 @@ export default function BudgetEtapasPanel({ session, loading, onUpdate, onError,
         />
       ))}
 
-      <div className="flex flex-col items-end gap-1 rounded-xl bg-slate-900/50 px-4 py-3 ring-1 ring-slate-700/40">
-        <span className="text-sm text-slate-300">
-          Total efetivo (menor custo):{" "}
-          <strong className="text-emerald-400 text-base">R$ {fmt(session.grand_total)}</strong>
-          <span className="ml-2 text-xs text-slate-500">
-            {session.desoneracao_mode === "semd" ? "SemD" : "ComD"} no consolidado
-          </span>
-        </span>
-        {(session.grand_total_comd != null || session.grand_total_semd != null) && (
-          <span className="text-xs text-slate-500">
-            ComD R$ {fmt(session.grand_total_comd ?? 0)} · SemD R$ {fmt(session.grand_total_semd ?? 0)}
-          </span>
-        )}
+      <div className="rounded-xl bg-slate-900/50 px-4 py-3 ring-1 ring-slate-700/40">
+        <BudgetTotalsSummary session={session} compact />
       </div>
     </div>
   );

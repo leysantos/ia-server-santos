@@ -8,9 +8,12 @@ Disciplinas e tipos vivem APENAS aqui + catalog.jsonl
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from core.knowledge.content_types import (
     BASE_KEY_ACCEPTS_CONTENT_TYPES,
@@ -31,7 +34,15 @@ def read_metadata(file_path: Path) -> dict[str, Any] | None:
     path = sidecar_path(file_path)
     if not path.is_file():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace").strip()
+        if not raw or "\x00" in raw:
+            logger.warning("Sidecar vazio/corrompido ignorado: %s", path.name)
+            return None
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        logger.warning("Sidecar JSON inválido %s: %s", path.name, exc)
+        return None
 
 
 def write_metadata(file_path: Path, payload: dict[str, Any]) -> Path:

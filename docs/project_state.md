@@ -6,9 +6,9 @@
 | Campo | Valor |
 |-------|-------|
 | **Versão do sistema** | 1.0.0 |
-| **Última atualização** | 2026-06-19 |
-| **Marco atual** | Fase 2 (88%) — 68 NBRs (636 chunks) ✅ · Workspace + Project RAG multi-formato ✅ |
-| **Próximo foco** | Validar RAG de projeto no `/chat?project=` · upload SINAPI/TCPO |
+| **Última atualização** | 2026-06-20 |
+| **Marco atual** | Fase 2 (98%) — **Operational Transparency Layer** (Fases 1–2) |
+| **Próximo foco** | Teste PCI (combate a incêndio) com modo `pci` · workers assíncronos revisão |
 | **Repositório** | [github.com/leysantos/ia-server-santos](https://github.com/leysantos/ia-server-santos) |
 | **Branch principal** | `main` |
 | **Modo padrão de agentes** | Inteligente (`USE_INTELLIGENT_AGENTS=true`) |
@@ -58,10 +58,14 @@ ia-server-santos/
 | Engineering Orchestrator | 🟢 Separação NBR ↔ SINAPI — `USE_ENGINEERING_ORCHESTRATOR=true` |
 | RAG performance | 🟢 Cache semântico, rerank leve, métricas latência — default ON |
 | **Workspace (projetos + conversas)** | 🟢 CRUD projetos/conversas · busca · multi-turn · painel lateral no `/chat` |
-| **Project RAG multi-formato** | 🟢 FAISS por projeto — PDF, Office, CSV, TXT, DXF, IFC, DWG (parcial) |
+| **Project RAG multi-formato** | 🟢 FAISS por projeto — PDF, Office, CSV, TXT, DXF, IFC, DWG, PNG/JPG/ZIP |
+| **Project Review Engine** | 🟡 Fundação — digital twin, ingestão, OCR/BIM/CAD, agente, NCs, scoring, DOCX — `/projects/{id}/review` |
+| **Vision Analysis** | 🟢 Vision Engine — OCR → `gemma3:12b` → JSON → `qwen3:14b` → DOCX · SSE progresso · preview imagens · `/projects/{id}/vision` |
+| **Operational Transparency** | 🟢 ActivityPanel global · Orchestrator Console `/console` · timeline `/projects/{id}/activity` · `project_decisions` + auto-capture |
+| **Orçamento `/budget`** | 🟢 PPD MC/OR · etapas/sub-etapas · ComD/SemD · cronograma Gantt + CPM · agente IA · **Especificação Técnica** (stream + preview Word + export DOCX) · BudgetTracePanel |
 | Chat streaming UX | 🟢 SSE instantâneo (`connected`) + tokens ~60fps (`flushSync` + rAF) |
 | Agente Geotecnia dedicado | 🟢 `GeotecniaIntelligentAgent` — NBR 6122/7185, classificação solo, A_min |
-| Frontend | 🟢 `/chat`, `/projects`, `/orchestrate`, `/history`, `/settings` — falta `/copilot`, `/aed` |
+| Frontend | 🟢 `/chat`, `/projects`, `/budget`, `/orchestrate`, `/console`, `/history`, `/settings` — falta `/copilot`, `/aed` |
 | Auth SaaS | 🔴 não implementado |
 
 ## Feature flags importantes (defaults)
@@ -117,13 +121,29 @@ Ativar multi-index explícito (opcional): `USE_KNOWLEDGE_ROUTER=true`
 
 ## Próximos passos (ordem recomendada)
 
-1. Validar Project RAG end-to-end: upload DOCX/XLSX/IFC → reindex → `/chat?project=<id>`
-2. Popular e indexar SINAPI/TCPO — desbloqueia orçamento real no orquestrador
-3. Validar RAG normativo end-to-end: ingest → index → `/chat` e `/orchestrate` com chunks NBR
-4. Simulador real `concrete_armed_simulator` (AED hoje usa heurísticas)
-5. Frontend `/aed` consumindo `POST /aed`
-6. Execution Planner (Orchestrator v2 — dependências entre disciplinas)
-7. Frontend `/copilot`
+1. **Teste PCI** — projeto combate a incêndio: upload fotos/plantas → `/projects/{id}/vision` modo `pci` → export laudo/correções
+2. Validar Operational Transparency end-to-end: orquestração → Console · orçamento salvo → timeline do projeto
+3. Validar Project RAG end-to-end: upload DOCX/XLSX/IFC → reindex → `/chat?project=<id>`
+4. Popular e indexar SINAPI/TCPO — desbloqueia orçamento real no orquestrador
+5. Validar orçamento `/budget` em obra piloto (ComD/SemD, cronograma, export PPD)
+6. Export Excel PPD alinhado às colunas ComD/SemD da UI
+7. Validar RAG normativo end-to-end: ingest → index → `/chat` e `/orchestrate` com chunks NBR
+8. Simulador real `concrete_armed_simulator` (AED hoje usa heurísticas)
+9. Frontend `/aed` consumindo `POST /aed`
+10. Execution Planner (Orchestrator v2 — dependências entre disciplinas)
+11. Frontend `/copilot`
+
+## Operational Transparency Layer (roadmap incremental)
+
+> Direção "Agent-first" **sem rewrite** — expor pipelines já existentes (Intent SSE, Vision SSE, Budget resolve, orchestrator_logs).
+
+| Fase | Escopo | Status |
+|------|--------|--------|
+| **Fase 1** | ActivityPanel global · Orchestrator Console `/console` · aba Atividade `/projects/{id}/activity` · PipelineSteps + badges SSE | ✅ |
+| **Fase 2** | `project_activity_events` + `project_decisions` · auto-capture orchestrator/vision/budget/upload · BudgetTracePanel | ✅ |
+| **Fase 3** | pgvector memória cognitiva · SaaS multi-prefeitura · redesign UI completo | 🔴 adiar |
+
+**APIs novas:** `GET /console/logs` · `GET /console/stats` · `GET /projects/{id}/activity` · `GET /projects/{id}/decisions`
 
 ## Restrições arquiteturais recorrentes
 
@@ -181,9 +201,11 @@ Regra Cursor: `.cursor/rules/project-state-control-plane.mdc` (`alwaysApply: tru
 | Evolution Loop v1 | 🟢 | `USE_EVOLUTION_LOOP=false` — sinais, mutações, RAG boost |
 | Agent Generation v1 | 🟢 | `USE_AGENT_GENERATION=false` — sandbox + promotion gate |
 | Agentes legados | 🟡 | `USE_INTELLIGENT_AGENTS=false` |
-| Frontend Next.js | 🟢 | `/chat`, `/projects`, `/orchestrate`, `/history`, `/settings` — falta `/copilot`, `/aed` |
+| Frontend Next.js | 🟢 | `/chat`, `/projects`, `/budget`, `/orchestrate`, `/console`, `/history`, `/settings` — falta `/copilot`, `/aed` |
 | **Workspace** | 🟢 | Projetos, conversas multi-turn, busca, painel lateral — `WorkspacePanel` |
 | **Project RAG** | 🟢 | FAISS isolado por projeto · 12 formatos · `GET /projects/formats` |
+| **Budget Engine v2** | 🟢 | `/budget` — PPD, WBS, ComD/SemD, memória de cálculo, persistência DB |
+| **Cronograma (CPM + Gantt)** | 🟢 | Sync orçamento → tarefas · curvas físico/financeiro · agente IA |
 | Agente Geotecnia | 🟢 | `geotecnia_intelligent.py` — prompts NBR 6122/7185 |
 | Copilot v1 | 🟢 | `POST /copilot` + Evaluation v2 + Self-Improving (background) |
 | AED v1 | 🟢 | `POST /aed` + Structural Selector + `aed_runs` |
@@ -204,7 +226,7 @@ Regra Cursor: `.cursor/rules/project-state-control-plane.mdc` (`alwaysApply: tru
 Fase 0  Core Infra          ████████████████████  100%  ✅
 Fase 1  Agentes + RAG       ██████████████████░░   85%  🟡  ← NBR indexada; falta SINAPI/TCPO
 Fase 1b Loops de evolução    ████████████████████  100%  ✅
-Fase 2  Orquestração + AED   █████████████████░░░   88%  🟡  ← estamos aqui (+ workspace)
+Fase 2  Orquestração + AED   ██████████████████░░   90%  🟡  ← estamos aqui (+ orçamento/cronograma)
 Fase 3  RAG avançado         ██████████░░░░░░░░░░   50%  🟡  ← agent-scoped OK; project RAG OK; falta TDRs/custo
 Fase 4  SaaS produção        ░░░░░░░░░░░░░░░░░░░░    0%  🔴
 ```
@@ -236,7 +258,11 @@ Fase 4  SaaS produção        ░░░░░░░░░░░░░░░░�
 | Jun/26 | **GeotecniaIntelligentAgent** — prompts geotécnicos especializados | ✅ |
 | Jun/26 | **Pricing Engine v1** — providers plugáveis, cache, itemização orçamentária | ✅ |
 | Jun/26 | **Budget Engine v2 + Orchestrator** — planilha editável, pipeline LLM→qty→preço | ✅ |
-| Jun/26 | **Formato PPD MC/OR** — import/export .xlsm, BDI, ETAPA/S, base SINAPI Mar/2026 | ✅ ← último marco |
+| Jun/26 | **Formato PPD MC/OR** — import/export .xlsm, BDI, ETAPA/S, base SINAPI Mar/2026 | ✅ |
+| Jun/26 | **Cronograma CPM + Gantt** — sync orçamento, curvas mensais, agente IA, edição manual | ✅ |
+| Jun/26 | **Renumeração WBS automática** — `renumber_wbs` + botão Organizar numeração | ✅ |
+| Jun/26 | **UI ComD/SemD** — colunas paralelas, custo sem BDI + valor BDI + total adotado (menor) | ✅ |
+| Jun/26 | **Vision Analysis** — modos obra/laudo/relatório fotográfico, API REST, UI `/projects/{id}/vision`, export DOCX | ✅ ← último marco |
 
 ### O que falta para fechar a Fase 2
 
@@ -254,7 +280,10 @@ Fase 4  SaaS produção        ░░░░░░░░░░░░░░░░�
 
 > **1.** Criar projeto em `/projects`, fazer upload de memorial/planilha/IFC e testar `/chat?project=<id>`  
 > **2.** Indexar SINAPI/TCPO em `knowledge/raw/documents/`  
-> **3.** Implementar simulador dedicado `concrete_armed_simulator` (primeiro do registry)
+> **3.** Montar orçamento em `/budget` (etapas + cronograma + conferir ComD/SemD) e exportar PPD  
+> **4.** Implementar simulador dedicado `concrete_armed_simulator` (primeiro do registry)
+
+**Git:** `main` @ commit `ffa593a` — cronograma Gantt, agente IA, renumeração WBS (push GitHub Jun/26). Alterações ComD/SemD UI **locais** — commit pendente se ainda não enviado.
 
 ---
 
@@ -282,7 +311,7 @@ Fase 4  SaaS produção        ░░░░░░░░░░░░░░░░�
 | AED v1 | `core/aed/` | Design autônomo: gerar → simular → comparar → selecionar → relatório |
 | Structural Selector | `core/structural_selector/` | Classificação de sistema estrutural antes da simulação AED |
 | SIE v1 | `core/structural_intelligence/` | Inteligência estrutural (classificação, normas, LLM) — só ESTRUTURAL |
-| PostgreSQL | `core/database/` | Models, repository, service, connection, `migrate_workspace.py` |
+| PostgreSQL | `core/database/` | Models, repository, service, connection, `migrate_workspace.py`, `migrate_audit_fks.py` |
 | **Workspace service** | `app/services/workspace_service.py` | Projetos, arquivos, conversas, busca |
 | **Project RAG** | `core/project_rag/` | FAISS por projeto + extractors multi-formato |
 | **Conversation context** | `core/conversation_context.py` | Multi-turn: `conversation_id`, thread history |
@@ -321,6 +350,10 @@ Fase 4  SaaS produção        ░░░░░░░░░░░░░░░░�
 | `/orchestrate` | `frontend/app/orchestrate/page.tsx` | Orquestração multi-disciplina |
 | `/history` | `frontend/app/history/page.tsx` | Histórico de execuções + continuar no chat |
 | `/settings` | `frontend/app/settings/page.tsx` | Upload/indexação `knowledge` (NBR, SINAPI…) |
+| `/budget` | `frontend/app/budget/page.tsx` | Orçamento PPD: etapas, planilha ComD/SemD, cronograma Gantt, memória de cálculo |
+| `BudgetGantt` | `frontend/components/BudgetGantt.tsx` | Gantt + curvas físico/financeiro (mensal) |
+| `BudgetSchedulePanel` | `frontend/components/BudgetSchedulePanel.tsx` | Agente IA cronograma + edição manual CPM |
+| `budget-desoneracao.ts` | `frontend/lib/budget-desoneracao.ts` | Totais ComD/SemD, custo sem BDI, valor BDI, total adotado |
 | `WorkspacePanel` | `frontend/components/WorkspacePanel.tsx` | Sidebar: projetos, conversas, busca |
 | API client | `frontend/services/api.ts` | Cliente HTTP → `localhost:8000` (auth-ready) |
 
@@ -364,7 +397,7 @@ Fase 4  SaaS produção        ░░░░░░░░░░░░░░░░�
 | Stream helpers | `core/stream_events.py` | 🟢 `iter_text_chunks`, keepalive SSE |
 | Conversation context | `core/conversation_context.py` | 🟢 Multi-turn thread + append messages |
 | RAG merge | `memory/rag_engine.py` | 🟢 `augment_route_with_project_context` |
-| DB migration | `core/database/migrate_workspace.py` | 🟢 Roda no `init_db` |
+| DB migration | `core/database/migrate_workspace.py`, `migrate_audit_fks.py` | 🟢 Roda no `init_db` |
 | Testes extractors | `tests/test_project_file_extractors.py` | 🟢 txt, csv, json, suffixes |
 
 **Formatos indexáveis:**
@@ -603,7 +636,9 @@ handle(text)
 | `budget/budget_structure.py` | WBS manual + **`renumber_wbs`** (numeração sequencial 1, 1.1, 1.1.1…) |
 | `budget/budget_calculator.py` | Memória de cálculo por célula |
 | `schedule/schedule_builder.py` | Sync orçamento → tarefas + CPM |
-| `schedule/schedule_agent.py` | Agente IA: catálogo WBS + intent + resolução código/nome + enriquecimento de plano |
+| `schedule/cpm_engine.py` | Cálculo caminho crítico (FS/SS/FF/SF + lag) |
+| `schedule/schedule_agent.py` | Agente IA: catálogo WBS, intent, resolução código/nome, enriquecimento de plano |
+| `schedule/schedule_models.py` | `ProjectSchedule`, `ScheduleTask`, `ScheduleLink` |
 
 ### API
 
@@ -618,16 +653,41 @@ handle(text)
 | `DELETE /pricing/budget/{id}/rows/{row_id}` | Exclui linha + **renumera WBS** automaticamente |
 | `POST /pricing/budget/{id}/itemization/renumber` | Organiza numeração WBS (botão na toolbar) |
 | `GET /pricing/budget/{id}/export` | Download Excel |
-| `POST /pricing/budget/{id}/schedule/compose` | Agente IA organiza cronograma via prompt |
+| `GET /pricing/budget/{id}/schedule` | Cronograma da sessão |
 | `POST /pricing/budget/{id}/schedule/sync` | Sincroniza tarefas com orçamento |
+| `POST /pricing/budget/{id}/schedule/recalculate` | Recalcula CPM |
+| `PATCH /pricing/budget/{id}/schedule/settings` | Data de início da obra |
+| `PATCH /pricing/budget/{id}/schedule/tasks/{task_id}` | Duração / início manual |
+| `POST /pricing/budget/{id}/schedule/links` | Vínculo predecessor/successor |
+| `DELETE /pricing/budget/{id}/schedule/links/{link_id}` | Remove vínculo |
+| `POST /pricing/budget/{id}/schedule/compose` | Agente IA organiza cronograma via prompt |
+| `POST /pricing/budget/{id}/tech-spec/compose/stream` | SSE — gera Especificação Técnica a partir do orçamento |
+| `GET/PUT /pricing/budget/{id}/tech-spec` | Lê/atualiza documento (markdown + HTML editável) |
+| `GET /pricing/budget/{id}/tech-spec/export` | Download DOCX (python-docx) |
 | `POST /pricing/providers/{name}/upload` | Upload base CSV/Excel |
 | `POST /pricing/bases/reload` | Recarrega bases do disco |
+
+### Frontend `/budget`
+
+| Área | Path | Descrição |
+|------|------|-----------|
+| Abas | `BudgetEtapasPanel`, `BudgetSpreadsheet`, `BudgetMemoryPanel`, `BudgetSchedulePanel` | Etapas, planilha, memória de cálculo, cronograma |
+| ComD / SemD | `lib/budget-desoneracao.ts`, `BudgetTotalsSummary.tsx` | Colunas paralelas (azul ComD · verde SemD); rodapé: custo sem BDI, valor BDI, total com BDI, **total adotado (menor)** |
+| Gantt | `BudgetGantt.tsx`, `lib/schedule-curves.ts` | Cabeçalho mês/semana, curvas físico/desembolso/financeiro, visão etapas/completo |
+| WBS | `BudgetToolbar` | Botão **Organizar numeração** + renumeração automática ao excluir linha |
+| Cronograma IA | `BudgetSchedulePanel` | Prompt + `ModelSelector`; auto `replace_links` em reorganização completa |
+| Persistência | `budget_db_service.py` | Sessão inclui `schedule` no payload salvo |
 
 ### Bases reais
 
 - `backend/pricing/data/sinapi.csv` ou `data/sinapi/*.csv` (múltiplos mesclados)
 - `PRICING_DATA_DIR` para diretório customizado
-- Frontend: `/budget` — planilha editável + **cronograma Gantt** (visão etapas/completo, colunas mensais, IA + manual) + botão **Organizar numeração**
+
+### Pendências orçamento
+
+- [ ] Export Excel PPD refletindo layout ComD/SemD do frontend
+- [ ] Validar agente de cronograma com modelos maiores (`qwen3:14b`) em obras reais
+- [ ] Testes E2E frontend cronograma + desoneração
 
 ## Intent Layer v2
 
@@ -828,7 +888,7 @@ input → project_understanding → design_generator (≥2 opções/disciplina)
 
 ---
 
-## Fase 2 — Orquestração + Engenharia Autônoma 🟡 88% ← ESTAMOS AQUI
+## Fase 2 — Orquestração + Engenharia Autônoma 🟡 90% ← ESTAMOS AQUI
 
 ### Knowledge + RAG (concluído nesta fase)
 
@@ -891,6 +951,19 @@ input → project_understanding → design_generator (≥2 opções/disciplina)
 - [x] `GET /models/status`
 - [ ] Ativar `USE_MODEL_ROUTER=true` após validação em staging
 
+### Orçamento + Cronograma ✅ (Jun/26)
+
+- [x] Budget Engine v2 — sessão editável, BDI ComD/SemD, memória de cálculo
+- [x] Import/export PPD MC/OR (.xlsm)
+- [x] UI ComD/SemD — colunas paralelas, custo sem BDI, valor BDI, total adotado (menor)
+- [x] Renumeração WBS (`renumber_wbs`) — automática ao excluir + botão toolbar
+- [x] Cronograma CPM — sync orçamento, vínculos FS/SS/FF/SF, recálculo
+- [x] Gantt frontend — curvas mensais, datas dd/mm/aaaa, visão etapas/completo
+- [x] Agente IA cronograma — catálogo WBS, intent, fallback heurístico
+- [x] Persistência cronograma em sessão salva (`budget_db_service`)
+- [ ] Export Excel alinhado ao layout ComD/SemD da UI
+- [ ] Curva financeira do cronograma usando cenário adotado (ComD vs SemD) de forma explícita
+
 ---
 
 ## Fase 3 — RAG Avançado 🟡 EM PROGRESSO (~50%)
@@ -926,6 +999,8 @@ input → project_understanding → design_generator (≥2 opções/disciplina)
 |--------|------|------------|
 | Validar Project RAG (`/chat?project=`) com DOCX/XLSX/IFC | 2 | 🔴 Crítica |
 | Indexar SINAPI/TCPO em `knowledge/raw/documents/` | 1 | 🔴 Crítica |
+| Export Excel PPD alinhado ComD/SemD | 2 | Média |
+| Validar agente cronograma em obra real | 2 | Média |
 | Página frontend `/aed` | 2 | Alta |
 | Página frontend `/copilot` | 1b | Alta |
 | `concrete_armed_simulator` (primeiro simulador real) | 2 | Alta |
@@ -1138,6 +1213,7 @@ Settings completas: `backend/config/settings.py`
 | R-03 | Média | Latência 2–5 min por request (CPU local) | GPU; modelo menor; streaming ✅ no chat |
 | R-09 | Média | DWG indexa só strings ASCII (extração parcial) | Exportar para PDF/DXF antes do upload |
 | R-10 | Baixa | Project RAG não validado com arquivos reais de obra | Testar upload + `/chat?project=` end-to-end |
+| R-11 | Média | Agente cronograma com LLM pequeno pode gerar ações inválidas | Modelos maiores (`qwen3:14b`); enriquecimento heurístico + resolução código/nome |
 | R-04 | Média | Orchestrator v1 executa agentes com contexto limitado | Orchestrator v2: Execution Planner + dependências |
 | R-07 | Média | AED simula via heurísticas — simuladores dedicados ainda não existem | Implementar `*_simulator` por sistema estrutural |
 | R-08 | Baixa | Frontend sem `/aed` e `/copilot` | Criar páginas consumindo endpoints existentes |
@@ -1156,7 +1232,8 @@ Settings completas: `backend/config/settings.py`
 | 2026-06 | `BaseAgentIntelligent` separado de `BaseAgent` | Não quebrar agentes legados durante migração |
 | 2026-06 | `USE_INTELLIGENT_AGENTS=true` como default | LLM real em produção; legado para rollback |
 | 2026-06 | Ollama local (não cloud LLM) | Privacidade, custo zero, controle de modelos |
-| 2026-06 | PostgreSQL para audit trail | Histórico de conversas e execuções de agentes |
+| 2026-06-19 | Settings com menu lateral (cortina mobile) + subrotas por módulo | `/settings`, `/settings/document-types`, `/settings/imports`, `/settings/catalog`, `/settings/indexing` — extensível via `settings-nav.tsx` |
+| 2026-06-19 | Novos `content_type` na listbox de importação | `artigos`, `livros`, `bases_precos`, `memoriais`, `especificacoes`, `laudos` — labels em `content_types.py`; API `/knowledge/options`; escopos RAG atualizados |
 | 2026-06 | `project_state.md` como control plane | Memória persistente do sistema; regra Cursor `alwaysApply` |
 | 2026-06 | ContextGraph integrado no orchestrator | Memória compartilhada na síntese multi-disciplina |
 | 2026-06 | `ChatAgent` (disciplina CHAT) | Fluxo conversacional separado do técnico |
@@ -1182,6 +1259,12 @@ Settings completas: `backend/config/settings.py`
 | 2026-06 | Project RAG multi-formato | FAISS por empreendimento; PDF/Office/CAD/BIM no upload |
 | 2026-06 | Chat streaming UX | SSE `connected` instantâneo + render frontend ~60fps |
 | 2026-06 | GeotecniaIntelligentAgent | Prompts NBR 6122/7185, classificação solo, A_min |
+| 2026-06 | Cronograma CPM + Gantt no `/budget` | Sync orçamento → tarefas; curvas físico/financeiro; edição manual + agente IA |
+| 2026-06 | Agente IA de cronograma enriquecido | Catálogo WBS JSON, detecção de intent, resolução código/nome, pós-processamento admin/obras |
+| 2026-06 | Renumeração WBS automática | `renumber_wbs` após delete; endpoint `/itemization/renumber`; sync cronograma |
+| 2026-06 | UI ComD/SemD no orçamento | Colunas paralelas (azul/verde); rodapé custo sem BDI + BDI + total adotado (menor valor) |
+| 2026-06 | Vision Analysis Engine (`core/vision_engine/`) | Pipeline OCR→Gemma3→Qwen3; analisadores PDF/Image/Plant/PCI/Structural; workspace-status |
+| 2026-06 | Operational Transparency Layer (Fases 1–2) | ActivityPanel + Console + timeline; `project_activity_events`/`project_decisions`; auto-capture sem rewrite Agent-first |
 
 ---
 

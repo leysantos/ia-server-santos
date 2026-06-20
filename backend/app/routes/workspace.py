@@ -1,6 +1,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.schemas.workspace import (
@@ -95,6 +96,26 @@ def reindex_project_files(project_id: str, db: Session = Depends(get_db)):
     return workspace_service.reindex_project(project_id, db=db)
 
 
+@router.get("/projects/{project_id}/files/{file_id}/preview")
+def preview_project_file(
+    project_id: str,
+    file_id: str,
+    db: Session = Depends(get_db),
+):
+    """Preview de imagem ou 1ª página de PDF (para UI de análise visual)."""
+    content, media_type, filename = workspace_service.get_file_preview(
+        project_id, file_id, db=db
+    )
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "Content-Disposition": f'inline; filename="{filename}"',
+        },
+    )
+
+
 @router.delete("/projects/{project_id}/files/{file_id}")
 def delete_project_file(
     project_id: str,
@@ -147,3 +168,29 @@ def update_conversation(
 @router.delete("/conversations/{conversation_id}")
 def delete_conversation(conversation_id: str, db: Session = Depends(get_db)):
     return workspace_service.delete_conversation(conversation_id, db=db)
+
+
+@router.get("/projects/{project_id}/activity")
+def project_activity(
+    project_id: str,
+    limit: int = Query(default=100, ge=1, le=300),
+    db: Session = Depends(get_db),
+):
+    from app.schemas.activity import ActivityListResponse
+    from core.project_memory.service import list_project_activity
+
+    items = list_project_activity(db, project_id, limit=limit)
+    return ActivityListResponse(total=len(items), items=items)
+
+
+@router.get("/projects/{project_id}/decisions")
+def project_decisions(
+    project_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    from app.schemas.activity import DecisionListResponse
+    from core.project_memory.service import list_project_decisions
+
+    items = list_project_decisions(db, project_id, limit=limit)
+    return DecisionListResponse(total=len(items), items=items)

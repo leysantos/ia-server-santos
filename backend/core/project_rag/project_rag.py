@@ -260,6 +260,13 @@ def supported_formats() -> list[dict[str, str]]:
         ".dwg": "AutoCAD DWG (strings parciais)",
         ".ifc": "BIM IFC",
         ".rtf": "RTF",
+        ".png": "Imagem PNG",
+        ".jpg": "Imagem JPG",
+        ".jpeg": "Imagem JPEG",
+        ".webp": "Imagem WebP",
+        ".heic": "Imagem HEIC",
+        ".heif": "Imagem HEIF",
+        ".zip": "ZIP",
     }
     return [
         {"ext": ext, "label": labels.get(ext, ext.upper())}

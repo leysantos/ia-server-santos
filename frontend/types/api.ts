@@ -233,11 +233,21 @@ export interface KnowledgeOptionItem {
   label: string;
 }
 
+export interface DocumentTypePreset {
+  id: string;
+  label: string;
+  content_type: string;
+  discipline: string;
+  register_price_base: boolean;
+  register_budget_model: boolean;
+}
+
 export interface KnowledgeOptionsResponse {
   disciplines: KnowledgeOptionItem[];
   content_types: KnowledgeOptionItem[];
   bases: KnowledgeOptionItem[];
   extensions: string[];
+  document_type_presets?: DocumentTypePreset[];
 }
 
 export interface KnowledgeIngestFileResult {
@@ -275,6 +285,27 @@ export interface KnowledgeIndexResponse {
   total_chunks: number;
   total_chunks_in_store: number;
   errors: { base?: string; error: string }[];
+}
+
+export interface WebIngestProgress {
+  phase: string;
+  current: number;
+  total: number;
+  percent: number;
+  message: string;
+  name?: string | null;
+}
+
+export interface KnowledgeWebIngestResponse {
+  page_url: string;
+  pages_fetched?: number;
+  discovered: number;
+  downloaded: number;
+  ingested: number;
+  skipped: number;
+  errors: { stage?: string; error?: string; url?: string }[];
+  files: Record<string, unknown>[];
+  indexing?: Record<string, unknown>;
 }
 
 export interface KnowledgeCatalogEntry {
@@ -457,9 +488,34 @@ export interface BudgetStreamEvent {
   data: Record<string, unknown>;
 }
 
+export interface TechSpecFormatting {
+  font_family: string;
+  font_size: number;
+  line_spacing: number;
+  margin_cm: number;
+  page_numbers?: boolean;
+  logo_text?: string | null;
+  document_title?: string | null;
+}
+
+export interface TechSpecDocument {
+  title: string;
+  markdown: string;
+  html_content: string;
+  formatting: TechSpecFormatting;
+  llm_model?: string | null;
+  updated_at?: string;
+}
+
+export interface TechSpecStreamEvent {
+  type: "status" | "log" | "token" | "preview" | "done" | "error" | string;
+  data: Record<string, unknown>;
+}
+
 export interface BudgetSummary {
   id: string;
   title: string;
+  project_id?: string | null;
   session_id: string;
   grand_total: number;
   obra_type: string;
@@ -482,6 +538,7 @@ export interface BudgetSessionResponse {
   template?: string;
   calculation_memory: Record<string, unknown>[];
   schedule?: ProjectSchedule | null;
+  tech_spec?: TechSpecDocument | null;
   source_priority: string[];
   intent: Record<string, unknown>;
   project_import?: {
@@ -500,6 +557,7 @@ export interface BudgetSessionResponse {
   };
   input_text?: string;
   db_id?: string;
+  project_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -515,4 +573,243 @@ export interface PricingProviderInfo {
 export interface PricingProvidersResponse {
   data_dir: string;
   providers: PricingProviderInfo[];
+}
+
+export interface ReviewScores {
+  conformidade_geral?: number;
+  conformidade_estrutural?: number;
+  conformidade_pci?: number;
+  conformidade_documental?: number;
+  conformidade_orcamentaria?: number;
+}
+
+export interface ReviewSummary {
+  id: string;
+  project_id: string;
+  version: number;
+  status: string;
+  scores?: ReviewScores | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  created_at?: string | null;
+  ncs_created?: number;
+  files_processed?: number;
+}
+
+export interface ReviewDetail extends ReviewSummary {
+  analysis_payload?: Record<string, unknown> | null;
+  report_payload?: Record<string, unknown> | null;
+  parent_review_id?: string | null;
+}
+
+export interface ReviewListResponse {
+  total: number;
+  items: ReviewSummary[];
+}
+
+export interface NCSummary {
+  id: string;
+  project_id: string;
+  review_id?: string | null;
+  codigo: string;
+  categoria: string;
+  criticidade: string;
+  descricao: string;
+  evidencia?: string | null;
+  norma?: string | null;
+  impacto?: string | null;
+  recomendacao?: string | null;
+  status: string;
+}
+
+export interface NCListResponse {
+  total: number;
+  items: NCSummary[];
+}
+
+export interface ReviewDashboard {
+  project_id?: string | null;
+  reviews_total: number;
+  ncs_total: number;
+  latest_review?: ReviewSummary | null;
+  scores?: ReviewScores | null;
+  pending_ncs: number;
+}
+
+export interface DigitalTwin {
+  id: string;
+  project_id: string;
+  disciplinas?: string[] | null;
+  elementos?: Record<string, unknown> | null;
+  documentos?: unknown[] | null;
+  normas_aplicaveis?: string[] | null;
+  payload?: Record<string, unknown> | null;
+  versao: number;
+  created_at?: string | null;
+}
+
+export interface VisionModeItem {
+  value: string;
+  label: string;
+}
+
+export interface VisionStatusResponse {
+  available: boolean;
+  ollama_reachable: boolean;
+  vision_models_ready: string[];
+  primary: string;
+  technical_model?: string;
+  error?: string | null;
+}
+
+export interface VisionAnalysisItem {
+  project_file_id: string;
+  filename: string;
+  analysis_mode: string;
+  analyzer?: string | null;
+  skipped: boolean;
+  error?: string | null;
+  model_used?: string | null;
+  technical_model_used?: string | null;
+  analyzed_at?: string | null;
+  analysis?: Record<string, unknown> | null;
+  technical_report?: Record<string, unknown> | null;
+}
+
+export interface VisionAnalyzeResponse {
+  project_id: string;
+  mode: string;
+  total: number;
+  analyzed: number;
+  errors: number;
+  skipped: number;
+  items: VisionAnalysisItem[];
+  summary: Record<string, unknown>;
+}
+
+export interface VisionAnalyzeProgress {
+  phase: string;
+  current: number;
+  total: number;
+  percent: number;
+  message: string;
+  filename?: string | null;
+  file_id?: string | null;
+}
+
+export interface VisionAnalysisListResponse {
+  total: number;
+  items: VisionAnalysisItem[];
+}
+
+export interface VisionReportRequest {
+  report_type:
+    | "relatorio_fotografico"
+    | "laudo"
+    | "correcoes"
+    | "tecnico"
+    | "review"
+    | "nc"
+    | "parecer"
+    | "memorial"
+    | "tdr";
+  file_ids?: string[];
+  obra_info?: string;
+  solicitante?: string;
+  objeto?: string;
+  discipline?: string;
+  prazo?: string;
+}
+
+export interface WorkspaceToolItem {
+  id: string;
+  label: string;
+  available: boolean;
+  supports: string[];
+}
+
+export interface VisionWorkspaceStatusResponse {
+  ready: boolean;
+  ollama_reachable: boolean;
+  vision_model: string;
+  vision_model_ready: boolean;
+  technical_model: string;
+  technical_model_ready: boolean;
+  installed_models: string[];
+  analyzers: WorkspaceToolItem[];
+  reports: { id: string; label: string; route: string }[];
+  dependencies: Record<string, boolean>;
+  pipeline: string[];
+  frontend_routes: string[];
+}
+
+export interface ActivityEventItem {
+  id: string;
+  project_id?: string | null;
+  source: string;
+  event_type: string;
+  title: string;
+  summary?: string | null;
+  agent_name?: string | null;
+  discipline?: string | null;
+  phase?: string | null;
+  meta?: Record<string, unknown> | null;
+  created_at?: string | null;
+}
+
+export interface ActivityListResponse {
+  total: number;
+  items: ActivityEventItem[];
+}
+
+export interface DecisionItem {
+  id: string;
+  project_id?: string | null;
+  source: string;
+  title: string;
+  description?: string | null;
+  rationale?: string | null;
+  disciplines?: string[] | null;
+  meta?: Record<string, unknown> | null;
+  created_at?: string | null;
+}
+
+export interface DecisionListResponse {
+  total: number;
+  items: DecisionItem[];
+}
+
+export interface ConsoleAgentRunItem {
+  id: string;
+  agent_name?: string | null;
+  discipline?: string | null;
+  result_text?: string | null;
+  had_context?: boolean;
+  created_at?: string | null;
+}
+
+export interface ConsoleLogItem {
+  id: string;
+  conversation_id?: string | null;
+  project_id?: string | null;
+  input_text: string;
+  disciplines: string[];
+  final_report?: string | null;
+  synthesis?: Record<string, unknown> | null;
+  use_rag?: boolean;
+  agent_count?: number;
+  created_at?: string | null;
+  agent_runs: ConsoleAgentRunItem[];
+}
+
+export interface ConsoleLogsResponse {
+  total: number;
+  items: ConsoleLogItem[];
+}
+
+export interface ConsoleStatsResponse {
+  orchestrator_logs: number;
+  agent_runs: number;
+  activity_events: number;
+  decisions: number;
 }

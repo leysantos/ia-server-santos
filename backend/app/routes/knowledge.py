@@ -2,15 +2,23 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 
 from app.schemas.knowledge import (
     KnowledgeCatalogResponse,
     KnowledgeDocumentDeleteResponse,
     KnowledgeDocumentUpdateRequest,
     KnowledgeDocumentUpdateResponse,
+    KnowledgePurgeGenericLegislationResponse,
+    DocumentTypePreset,
+    DocumentTypePresetCreateRequest,
+    DocumentTypePresetListResponse,
+    DocumentTypePresetUpdateRequest,
     KnowledgeIndexRequest,
     KnowledgeIndexResponse,
     KnowledgeIngestResponse,
+    KnowledgeWebIngestRequest,
+    KnowledgeWebIngestResponse,
     KnowledgeOptionsResponse,
     KnowledgeStatsResponse,
 )
@@ -25,8 +33,42 @@ knowledge_service = KnowledgeService()
 
 @router.get("/options", response_model=KnowledgeOptionsResponse)
 def knowledge_options():
-    """Disciplinas, tipos de conteúdo e bases FAISS para o formulário de upload."""
+    """Disciplinas, tipos de conteúdo, presets e bases FAISS para o formulário de upload."""
     return KnowledgeOptionsResponse(**knowledge_service.get_options())
+
+
+@router.get("/document-type-presets", response_model=DocumentTypePresetListResponse)
+def list_document_type_presets():
+    """Lista tipos de documento configuráveis (rótulo + disciplina + tipo de conteúdo)."""
+    return DocumentTypePresetListResponse(**knowledge_service.list_document_type_presets())
+
+
+@router.post("/document-type-presets", response_model=DocumentTypePreset)
+def create_document_type_preset(body: DocumentTypePresetCreateRequest):
+    try:
+        return DocumentTypePreset(**knowledge_service.create_document_type_preset(body.model_dump()))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.patch("/document-type-presets/{preset_id}", response_model=DocumentTypePreset)
+def update_document_type_preset(preset_id: str, body: DocumentTypePresetUpdateRequest):
+    payload = body.model_dump(exclude_unset=True)
+    if not payload:
+        raise HTTPException(status_code=400, detail="Informe ao menos um campo para atualizar")
+    try:
+        return DocumentTypePreset(**knowledge_service.update_document_type_preset(preset_id, payload))
+    except ValueError as exc:
+        status = 404 if "não encontrado" in str(exc).lower() else 400
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
+@router.delete("/document-type-presets/{preset_id}", response_model=DocumentTypePreset)
+def delete_document_type_preset(preset_id: str):
+    try:
+        return DocumentTypePreset(**knowledge_service.delete_document_type_preset(preset_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/stats", response_model=KnowledgeStatsResponse)
@@ -104,6 +146,90 @@ async def knowledge_ingest(
     return KnowledgeIngestResponse(**result)
 
 
+@router.post("/ingest-web", response_model=KnowledgeWebIngestResponse)
+async def knowledge_ingest_web(body: KnowledgeWebIngestRequest):
+    """
+    Importa em lote documentos de uma página web (tabela de anexos com links Baixar).
+    Baixa, ingere no catálogo e opcionalmente indexa FAISS.
+    """
+    try:
+        result = await knowledge_service.ingest_from_web(
+            page_url=body.page_url,
+            discipline=body.discipline,
+            content_type=body.content_type,
+            description_prefix=body.description_prefix or "",
+            max_files=body.max_files,
+            force=body.force,
+            auto_index=body.auto_index,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Falha na ingestão web de knowledge")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return KnowledgeWebIngestResponse(**result)
+
+
+@router.post("/ingest-web/stream")
+async def knowledge_ingest_web_stream(body: KnowledgeWebIngestRequest):
+    """Importação web com progresso em tempo real (SSE)."""
+    try:
+        validate = body.page_url.strip()
+        if len(validate) < 8:
+            raise ValueError("URL inválida")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    def event_stream():
+        try:
+            for chunk in knowledge_service.ingest_from_web_stream_events(
+                page_url=body.page_url,
+                discipline=body.discipline,
+                content_type=body.content_type,
+                description_prefix=body.description_prefix or "",
+                max_files=body.max_files,
+                force=body.force,
+                auto_index=body.auto_index,
+            ):
+                yield chunk
+        except ValueError as exc:
+            from core.stream_events import format_sse
+
+            yield format_sse("error", {"error": str(exc)})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Content-Type": "text/event-stream; charset=utf-8",
+        },
+    )
+
+
+@router.get("/ingest-web/preview")
+async def knowledge_ingest_web_preview(page_url: str):
+    """Lista links detectados numa página (sem baixar)."""
+    from core.knowledge.web_ingest.downloader import fetch_page_html
+    from core.knowledge.web_ingest.parser import preview_download_links
+    from core.knowledge.web_ingest.security import UnsafeURLError, validate_public_http_url
+
+    try:
+        validate_public_http_url(page_url)
+        html = await run_sync(fetch_page_html, page_url)
+        links = preview_download_links(html, page_url)
+    except (UnsafeURLError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Preview web ingest falhou")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {"page_url": page_url, "discovered": len(links), "links": links}
+
+
 @router.post("/index", response_model=KnowledgeIndexResponse)
 async def knowledge_index(request: KnowledgeIndexRequest):
     """Dispara indexação FAISS (uma base ou todas)."""
@@ -177,6 +303,17 @@ def update_knowledge_document(document_id: str, body: KnowledgeDocumentUpdateReq
     except Exception as exc:
         logger.exception("Falha ao atualizar documento %s", document_id)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/documents/purge-generic-legislation", response_model=KnowledgePurgeGenericLegislationResponse)
+def purge_generic_legislation_imports(dry_run: bool = False):
+    """
+    Remove documentos importados da web com nome genérico «Instrução Técnica» + arquivo numérico (87.pdf).
+    Use dry_run=true para apenas listar o que seria removido.
+    """
+    return KnowledgePurgeGenericLegislationResponse(
+        **knowledge_service.purge_generic_legislation_imports(dry_run=dry_run)
+    )
 
 
 @router.delete("/documents/{document_id}", response_model=KnowledgeDocumentDeleteResponse)

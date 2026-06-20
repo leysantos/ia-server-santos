@@ -7,19 +7,27 @@ import type {
   HealthResponse,
   HistoryResponse,
   KnowledgeCatalogResponse,
+  DocumentTypePreset,
   KnowledgeIndexResponse,
   KnowledgeIngestResponse,
   KnowledgeOptionsResponse,
   KnowledgeStatsResponse,
+  KnowledgeWebIngestResponse,
+  WebIngestProgress,
   ModelsStatusResponse,
   BdiObraType,
   BudgetGenerateRequest,
   BudgetSessionResponse,
   BudgetStreamEvent,
   BudgetSummary,
+  TechSpecDocument,
+  TechSpecFormatting,
+  TechSpecStreamEvent,
   PricingProvidersResponse,
   OrchestrateRequest,
   OrchestrateResponse,
+  PriceBaseActiveStatus,
+  PriceBaseInfo,
   SystemBenchmarkResponse,
   ProjectDetail,
   ProjectFormatsResponse,
@@ -27,6 +35,23 @@ import type {
   ProjectSummary,
   ConversationSummary,
   WorkspaceSearchResponse,
+  ReviewDashboard,
+  ReviewDetail,
+  ReviewListResponse,
+  NCListResponse,
+  DigitalTwin,
+  VisionModeItem,
+  VisionStatusResponse,
+  VisionAnalysisItem,
+  VisionAnalyzeResponse,
+  VisionAnalyzeProgress,
+  VisionAnalysisListResponse,
+  VisionReportRequest,
+  VisionWorkspaceStatusResponse,
+  ActivityListResponse,
+  DecisionListResponse,
+  ConsoleLogsResponse,
+  ConsoleStatsResponse,
 } from "@/types/api";
 
 const API_BASE_URL =
@@ -247,6 +272,138 @@ export async function* budgetGenerateStream(
   }
 }
 
+export async function* knowledgeIngestWebStream(
+  body: {
+    page_url: string;
+    discipline?: string;
+    content_type?: string;
+    description_prefix?: string;
+    max_files?: number;
+    force?: boolean;
+    auto_index?: boolean;
+  },
+  signal?: AbortSignal
+): AsyncGenerator<{ type: string; data: unknown }> {
+  const response = await fetch(`${API_BASE_URL}/knowledge/ingest-web/stream`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(formatApiError(errorText, response.status));
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("Streaming não suportado neste navegador");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split("\n\n");
+    buffer = blocks.pop() ?? "";
+
+    for (const block of blocks) {
+      const trimmed = block.trim();
+      if (!trimmed || trimmed.startsWith(":")) continue;
+      const event = parseSseBlock(trimmed);
+      if (event) {
+        yield { type: event.type, data: event.data };
+      }
+    }
+  }
+
+  if (buffer.trim()) {
+    const event = parseSseBlock(buffer.trim());
+    if (event) {
+      yield { type: event.type, data: event.data };
+    }
+  }
+}
+
+export async function knowledgeIngestWebWithProgress(
+  body: {
+    page_url: string;
+    discipline?: string;
+    content_type?: string;
+    description_prefix?: string;
+    max_files?: number;
+    force?: boolean;
+    auto_index?: boolean;
+  },
+  onProgress: (progress: WebIngestProgress) => void,
+  signal?: AbortSignal
+): Promise<KnowledgeWebIngestResponse> {
+  for await (const event of knowledgeIngestWebStream(body, signal)) {
+    if (event.type === "progress") {
+      onProgress(event.data as WebIngestProgress);
+    } else if (event.type === "done") {
+      return event.data as KnowledgeWebIngestResponse;
+    } else if (event.type === "error") {
+      const payload = event.data as { error?: string };
+      throw new Error(payload.error || "Erro na importação web");
+    }
+  }
+  throw new Error("Importação encerrada sem resultado");
+}
+
+export async function* techSpecComposeStream(
+  sessionId: string,
+  body: {
+    prompt?: string;
+    mode?: "generate" | "edit";
+    use_llm?: boolean;
+    llm_model?: string;
+  },
+  signal?: AbortSignal
+): AsyncGenerator<TechSpecStreamEvent> {
+  const response = await fetch(
+    `${API_BASE_URL}/pricing/budget/${sessionId}/tech-spec/compose/stream`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+      signal,
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Erro HTTP ${response.status}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Streaming não suportado");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split("\n\n");
+    buffer = blocks.pop() ?? "";
+    for (const block of blocks) {
+      const event = parseSseBlock(block.trim());
+      if (event) yield event as TechSpecStreamEvent;
+    }
+  }
+  if (buffer.trim()) {
+    const event = parseSseBlock(buffer.trim());
+    if (event) yield event as TechSpecStreamEvent;
+  }
+}
+
 export const api = {
   chat(body: ChatRequest): Promise<ChatResponse> {
     return request<ChatResponse>("/chat", {
@@ -258,6 +415,8 @@ export const api = {
   chatStream,
 
   budgetGenerateStream,
+
+  techSpecComposeStream,
 
   orchestrate(body: OrchestrateRequest): Promise<OrchestrateResponse> {
     return request<OrchestrateResponse>("/orchestrate", {
@@ -362,6 +521,176 @@ export const api = {
     return request(`/projects/${projectId}/reindex`, { method: "POST" });
   },
 
+  reviewDashboard(projectId: string): Promise<ReviewDashboard> {
+    return request<ReviewDashboard>(`/projects/${projectId}/review/dashboard`);
+  },
+
+  listReviews(projectId: string): Promise<ReviewListResponse> {
+    return request<ReviewListResponse>(`/projects/${projectId}/review`);
+  },
+
+  startReview(
+    projectId: string,
+    body?: { parent_review_id?: string; enable_vision?: boolean }
+  ): Promise<ReviewDetail> {
+    return request<ReviewDetail>(`/projects/${projectId}/review/start`, {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    });
+  },
+
+  getReview(projectId: string, reviewId: string): Promise<ReviewDetail> {
+    return request<ReviewDetail>(`/projects/${projectId}/review/${reviewId}`);
+  },
+
+  listReviewNCs(projectId: string, reviewId: string): Promise<NCListResponse> {
+    return request<NCListResponse>(`/projects/${projectId}/review/${reviewId}/ncs`);
+  },
+
+  getDigitalTwin(projectId: string): Promise<DigitalTwin> {
+    return request<DigitalTwin>(`/projects/${projectId}/digital-twin`);
+  },
+
+  exportReviewReport(projectId: string, reviewId: string, reportType: string): string {
+    return `${API_BASE_URL}/projects/${projectId}/review/${reviewId}/export/${reportType}`;
+  },
+
+  visionStatus(): Promise<VisionStatusResponse> {
+    return request<VisionStatusResponse>("/projects/vision/status");
+  },
+
+  visionWorkspaceStatus(): Promise<VisionWorkspaceStatusResponse> {
+    return request<VisionWorkspaceStatusResponse>("/projects/vision/workspace-status");
+  },
+
+  visionModes(): Promise<{ modes: VisionModeItem[] }> {
+    return request<{ modes: VisionModeItem[] }>("/projects/vision/modes");
+  },
+
+  listVisionAnalyses(projectId: string): Promise<VisionAnalysisListResponse> {
+    return request<VisionAnalysisListResponse>(`/projects/${projectId}/vision/analyses`);
+  },
+
+  analyzeVision(
+    projectId: string,
+    body: { file_ids?: string[]; mode?: string; extra_context?: string }
+  ): Promise<VisionAnalyzeResponse> {
+    return request<VisionAnalyzeResponse>(`/projects/${projectId}/vision/analyze`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  async fetchProjectFilePreview(projectId: string, fileId: string): Promise<Blob> {
+    const response = await fetch(
+      `${API_BASE_URL}/projects/${projectId}/files/${fileId}/preview`,
+      { headers: getAuthHeaders() }
+    );
+    if (!response.ok) {
+      throw new Error(`Preview indisponível (${response.status})`);
+    }
+    return response.blob();
+  },
+
+  async analyzeVisionWithProgress(
+    projectId: string,
+    body: { file_ids?: string[]; mode?: string; extra_context?: string },
+    onProgress: (progress: VisionAnalyzeProgress) => void,
+    onFileDone?: (item: VisionAnalysisItem) => void,
+    signal?: AbortSignal
+  ): Promise<VisionAnalyzeResponse> {
+    const response = await fetch(`${API_BASE_URL}/projects/${projectId}/vision/analyze/stream`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+      signal,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(formatApiError(errorText, response.status));
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error("Streaming não suportado neste navegador");
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split("\n\n");
+      buffer = blocks.pop() ?? "";
+
+      for (const block of blocks) {
+        const trimmed = block.trim();
+        if (!trimmed || trimmed.startsWith(":")) continue;
+
+        let eventType = "message";
+        let dataStr = "";
+        for (const line of trimmed.split("\n")) {
+          if (line.startsWith("event:")) eventType = line.slice(6).trim();
+          else if (line.startsWith("data:")) dataStr += line.slice(5).trim();
+        }
+        if (!dataStr) continue;
+
+        let data: unknown;
+        try {
+          data = JSON.parse(dataStr);
+        } catch {
+          continue;
+        }
+
+        if (eventType === "progress") {
+          onProgress(data as VisionAnalyzeProgress);
+        } else if (eventType === "file_done" && onFileDone) {
+          const payload = data as { item: VisionAnalysisItem };
+          onFileDone(payload.item);
+        } else if (eventType === "done") {
+          return data as VisionAnalyzeResponse;
+        } else if (eventType === "error") {
+          const payload = data as { error?: string };
+          throw new Error(payload.error || "Erro na análise visual");
+        }
+      }
+    }
+
+    throw new Error("Stream encerrado sem resultado final");
+  },
+
+  async exportVisionReport(projectId: string, body: VisionReportRequest): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/projects/${projectId}/vision/report`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      let detail = `HTTP ${response.status}`;
+      try {
+        const err = (await response.json()) as { detail?: string };
+        if (err.detail) detail = err.detail;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(detail);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const match = disposition.match(/filename="([^"]+)"/);
+    const filename = match?.[1] ?? `vision_report_${projectId}.docx`;
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  },
+
   searchWorkspace(q: string, limit = 30): Promise<WorkspaceSearchResponse> {
     const params = new URLSearchParams({ q, limit: String(limit) });
     return request<WorkspaceSearchResponse>(`/workspace/search?${params.toString()}`);
@@ -383,6 +712,42 @@ export const api = {
     return request<KnowledgeOptionsResponse>("/knowledge/options");
   },
 
+  knowledgeCreateDocumentTypePreset(body: {
+    id?: string;
+    label: string;
+    content_type: string;
+    discipline: string;
+    register_price_base?: boolean;
+    register_budget_model?: boolean;
+  }): Promise<DocumentTypePreset> {
+    return request<DocumentTypePreset>("/knowledge/document-type-presets", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  knowledgeUpdateDocumentTypePreset(
+    id: string,
+    body: Partial<{
+      label: string;
+      content_type: string;
+      discipline: string;
+      register_price_base: boolean;
+      register_budget_model: boolean;
+    }>
+  ): Promise<DocumentTypePreset> {
+    return request<DocumentTypePreset>(`/knowledge/document-type-presets/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  },
+
+  knowledgeDeleteDocumentTypePreset(id: string): Promise<DocumentTypePreset> {
+    return request<DocumentTypePreset>(`/knowledge/document-type-presets/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  },
+
   knowledgeStats(): Promise<KnowledgeStatsResponse> {
     return request<KnowledgeStatsResponse>("/knowledge/stats");
   },
@@ -402,6 +767,30 @@ export const api = {
       throw new Error(errorText || `Erro HTTP ${response.status}`);
     }
     return response.json() as Promise<KnowledgeIngestResponse>;
+  },
+
+  knowledgeIngestWeb(body: {
+    page_url: string;
+    discipline?: string;
+    content_type?: string;
+    description_prefix?: string;
+    max_files?: number;
+    force?: boolean;
+    auto_index?: boolean;
+  }): Promise<{
+    page_url: string;
+    discovered: number;
+    downloaded: number;
+    ingested: number;
+    skipped: number;
+    errors: { stage?: string; error?: string; url?: string }[];
+    files: Record<string, unknown>[];
+    indexing?: Record<string, unknown>;
+  }> {
+    return request("/knowledge/ingest-web", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
   },
 
   knowledgeIndex(base?: string, force = false): Promise<KnowledgeIndexResponse> {
@@ -601,8 +990,9 @@ export const api = {
     return response.json();
   },
 
-  pricingListSaved(): Promise<{ items: BudgetSummary[] }> {
-    return request("/pricing/budget/saved");
+  pricingListSaved(projectId?: string): Promise<{ items: BudgetSummary[] }> {
+    const params = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+    return request(`/pricing/budget/saved${params}`);
   },
 
   pricingGetSaved(id: string): Promise<BudgetSessionResponse> {
@@ -612,6 +1002,7 @@ export const api = {
   pricingSaveBudget(body: {
     title?: string;
     input_text?: string;
+    project_id?: string | null;
     payload: BudgetSessionResponse;
   }): Promise<BudgetSessionResponse> {
     return request("/pricing/budget/saved", {
@@ -622,7 +1013,12 @@ export const api = {
 
   pricingUpdateSaved(
     id: string,
-    body: { title?: string; input_text?: string; payload: BudgetSessionResponse }
+    body: {
+      title?: string;
+      input_text?: string;
+      project_id?: string | null;
+      payload: BudgetSessionResponse;
+    }
   ): Promise<BudgetSessionResponse> {
     return request(`/pricing/budget/saved/${id}`, {
       method: "PUT",
@@ -900,6 +1296,28 @@ export const api = {
     );
   },
 
+  pricingGetTechSpec(sessionId: string): Promise<{ tech_spec: TechSpecDocument | null }> {
+    return withBudgetSessionRecovery(sessionId, (sid) =>
+      request(`/pricing/budget/${sid}/tech-spec`)
+    );
+  },
+
+  pricingUpdateTechSpec(
+    sessionId: string,
+    body: Partial<TechSpecDocument>
+  ): Promise<{ tech_spec: TechSpecDocument; session: BudgetSessionResponse }> {
+    return withBudgetSessionRecovery(sessionId, (sid) =>
+      request(`/pricing/budget/${sid}/tech-spec`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+      })
+    );
+  },
+
+  pricingExportTechSpecUrl(sessionId: string): string {
+    return `${API_BASE_URL}/pricing/budget/${sessionId}/tech-spec/export`;
+  },
+
   async pricingImportModelTemplate(file: File, sessionId?: string): Promise<BudgetSessionResponse & { imported_etapas?: number }> {
     const form = new FormData();
     form.append("file", file);
@@ -915,6 +1333,22 @@ export const api = {
       throw new Error(errorText || `Erro HTTP ${response.status}`);
     }
     return response.json();
+  },
+
+  consoleLogs(limit = 50): Promise<ConsoleLogsResponse> {
+    return request<ConsoleLogsResponse>(`/console/logs?limit=${limit}`);
+  },
+
+  consoleStats(): Promise<ConsoleStatsResponse> {
+    return request<ConsoleStatsResponse>("/console/stats");
+  },
+
+  projectActivity(projectId: string, limit = 100): Promise<ActivityListResponse> {
+    return request<ActivityListResponse>(`/projects/${projectId}/activity?limit=${limit}`);
+  },
+
+  projectDecisions(projectId: string, limit = 50): Promise<DecisionListResponse> {
+    return request<DecisionListResponse>(`/projects/${projectId}/decisions?limit=${limit}`);
   },
 };
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +31,73 @@ def _find_catalog_entry(document_id: str) -> dict[str, Any]:
     if not entry:
         raise ValueError("Documento não encontrado no catálogo")
     return entry
+
+
+def _normalize_label(text: str) -> str:
+    value = unicodedata.normalize("NFKD", text or "")
+    value = "".join(c for c in value if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", value.strip().lower())
+
+
+def is_generic_legislation_import(entry: dict[str, Any]) -> bool:
+    """
+    Detecta importações web CBMAM sem assunto (ex.: nome «Instrução Técnica» + 87.pdf).
+    Documentos já corrigidos contêm «Nº» e « - » no nome.
+    """
+    name = (entry.get("name") or "").strip()
+    if not name:
+        return False
+    normalized = _normalize_label(name)
+    if normalized not in {"instrucao tecnica", "instrução técnica"}:
+        return False
+    if "nº" in name.lower() or " - " in name:
+        return False
+    filename = entry.get("filename") or Path(entry.get("path", "")).name
+    return bool(re.fullmatch(r"\d+\.pdf", filename, re.I))
+
+
+def list_generic_legislation_document_ids() -> list[str]:
+    rows = read_catalog()
+    by_id: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        rid = row.get("id")
+        if not rid:
+            continue
+        existing = by_id.get(rid)
+        if not existing or (row.get("catalog_ts") or "") >= (existing.get("catalog_ts") or ""):
+            by_id[rid] = row
+    return sorted(rid for rid, row in by_id.items() if is_generic_legislation_import(row))
+
+
+def purge_generic_legislation_imports(*, dry_run: bool = False) -> dict[str, Any]:
+    ids = list_generic_legislation_document_ids()
+    if dry_run:
+        preview = []
+        for doc_id in ids:
+            entry = _find_catalog_entry(doc_id)
+            preview.append(
+                {
+                    "id": doc_id,
+                    "name": entry.get("name"),
+                    "filename": entry.get("filename"),
+                }
+            )
+        return {"dry_run": True, "count": len(ids), "documents": preview}
+
+    deleted: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for doc_id in ids:
+        try:
+            deleted.append(delete_document(doc_id))
+        except ValueError as exc:
+            errors.append({"id": doc_id, "error": str(exc)})
+    return {
+        "dry_run": False,
+        "requested": len(ids),
+        "deleted": len(deleted),
+        "errors": errors,
+        "documents": deleted,
+    }
 
 
 def _remove_from_faiss_indices(doc_path: Path) -> int:
