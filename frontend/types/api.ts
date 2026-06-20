@@ -376,6 +376,40 @@ export interface BudgetProjectInfo {
   template?: string;
 }
 
+export interface ScheduleLink {
+  link_id: string;
+  predecessor_id: string;
+  successor_id: string;
+  link_type: "FS" | "SS" | "FF" | "SF" | string;
+  lag_days: number;
+}
+
+export interface ScheduleTask {
+  task_id: string;
+  budget_row_id: string;
+  budget_code: string;
+  name: string;
+  row_type?: string;
+  parent_code?: string | null;
+  duration_days: number;
+  is_summary?: boolean;
+  manual_start?: string | null;
+  early_start?: string | null;
+  early_finish?: string | null;
+  late_start?: string | null;
+  late_finish?: string | null;
+  total_float_days?: number | null;
+  is_critical?: boolean;
+}
+
+export interface ProjectSchedule {
+  project_start: string;
+  project_end?: string | null;
+  tasks: ScheduleTask[];
+  links: ScheduleLink[];
+  calculated_at?: string | null;
+}
+
 export interface BdiObraType {
   code: string;
   label: string;
@@ -447,6 +481,7 @@ export interface BudgetSessionResponse {
   project?: BudgetProjectInfo;
   template?: string;
   calculation_memory: Record<string, unknown>[];
+  schedule?: ProjectSchedule | null;
   source_priority: string[];
   intent: Record<string, unknown>;
   project_import?: {

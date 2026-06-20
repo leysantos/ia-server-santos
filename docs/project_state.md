@@ -6,7 +6,7 @@
 | Campo | Valor |
 |-------|-------|
 | **Versão do sistema** | 1.0.0 |
-| **Última atualização** | 2026-06-18 |
+| **Última atualização** | 2026-06-19 |
 | **Marco atual** | Fase 2 (88%) — 68 NBRs (636 chunks) ✅ · Workspace + Project RAG multi-formato ✅ |
 | **Próximo foco** | Validar RAG de projeto no `/chat?project=` · upload SINAPI/TCPO |
 | **Repositório** | [github.com/leysantos/ia-server-santos](https://github.com/leysantos/ia-server-santos) |
@@ -600,7 +600,10 @@ handle(text)
 | `budget/structure_engine.py` | Árvore de itemização (grupo → composição → insumo) |
 | `budget/budget_builder.py` | Monta orçamento com `source_trace` por item |
 | `budget/budget_engine_v2.py` | Sessão editável, recálculo, export Excel |
+| `budget/budget_structure.py` | WBS manual + **`renumber_wbs`** (numeração sequencial 1, 1.1, 1.1.1…) |
 | `budget/budget_calculator.py` | Memória de cálculo por célula |
+| `schedule/schedule_builder.py` | Sync orçamento → tarefas + CPM |
+| `schedule/schedule_agent.py` | Agente IA: catálogo WBS + intent + resolução código/nome + enriquecimento de plano |
 
 ### API
 
@@ -612,7 +615,11 @@ handle(text)
 | `POST /pricing/budget/generate` | **Pipeline completo** (LLM → qty → preço → planilha) |
 | `GET /pricing/budget/{id}` | Sessão editável |
 | `PATCH /pricing/budget/{id}/cell` | Edição de célula + recálculo |
+| `DELETE /pricing/budget/{id}/rows/{row_id}` | Exclui linha + **renumera WBS** automaticamente |
+| `POST /pricing/budget/{id}/itemization/renumber` | Organiza numeração WBS (botão na toolbar) |
 | `GET /pricing/budget/{id}/export` | Download Excel |
+| `POST /pricing/budget/{id}/schedule/compose` | Agente IA organiza cronograma via prompt |
+| `POST /pricing/budget/{id}/schedule/sync` | Sincroniza tarefas com orçamento |
 | `POST /pricing/providers/{name}/upload` | Upload base CSV/Excel |
 | `POST /pricing/bases/reload` | Recarrega bases do disco |
 
@@ -620,7 +627,7 @@ handle(text)
 
 - `backend/pricing/data/sinapi.csv` ou `data/sinapi/*.csv` (múltiplos mesclados)
 - `PRICING_DATA_DIR` para diretório customizado
-- Frontend: `/budget` — planilha editável + upload
+- Frontend: `/budget` — planilha editável + **cronograma Gantt** (visão etapas/completo, colunas mensais, IA + manual) + botão **Organizar numeração**
 
 ## Intent Layer v2
 

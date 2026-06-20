@@ -183,6 +183,35 @@ class MemoryGenerateRequest(BaseModel):
     )
 
 
+class ScheduleSettingsRequest(BaseModel):
+    project_start: str = Field(..., min_length=8, max_length=10, description="Data de início (ISO YYYY-MM-DD)")
+
+
+class ScheduleTaskUpdateRequest(BaseModel):
+    duration_days: Optional[int] = Field(default=None, ge=1, le=3650)
+    manual_start: Optional[str] = Field(default=None, description="Início manual ISO YYYY-MM-DD")
+
+
+class ScheduleLinkRequest(BaseModel):
+    predecessor_id: str = Field(..., min_length=1)
+    successor_id: str = Field(..., min_length=1)
+    link_type: str = Field(default="FS", pattern="^(FS|SS|FF|SF)$")
+    lag_days: int = Field(default=0, ge=0, le=365)
+
+
+class ScheduleComposeRequest(BaseModel):
+    prompt: str = Field(..., min_length=2, max_length=4000)
+    use_llm: bool = True
+    replace_links: bool = Field(
+        default=False,
+        description="Se true, remove todos os vínculos antes de aplicar o plano da IA",
+    )
+    llm_model: Optional[str] = Field(
+        default=None,
+        description='Modelo Ollama. Use "auto" ou omita para roteamento automático.',
+    )
+
+
 class ComposeEtapaRequest(BaseModel):
     prompt: str = Field(..., min_length=2, max_length=4000)
     source_priority: Optional[list[str]] = None
@@ -715,6 +744,114 @@ def generate_budget_memories(session_id: str, body: MemoryGenerateRequest):
     return {"session": session.to_dict(), "memory_log": log}
 
 
+@router.get("/budget/{session_id}/schedule")
+def get_budget_schedule(session_id: str):
+    engine = _get_budget_engine()
+    try:
+        session = engine.get_schedule(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
+    return {"schedule": session.schedule.to_dict() if session.schedule else None}
+
+
+@router.post("/budget/{session_id}/schedule/sync")
+def sync_budget_schedule(session_id: str):
+    engine = _get_budget_engine()
+    try:
+        session = engine.sync_schedule(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
+    return session.to_dict()
+
+
+@router.post("/budget/{session_id}/schedule/recalculate")
+def recalculate_budget_schedule(session_id: str):
+    engine = _get_budget_engine()
+    try:
+        session = engine.recalculate_schedule(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
+    return session.to_dict()
+
+
+@router.patch("/budget/{session_id}/schedule/settings")
+def update_budget_schedule_settings(session_id: str, body: ScheduleSettingsRequest):
+    engine = _get_budget_engine()
+    try:
+        session = engine.update_schedule_settings(session_id, project_start=body.project_start)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
+    return session.to_dict()
+
+
+@router.patch("/budget/{session_id}/schedule/tasks/{task_id}")
+def update_budget_schedule_task(session_id: str, task_id: str, body: ScheduleTaskUpdateRequest):
+    engine = _get_budget_engine()
+    try:
+        session = engine.update_schedule_task(
+            session_id,
+            task_id,
+            duration_days=body.duration_days,
+            manual_start=body.manual_start,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return session.to_dict()
+
+
+@router.post("/budget/{session_id}/schedule/links")
+def add_budget_schedule_link(session_id: str, body: ScheduleLinkRequest):
+    engine = _get_budget_engine()
+    try:
+        session = engine.add_schedule_link(
+            session_id,
+            body.predecessor_id,
+            body.successor_id,
+            link_type=body.link_type,
+            lag_days=body.lag_days,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return session.to_dict()
+
+
+@router.delete("/budget/{session_id}/schedule/links/{link_id}")
+def delete_budget_schedule_link(session_id: str, link_id: str):
+    engine = _get_budget_engine()
+    try:
+        session = engine.remove_schedule_link(session_id, link_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
+    return session.to_dict()
+
+
+@router.post("/budget/{session_id}/schedule/compose")
+def compose_budget_schedule(session_id: str, body: ScheduleComposeRequest):
+    engine = _get_budget_engine()
+    try:
+        with llm_model_scope(body.llm_model):
+            session, log, summary, llm_model = engine.compose_schedule(
+                session_id,
+                body.prompt,
+                use_llm=body.use_llm,
+                replace_links=body.replace_links,
+            )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "session": session.to_dict(),
+        "schedule_log": log,
+        "summary": summary,
+        "llm_model": llm_model,
+    }
+
+
 @router.patch("/budget/{session_id}/project")
 def update_budget_project(session_id: str, body: ProjectUpdateRequest):
     engine = _get_budget_engine()
@@ -757,6 +894,18 @@ def delete_budget_row(session_id: str, row_id: str):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return session.to_dict()
+
+
+@router.post("/budget/{session_id}/itemization/renumber")
+def renumber_budget_itemization(session_id: str):
+    engine = _get_budget_engine()
+    try:
+        session, mapping = engine.renumber_itemization(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
+    payload = session.to_dict()
+    payload["renumber_result"] = {"changed_count": len(mapping), "mapping": mapping}
+    return payload
 
 
 @router.get("/budget/{session_id}/groups/{group_code}/compose-prompt")

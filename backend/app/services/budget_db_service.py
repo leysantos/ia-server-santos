@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from core.database.models import BudgetDocument
 from pricing.budget.budget_session import SESSION_STORE, BudgetSession
 from pricing.models.budget_metadata import BudgetProjectMetadata
+from pricing.schedule.schedule_models import ProjectSchedule
 
 
 def _deserialize_item(data: dict[str, Any]):
@@ -29,6 +30,7 @@ def session_from_payload(payload: dict[str, Any]) -> BudgetSession:
         intent=dict(payload.get("intent") or {}),
         project=project,
         calculation_memory=list(payload.get("calculation_memory") or []),
+        schedule=ProjectSchedule.from_dict(payload.get("schedule")),
         created_at=payload.get("created_at") or datetime.now(timezone.utc).isoformat(),
         updated_at=payload.get("updated_at") or datetime.now(timezone.utc).isoformat(),
     )

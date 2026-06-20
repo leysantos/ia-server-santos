@@ -10,9 +10,11 @@ from pricing.budget.budget_structure import (
     add_subetapa,
     add_service_to_group,
     apply_quantity_to_group,
+    delete_item,
     group_services_to_prompt,
     parse_term_hints,
     parse_term_with_unit,
+    renumber_wbs,
     service_to_prompt_term,
     split_composition_prompt,
 )
@@ -201,3 +203,36 @@ def test_group_services_to_prompt_multiline():
     assert len(lines) == 2
     assert "(6 mes)" in lines[0]
     assert "(720 h)" in lines[1]
+
+
+def test_renumber_wbs_closes_etapa_gaps():
+    meta = create_empty_ppd_metadata()
+    roots = []
+    e1 = add_etapa(roots, "A", meta)
+    e2 = add_etapa(roots, "B", meta)
+    e3 = add_etapa(roots, "C", meta)
+    e3.code = "5"
+    delete_item(roots, e2.row_id)
+    mapping = renumber_wbs(roots)
+    assert e1.code == "1"
+    assert e3.code == "2"
+    assert mapping == {"5": "2"}
+
+
+def test_renumber_wbs_closes_service_gaps_and_memory():
+    meta = create_empty_ppd_metadata()
+    roots = []
+    etapa = add_etapa(roots, "ADMIN", meta)
+    price = PriceItem(code="93567", description="Engenheiro", unit="MES", price=100, source="sinapi")
+    svc1 = add_service_to_group(etapa, price, meta, quantity=1.0)
+    svc2 = add_service_to_group(etapa, price, meta, quantity=2.0)
+    svc3 = add_service_to_group(etapa, price, meta, quantity=3.0)
+    svc2.code = "1.5"
+    svc2.children[0].code = "1.5.m1"
+    delete_item(roots, svc2.row_id)
+    mapping = renumber_wbs(roots)
+    assert svc1.code == "1.1"
+    assert svc3.code == "1.2"
+    assert svc1.children[0].code == "1.1.m1"
+    assert svc3.children[0].code == "1.2.m1"
+    assert "1.5" in mapping or "1.3" in mapping

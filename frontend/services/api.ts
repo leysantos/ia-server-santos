@@ -694,6 +694,16 @@ export const api = {
     );
   },
 
+  pricingRenumberItemization(
+    sessionId: string
+  ): Promise<BudgetSessionResponse & { renumber_result?: { changed_count: number; mapping: Record<string, string> } }> {
+    return withBudgetSessionRecovery(sessionId, (sid) =>
+      request(`/pricing/budget/${sid}/itemization/renumber`, {
+        method: "POST",
+      })
+    );
+  },
+
   pricingComposeEtapa(
     sessionId: string,
     etapaCode: string,
@@ -802,6 +812,89 @@ export const api = {
           group_code: groupCode || null,
           use_llm: useLlm,
           llm_model: llmModel && llmModel !== "auto" ? llmModel : null,
+        }),
+      })
+    );
+  },
+
+  pricingSyncSchedule(sessionId: string): Promise<BudgetSessionResponse> {
+    return withBudgetSessionRecovery(sessionId, (sid) =>
+      request(`/pricing/budget/${sid}/schedule/sync`, { method: "POST" })
+    );
+  },
+
+  pricingRecalculateSchedule(sessionId: string): Promise<BudgetSessionResponse> {
+    return withBudgetSessionRecovery(sessionId, (sid) =>
+      request(`/pricing/budget/${sid}/schedule/recalculate`, { method: "POST" })
+    );
+  },
+
+  pricingUpdateScheduleSettings(
+    sessionId: string,
+    projectStart: string
+  ): Promise<BudgetSessionResponse> {
+    return withBudgetSessionRecovery(sessionId, (sid) =>
+      request(`/pricing/budget/${sid}/schedule/settings`, {
+        method: "PATCH",
+        body: JSON.stringify({ project_start: projectStart }),
+      })
+    );
+  },
+
+  pricingUpdateScheduleTask(
+    sessionId: string,
+    taskId: string,
+    body: { duration_days?: number; manual_start?: string | null }
+  ): Promise<BudgetSessionResponse> {
+    return withBudgetSessionRecovery(sessionId, (sid) =>
+      request(`/pricing/budget/${sid}/schedule/tasks/${taskId}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      })
+    );
+  },
+
+  pricingAddScheduleLink(
+    sessionId: string,
+    body: {
+      predecessor_id: string;
+      successor_id: string;
+      link_type?: string;
+      lag_days?: number;
+    }
+  ): Promise<BudgetSessionResponse> {
+    return withBudgetSessionRecovery(sessionId, (sid) =>
+      request(`/pricing/budget/${sid}/schedule/links`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      })
+    );
+  },
+
+  pricingDeleteScheduleLink(sessionId: string, linkId: string): Promise<BudgetSessionResponse> {
+    return withBudgetSessionRecovery(sessionId, (sid) =>
+      request(`/pricing/budget/${sid}/schedule/links/${linkId}`, { method: "DELETE" })
+    );
+  },
+
+  pricingComposeSchedule(
+    sessionId: string,
+    prompt: string,
+    options?: { useLlm?: boolean; replaceLinks?: boolean; llmModel?: string }
+  ): Promise<{
+    session: BudgetSessionResponse;
+    schedule_log: { action: string; status: string; detail?: string }[];
+    summary: string;
+    llm_model?: string | null;
+  }> {
+    return withBudgetSessionRecovery(sessionId, (sid) =>
+      request(`/pricing/budget/${sid}/schedule/compose`, {
+        method: "POST",
+        body: JSON.stringify({
+          prompt,
+          use_llm: options?.useLlm ?? true,
+          replace_links: options?.replaceLinks ?? false,
+          llm_model: options?.llmModel && options.llmModel !== "auto" ? options.llmModel : null,
         }),
       })
     );

@@ -11,6 +11,7 @@ interface BudgetToolbarProps {
   onImportTemplate: (file: File) => void;
   onSave?: () => void;
   onExport?: () => void;
+  onRenumber?: () => void;
 }
 
 export default function BudgetToolbar({
@@ -20,6 +21,7 @@ export default function BudgetToolbar({
   onImportTemplate,
   onSave,
   onExport,
+  onRenumber,
 }: BudgetToolbarProps) {
   const templateRef = useRef<HTMLInputElement>(null);
 
@@ -63,6 +65,17 @@ export default function BudgetToolbar({
           className={cn(budgetBtn, "bg-indigo-600/20 px-4 text-sm text-indigo-300 ring-indigo-500/40 hover:bg-indigo-600/30")}
         >
           Salvar
+        </button>
+      )}
+
+      {hasSession && onRenumber && (
+        <button
+          type="button"
+          disabled={loading}
+          onClick={onRenumber}
+          className={cn(budgetBtn, "bg-amber-600/20 px-4 text-sm text-amber-300 ring-amber-500/40 hover:bg-amber-600/30")}
+        >
+          Organizar numeração
         </button>
       )}
 

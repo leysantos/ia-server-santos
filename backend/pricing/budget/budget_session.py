@@ -10,6 +10,7 @@ from pricing.budget.budget_excel import export_budget_xlsx
 from pricing.budget.ppd_exporter import export_ppd_xlsx
 from pricing.models.budget_item import BudgetItem
 from pricing.models.budget_metadata import BudgetProjectMetadata
+from pricing.schedule.schedule_models import ProjectSchedule
 
 
 def _deserialize_item(data: dict[str, Any]) -> BudgetItem:
@@ -52,6 +53,7 @@ class BudgetSession:
     intent: dict[str, Any] = field(default_factory=dict)
     project: BudgetProjectMetadata = field(default_factory=BudgetProjectMetadata)
     calculation_memory: list[dict[str, Any]] = field(default_factory=list)
+    schedule: ProjectSchedule | None = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -93,6 +95,7 @@ class BudgetSession:
             "currency": "BRL",
             "project": self.project.to_dict(),
             "calculation_memory": self.calculation_memory,
+            "schedule": self.schedule.to_dict() if self.schedule else None,
             "source_priority": self.source_priority,
             "intent": self.intent,
             "template": self.project.template,
@@ -284,17 +287,44 @@ class BudgetSessionStore:
         session.updated_at = datetime.now(timezone.utc).isoformat()
         return session
 
+    def _apply_wbs_renumber(self, session: BudgetSession) -> dict[str, str]:
+        from pricing.budget.budget_calculator import BudgetCalculator
+        from pricing.budget.budget_structure import renumber_wbs, refresh_calculation_memory
+        from pricing.schedule.schedule_builder import sync_schedule_from_budget
+
+        mapping = renumber_wbs(session.roots)
+        session.calculation_memory = refresh_calculation_memory(session.roots)
+        if session.schedule and mapping:
+            calc = BudgetCalculator()
+            rows: list[dict[str, Any]] = []
+            for root in session.roots:
+                rows.extend(calc.flatten_rows(root))
+            session.schedule = sync_schedule_from_budget(
+                rows,
+                existing=session.schedule,
+                project_start=session.schedule.project_start,
+            )
+        return mapping
+
     def delete_row(self, session_id: str, row_id: str) -> BudgetSession:
-        from pricing.budget.budget_structure import delete_item, refresh_calculation_memory
+        from pricing.budget.budget_structure import delete_item
 
         session = self._sessions.get(session_id)
         if not session:
             raise KeyError(f"Sessão não encontrada: {session_id}")
         if not delete_item(session.roots, row_id):
             raise ValueError(f"Linha não encontrada: {row_id}")
-        session.calculation_memory = refresh_calculation_memory(session.roots)
+        self._apply_wbs_renumber(session)
         session.updated_at = datetime.now(timezone.utc).isoformat()
         return session
+
+    def renumber_itemization(self, session_id: str) -> tuple[BudgetSession, dict[str, str]]:
+        session = self._sessions.get(session_id)
+        if not session:
+            raise KeyError(f"Sessão não encontrada: {session_id}")
+        mapping = self._apply_wbs_renumber(session)
+        session.updated_at = datetime.now(timezone.utc).isoformat()
+        return session, mapping
 
     def compose_etapa(
         self,
@@ -488,6 +518,151 @@ class BudgetSessionStore:
         session.calculation_memory = refresh_calculation_memory(session.roots)
         session.updated_at = datetime.now(timezone.utc).isoformat()
         return session, log
+
+    def sync_schedule(self, session_id: str) -> BudgetSession:
+        from pricing.schedule.schedule_builder import sync_schedule_from_budget
+
+        session = self._sessions.get(session_id)
+        if not session:
+            raise KeyError(f"Sessão não encontrada: {session_id}")
+        calc = BudgetCalculator()
+        rows: list[dict[str, Any]] = []
+        for root in session.roots:
+            rows.extend(calc.flatten_rows(root))
+        session.schedule = sync_schedule_from_budget(
+            rows,
+            existing=session.schedule,
+            project_start=session.schedule.project_start if session.schedule else None,
+        )
+        session.updated_at = datetime.now(timezone.utc).isoformat()
+        return session
+
+    def get_schedule(self, session_id: str) -> BudgetSession:
+        session = self._sessions.get(session_id)
+        if not session:
+            raise KeyError(f"Sessão não encontrada: {session_id}")
+        if not session.schedule:
+            return self.sync_schedule(session_id)
+        return session
+
+    def update_schedule_task(
+        self,
+        session_id: str,
+        task_id: str,
+        *,
+        duration_days: int | None = None,
+        manual_start: str | None = None,
+    ) -> BudgetSession:
+        from pricing.schedule.cpm_engine import run_cpm
+        from pricing.schedule.schedule_builder import update_task_duration
+
+        session = self._sessions.get(session_id)
+        if not session or not session.schedule:
+            raise KeyError(f"Sessão não encontrada: {session_id}")
+        if duration_days is not None:
+            session.schedule = update_task_duration(session.schedule, task_id, duration_days)
+        else:
+            task = session.schedule.task_by_id(task_id)
+            if not task:
+                raise ValueError(f"Tarefa não encontrada: {task_id}")
+            if manual_start is not None:
+                task.manual_start = manual_start[:10] if manual_start else None
+            session.schedule = run_cpm(session.schedule)
+        session.updated_at = datetime.now(timezone.utc).isoformat()
+        return session
+
+    def update_schedule_settings(
+        self,
+        session_id: str,
+        *,
+        project_start: str,
+    ) -> BudgetSession:
+        from pricing.schedule.schedule_builder import update_project_start
+
+        session = self._sessions.get(session_id)
+        if not session or not session.schedule:
+            raise KeyError(f"Sessão não encontrada: {session_id}")
+        session.schedule = update_project_start(session.schedule, project_start)
+        session.updated_at = datetime.now(timezone.utc).isoformat()
+        return session
+
+    def add_schedule_link(
+        self,
+        session_id: str,
+        predecessor_id: str,
+        successor_id: str,
+        link_type: str = "FS",
+        lag_days: int = 0,
+    ) -> BudgetSession:
+        from pricing.schedule.schedule_builder import add_link
+
+        session = self._sessions.get(session_id)
+        if not session or not session.schedule:
+            raise KeyError(f"Sessão não encontrada: {session_id}")
+        session.schedule = add_link(
+            session.schedule,
+            predecessor_id,
+            successor_id,
+            link_type=link_type,
+            lag_days=lag_days,
+        )
+        session.updated_at = datetime.now(timezone.utc).isoformat()
+        return session
+
+    def remove_schedule_link(self, session_id: str, link_id: str) -> BudgetSession:
+        from pricing.schedule.schedule_builder import remove_link
+
+        session = self._sessions.get(session_id)
+        if not session or not session.schedule:
+            raise KeyError(f"Sessão não encontrada: {session_id}")
+        session.schedule = remove_link(session.schedule, link_id)
+        session.updated_at = datetime.now(timezone.utc).isoformat()
+        return session
+
+    def recalculate_schedule(self, session_id: str) -> BudgetSession:
+        from pricing.schedule.cpm_engine import run_cpm
+
+        session = self._sessions.get(session_id)
+        if not session or not session.schedule:
+            raise KeyError(f"Sessão não encontrada: {session_id}")
+        session.schedule = run_cpm(session.schedule)
+        session.updated_at = datetime.now(timezone.utc).isoformat()
+        return session
+
+    def compose_schedule(
+        self,
+        session_id: str,
+        prompt: str,
+        *,
+        use_llm: bool = True,
+        replace_links: bool = False,
+        llm_client: Any | None = None,
+    ) -> tuple[BudgetSession, list[dict[str, str]], str, str | None]:
+        from pricing.budget.budget_calculator import BudgetCalculator
+        from pricing.schedule.schedule_agent import compose_schedule_from_prompt
+
+        session = self._sessions.get(session_id)
+        if not session:
+            raise KeyError(f"Sessão não encontrada: {session_id}")
+        if not session.schedule:
+            session = self.sync_schedule(session_id)
+
+        calc = BudgetCalculator()
+        rows: list[dict[str, Any]] = []
+        for root in session.roots:
+            rows.extend(calc.flatten_rows(root))
+
+        result = compose_schedule_from_prompt(
+            session.schedule,
+            prompt,
+            use_llm=use_llm,
+            replace_links=replace_links,
+            llm_client=llm_client,
+            budget_rows=rows,
+        )
+        session.schedule = result.schedule
+        session.updated_at = datetime.now(timezone.utc).isoformat()
+        return session, result.log_dicts(), result.summary, result.llm_model
 
     @classmethod
     def roots_from_dict(cls, items: list[dict[str, Any]]) -> list[BudgetItem]:

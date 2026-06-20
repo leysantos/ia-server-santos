@@ -5,6 +5,7 @@ import ActionDialog from "@/components/ActionDialog";
 import BudgetEtapasPanel from "@/components/BudgetEtapasPanel";
 import BudgetMemoryPanel from "@/components/BudgetMemoryPanel";
 import BudgetProjectForm, { type ProjectFormValues } from "@/components/BudgetProjectForm";
+import BudgetSchedulePanel from "@/components/BudgetSchedulePanel";
 import BudgetSavedPanel from "@/components/BudgetSavedPanel";
 import BudgetSpreadsheet from "@/components/BudgetSpreadsheet";
 import BudgetToolbar from "@/components/BudgetToolbar";
@@ -21,7 +22,7 @@ import type {
 } from "@/types/api";
 import { cn } from "@/lib/utils";
 
-type TabId = "etapas" | "planilha" | "memoria";
+type TabId = "etapas" | "planilha" | "memoria" | "cronograma";
 
 type DialogState = {
   open: boolean;
@@ -308,6 +309,19 @@ export default function BudgetPage() {
 
   const handleSave = () => persistBudget();
 
+  const handleRenumberItemization = async () => {
+    if (!session) return;
+    setLoading(true);
+    try {
+      const updated = await api.pricingRenumberItemization(session.session_id);
+      setSession(updated);
+    } catch (err) {
+      showActionError(err, "Erro ao organizar numeração");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSaveEtapa = useCallback(
     async ({ etapaName }: { etapaCode: string; etapaName: string }) => {
       await persistBudget({ showDialog: false, etapaName });
@@ -363,26 +377,42 @@ export default function BudgetPage() {
     });
   };
 
+  const isScheduleTab = activeTab === "cronograma" && !!session;
+
   return (
     <>
-      <ShellHeader className="px-6" showModelsStatus>
+      <ShellHeader className={cn("px-6", isScheduleTab && "shrink-0")} showModelsStatus>
         <div className="min-w-0">
           <h1 className="text-lg font-semibold text-white">Orçamento de Obra</h1>
-          <p className="text-sm text-slate-500">
-            Montagem semi-autônoma · etapas manuais · composição via base de preços
-          </p>
+          {!isScheduleTab && (
+            <p className="text-sm text-slate-500">
+              Montagem semi-autônoma · etapas manuais · composição via base de preços
+            </p>
+          )}
         </div>
       </ShellHeader>
 
-      <div className="flex-1 overflow-y-auto px-6 py-6">
-        <div className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-[1fr_260px]">
-          <div className="space-y-4">
+      <div
+        className={cn(
+          "flex-1",
+          isScheduleTab ? "flex min-h-0 flex-col overflow-hidden px-4 py-3" : "overflow-y-auto px-6 py-6"
+        )}
+      >
+        <div
+          className={cn(
+            isScheduleTab
+              ? "flex min-h-0 flex-1 flex-col gap-2"
+              : "mx-auto grid max-w-6xl gap-4 lg:grid-cols-[1fr_260px]"
+          )}
+        >
+          <div className={cn(isScheduleTab ? "flex min-h-0 flex-1 flex-col gap-2" : "space-y-4")}>
             <BudgetToolbar
               hasSession={!!session}
               loading={loading}
               onNew={handleNew}
               onImportTemplate={handleImportTemplate}
               onSave={session ? handleSave : undefined}
+              onRenumber={session ? handleRenumberItemization : undefined}
               onExport={
                 session
                   ? () => window.open(api.pricingExportUrl(session.session_id), "_blank")
@@ -423,26 +453,28 @@ export default function BudgetPage() {
             )}
 
             {session && (
-              <div className="relative space-y-4">
+              <div className={cn("relative", isScheduleTab ? "flex min-h-0 flex-1 flex-col gap-2" : "space-y-4")}>
                 {loading && (
                   <div className="absolute inset-0 z-10 flex items-start justify-center rounded-xl bg-slate-950/60 pt-24 backdrop-blur-sm">
                     <LoadingSpinner label="Processando…" size="lg" />
                   </div>
                 )}
 
-                <BudgetProjectForm
-                  project={session.project}
-                  bdiTypes={bdiTypes}
-                  priceBases={priceBases}
-                  activeBaseId={activeBaseId}
-                  disabled={loading}
-                  onChange={handleProjectChange}
-                  onObraTypeChange={handleObraTypeChange}
-                  onBaseChange={handleBaseChange}
-                />
+                {!isScheduleTab && (
+                  <BudgetProjectForm
+                    project={session.project}
+                    bdiTypes={bdiTypes}
+                    priceBases={priceBases}
+                    activeBaseId={activeBaseId}
+                    disabled={loading}
+                    onChange={handleProjectChange}
+                    onObraTypeChange={handleObraTypeChange}
+                    onBaseChange={handleBaseChange}
+                  />
+                )}
 
-                <div className="flex gap-1 border-b border-slate-700/60">
-                  {(["etapas", "planilha", "memoria"] as TabId[]).map((tab) => (
+                <div className="flex shrink-0 gap-1 border-b border-slate-700/60">
+                  {(["etapas", "planilha", "memoria", "cronograma"] as TabId[]).map((tab) => (
                     <button
                       key={tab}
                       type="button"
@@ -458,7 +490,9 @@ export default function BudgetPage() {
                         ? "Etapas e composições"
                         : tab === "planilha"
                           ? "Planilha PPD"
-                          : "Memória de cálculo"}
+                          : tab === "memoria"
+                            ? "Memória de cálculo"
+                            : "Cronograma"}
                     </button>
                   ))}
                 </div>
@@ -477,25 +511,34 @@ export default function BudgetPage() {
                     onUpdate={setSession}
                     onCellEdit={handleCellEdit}
                   />
-                ) : (
+                ) : activeTab === "memoria" ? (
                   <BudgetMemoryPanel
                     session={session}
                     loading={loading}
                     onUpdate={setSession}
                     onCellEdit={handleCellEdit}
                   />
+                ) : (
+                  <BudgetSchedulePanel
+                    session={session}
+                    loading={loading}
+                    onUpdate={setSession}
+                    onError={showActionError}
+                  />
                 )}
               </div>
             )}
           </div>
 
-          <BudgetSavedPanel
-            items={savedItems}
-            activeId={activeDbId}
-            onOpen={handleOpenSaved}
-            onDelete={handleDeleteSaved}
-            onNew={handleNew}
-          />
+          {!isScheduleTab && (
+            <BudgetSavedPanel
+              items={savedItems}
+              activeId={activeDbId}
+              onOpen={handleOpenSaved}
+              onDelete={handleDeleteSaved}
+              onNew={handleNew}
+            />
+          )}
         </div>
       </div>
 

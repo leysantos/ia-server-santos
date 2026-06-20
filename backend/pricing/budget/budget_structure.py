@@ -447,6 +447,47 @@ def update_group_name(group: BudgetItem, name: str) -> None:
     group.name = normalize_group_name(name)
 
 
+def _is_memory_row(item: BudgetItem) -> bool:
+    return bool(item.metadata.get("is_memory_row")) or item.row_type == "MEMORIA"
+
+
+def _wbs_siblings(items: list[BudgetItem]) -> list[BudgetItem]:
+    return [item for item in items if not _is_memory_row(item)]
+
+
+def renumber_wbs(roots: list[BudgetItem]) -> dict[str, str]:
+    """Renumera códigos WBS em ordem documento (1, 1.1, 1.1.1, …)."""
+    mapping: dict[str, str] = {}
+
+    def apply_code(item: BudgetItem, new_code: str, parent_code: str | None) -> None:
+        old_code = item.code
+        if old_code != new_code:
+            mapping[old_code] = new_code
+            item.code = new_code
+        if item.parent_code != parent_code:
+            item.parent_code = parent_code
+
+        for child in item.children:
+            if not _is_memory_row(child):
+                continue
+            mem_old = child.code
+            mem_new = f"{item.code}.m1"
+            if mem_old != mem_new:
+                mapping[mem_old] = mem_new
+                child.code = mem_new
+            child.parent_code = item.code
+
+    def renumber_level(items: list[BudgetItem], prefix: str | None) -> None:
+        parent_code = prefix
+        for idx, item in enumerate(_wbs_siblings(items), start=1):
+            new_code = str(idx) if prefix is None else f"{prefix}.{idx}"
+            apply_code(item, new_code, parent_code)
+            renumber_level(item.children, item.code)
+
+    renumber_level(roots, None)
+    return mapping
+
+
 def delete_item(roots: list[BudgetItem], row_id: str) -> bool:
     item, parent, siblings = find_item(roots, row_id=row_id)
     if not item:

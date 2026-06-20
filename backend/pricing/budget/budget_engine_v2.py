@@ -74,6 +74,9 @@ class BudgetEngineV2:
     def delete_row(self, session_id: str, row_id: str) -> BudgetSession:
         return SESSION_STORE.delete_row(session_id, row_id)
 
+    def renumber_itemization(self, session_id: str) -> tuple[BudgetSession, dict[str, str]]:
+        return SESSION_STORE.renumber_itemization(session_id)
+
     def compose_etapa(
         self,
         session_id: str,
@@ -158,3 +161,66 @@ class BudgetEngineV2:
         quantity: float = 1.0,
     ) -> BudgetSession:
         return SESSION_STORE.add_service(session_id, etapa_code, price_data, quantity=quantity)
+
+    def sync_schedule(self, session_id: str) -> BudgetSession:
+        return SESSION_STORE.sync_schedule(session_id)
+
+    def get_schedule(self, session_id: str) -> BudgetSession:
+        return SESSION_STORE.get_schedule(session_id)
+
+    def update_schedule_task(
+        self,
+        session_id: str,
+        task_id: str,
+        *,
+        duration_days: int | None = None,
+        manual_start: str | None = None,
+    ) -> BudgetSession:
+        return SESSION_STORE.update_schedule_task(
+            session_id,
+            task_id,
+            duration_days=duration_days,
+            manual_start=manual_start,
+        )
+
+    def update_schedule_settings(self, session_id: str, *, project_start: str) -> BudgetSession:
+        return SESSION_STORE.update_schedule_settings(session_id, project_start=project_start)
+
+    def add_schedule_link(
+        self,
+        session_id: str,
+        predecessor_id: str,
+        successor_id: str,
+        link_type: str = "FS",
+        lag_days: int = 0,
+    ) -> BudgetSession:
+        return SESSION_STORE.add_schedule_link(
+            session_id,
+            predecessor_id,
+            successor_id,
+            link_type=link_type,
+            lag_days=lag_days,
+        )
+
+    def remove_schedule_link(self, session_id: str, link_id: str) -> BudgetSession:
+        return SESSION_STORE.remove_schedule_link(session_id, link_id)
+
+    def recalculate_schedule(self, session_id: str) -> BudgetSession:
+        return SESSION_STORE.recalculate_schedule(session_id)
+
+    def compose_schedule(
+        self,
+        session_id: str,
+        prompt: str,
+        *,
+        use_llm: bool = True,
+        replace_links: bool = False,
+        llm_client: Any | None = None,
+    ) -> tuple[BudgetSession, list[dict[str, str]], str, str | None]:
+        return SESSION_STORE.compose_schedule(
+            session_id,
+            prompt,
+            use_llm=use_llm,
+            replace_links=replace_links,
+            llm_client=llm_client,
+        )
