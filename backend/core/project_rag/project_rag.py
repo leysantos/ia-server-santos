@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -105,37 +106,87 @@ def index_project_file(
     }
 
     chunks: list[DocumentChunk] = []
-    for segment in segments:
-        for chunk_text in split_text(segment.text):
-            chunks.append(
-                DocumentChunk(
-                    text=chunk_text,
-                    embedding=embedder.embed_document(chunk_text),
-                    source=name,
-                    doc_type="project",
-                    discipline="PROJETO",
-                    page=segment.section_num or None,
-                    metadata={
-                        **metadata_base,
-                        "section": segment.section,
-                    },
+    embed_errors = 0
+    try:
+        for segment in segments:
+            for chunk_text in split_text(segment.text):
+                try:
+                    embedding = embedder.embed_document(chunk_text)
+                except Exception as exc:
+                    embed_errors += 1
+                    logger.warning("project_rag embed failed %s (chunk %d): %s", name, embed_errors, exc)
+                    if embed_errors >= 3 and not chunks:
+                        return {
+                            "status": "error",
+                            "filename": name,
+                            "format": fmt,
+                            "error": f"embedding_unavailable: {exc}",
+                            "chunks": 0,
+                            "hint": (
+                                "Ollama não respondeu ao embedding após várias tentativas. "
+                                "Aguarde análises visuais/LLM terminarem e use «Reindexar RAG»."
+                            ),
+                        }
+                    continue
+                chunks.append(
+                    DocumentChunk(
+                        text=chunk_text,
+                        embedding=embedding,
+                        source=name,
+                        doc_type="project",
+                        discipline="PROJETO",
+                        page=segment.section_num or None,
+                        metadata={
+                            **metadata_base,
+                            "section": segment.section,
+                        },
+                    )
                 )
-            )
+    except Exception as exc:
+        logger.warning("project_rag chunk build failed %s: %s", name, exc)
+        return {
+            "status": "error",
+            "filename": name,
+            "format": fmt,
+            "error": str(exc),
+            "chunks": 0,
+        }
 
     if not chunks:
         return {"status": "error", "filename": name, "format": fmt, "error": "no_chunks", "chunks": 0}
 
-    store.add_many(chunks)
-    store.save()
+    try:
+        store.add_many(chunks)
+        store.save()
+    except Exception as exc:
+        logger.warning("project_rag store failed %s: %s", name, exc)
+        return {
+            "status": "error",
+            "filename": name,
+            "format": fmt,
+            "error": str(exc),
+            "chunks": 0,
+        }
 
     logger.info(
-        "project_rag indexed project=%s file=%s format=%s chunks=%d",
+        "project_rag indexed project=%s file=%s format=%s chunks=%d embed_errors=%d",
         project_id,
         name,
         fmt,
         len(chunks),
+        embed_errors,
     )
-    return {"status": "indexed", "filename": name, "format": fmt, "chunks": len(chunks)}
+    result: dict[str, Any] = {
+        "status": "indexed",
+        "filename": name,
+        "format": fmt,
+        "chunks": len(chunks),
+    }
+    if embed_errors:
+        result["partial"] = True
+        result["embed_errors"] = embed_errors
+        result["hint"] = f"{embed_errors} trecho(s) ignorado(s) por falha temporária de embedding."
+    return result
 
 
 def remove_project_file_index(project_id: str, file_path: str | Path) -> int:

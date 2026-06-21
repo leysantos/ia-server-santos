@@ -10,6 +10,7 @@ from typing import Optional
 
 from core.knowledge.disciplines import slug_for_discipline
 from core.knowledge.rag.agent_scopes import AGENT_SCOPES, AGENT_MODULES, DISCIPLINE_TO_AGENT_SLUG
+from memory.nbr_catalog import infer_discipline, parse_nbr_code
 
 _CHAT_MARKERS = (
     "olá", "ola", "oi", "bom dia", "boa tarde", "boa noite", "obrigado",
@@ -31,10 +32,17 @@ def route_query_to_agent(
     Retorna slug do agente (módulo agents/*.py sem .py).
 
     Prioridade:
-      1. discipline_hint do dispatcher (/chat, /orchestrate)
-      2. scoring por keywords/NBRs por agente
-      3. chat (fallback conversacional)
+      1. NBR/NR explícita na query → agente da norma
+      2. discipline_hint do dispatcher (/chat, /orchestrate)
+      3. scoring por keywords/NBRs por agente
+      4. chat (fallback conversacional)
     """
+    nbr_in_query = parse_nbr_code(query or "")
+    if nbr_in_query:
+        mapped_disc = infer_discipline(nbr_in_query)
+        if mapped_disc and mapped_disc in DISCIPLINE_TO_AGENT_SLUG:
+            return DISCIPLINE_TO_AGENT_SLUG[mapped_disc]
+
     if discipline_hint:
         disc = discipline_hint.strip().upper()
         if disc == "CHAT":

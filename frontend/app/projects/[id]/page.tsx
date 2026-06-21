@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ShellHeader from "@/components/ShellHeader";
 import WorkspaceExpandButton, { WorkspaceCollapseStrip } from "@/components/WorkspaceExpandButton";
+import { useActionDialog } from "@/hooks/useActionDialog";
 import { api } from "@/services/api";
 import type { ProjectDetail, ProjectFileItem } from "@/types/api";
 import { formatDate } from "@/lib/utils";
@@ -20,8 +21,10 @@ export default function ProjectDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const [uploadAccept, setUploadAccept] = useState(".pdf,.txt,.docx,.xlsx,.csv,.ifc,.dxf,.dwg");
   const [formatLabels, setFormatLabels] = useState("PDF, Word, Excel, CSV, TXT, IFC, DXF, DWG");
+  const { confirm, ActionDialogHost } = useActionDialog();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -57,11 +60,34 @@ export default function ProjectDetailPage() {
     if (!files?.length) return;
     setUploading(true);
     setError(null);
+    setUploadNotice(null);
     try {
       const result = await api.uploadProjectFiles(projectId, Array.from(files));
       const indexed = result.indexing?.filter((r) => r.status === "indexed").length ?? 0;
-      if (indexed) {
-        setError(null);
+      const partial = result.indexing?.filter((r) => r.status === "indexed" && (r as { partial?: boolean }).partial) ?? [];
+      const indexErrors = result.indexing?.filter((r) => r.status === "error") ?? [];
+      const skipped = result.indexing?.filter((r) => r.status === "skipped") ?? [];
+
+      if (indexErrors.length > 0) {
+        const first = indexErrors[0] as { filename?: string; error?: string; hint?: string };
+        setUploadNotice(
+          `${result.uploaded} arquivo(s) salvo(s). ${indexed} indexado(s), ${indexErrors.length} com falha na indexação RAG` +
+            (first.hint ? `. ${first.hint}` : "") +
+            (first.error ? ` (${first.error})` : "") +
+            " Use «Reindexar RAG» quando o Ollama estiver livre."
+        );
+      } else if (partial.length > 0) {
+        setUploadNotice(
+          `${result.uploaded} arquivo(s) salvo(s) · ${indexed} indexado(s) (indexação parcial em ${partial.length} arquivo(s)).`
+        );
+      } else if (skipped.length > 0 && indexed === 0) {
+        setUploadNotice(
+          `${result.uploaded} arquivo(s) salvo(s). Alguns formatos não são indexáveis para RAG — use PDF, DOCX, TXT, etc.`
+        );
+      } else if (indexed > 0) {
+        setUploadNotice(`${result.uploaded} arquivo(s) enviado(s) · ${indexed} indexado(s) para RAG`);
+      } else if (result.uploaded > 0) {
+        setUploadNotice(`${result.uploaded} arquivo(s) enviado(s) com sucesso.`);
       }
       await load();
     } catch (err) {
@@ -74,8 +100,25 @@ export default function ProjectDetailPage() {
 
   const handleReindex = async () => {
     setUploading(true);
+    setUploadNotice(null);
     try {
-      await api.reindexProject(projectId);
+      const summary = await api.reindexProject(projectId) as {
+        indexed?: number;
+        skipped?: number;
+        errors?: unknown[];
+        total_chunks?: number;
+      };
+      const errCount = summary.errors?.length ?? 0;
+      if (errCount > 0) {
+        setUploadNotice(
+          `Reindexação: ${summary.indexed ?? 0} ok, ${errCount} erro(s), ${summary.skipped ?? 0} ignorado(s). ` +
+            "Se persistir, pare análises visuais/LLM e tente novamente."
+        );
+      } else {
+        setUploadNotice(
+          `RAG atualizado: ${summary.indexed ?? 0} arquivo(s), ${summary.total_chunks ?? 0} trecho(s) indexados.`
+        );
+      }
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao reindexar");
@@ -85,7 +128,13 @@ export default function ProjectDetailPage() {
   };
 
   const handleDeleteFile = async (file: ProjectFileItem) => {
-    if (!confirm(`Remover ${file.filename}?`)) return;
+    const ok = await confirm({
+      title: "Remover arquivo",
+      message: `Remover «${file.filename}» do projeto? Esta ação não pode ser desfeita.`,
+      confirmLabel: "Remover",
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await api.deleteProjectFile(projectId, file.id);
       await load();
@@ -95,7 +144,14 @@ export default function ProjectDetailPage() {
   };
 
   const handleDeleteProject = async () => {
-    if (!confirm("Excluir projeto e todas as conversas vinculadas?")) return;
+    const ok = await confirm({
+      title: "Excluir projeto",
+      message:
+        "Excluir este projeto e todas as conversas vinculadas? Os arquivos enviados também serão removidos.",
+      confirmLabel: "Excluir",
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await api.deleteProject(projectId);
       router.push("/projects");
@@ -158,6 +214,12 @@ export default function ProjectDetailPage() {
             >
               Análise Visual
             </Link>
+            <Link
+              href={`/projects/${project.id}/workflow`}
+              className="rounded-lg bg-sky-600/90 px-3 py-2 text-sm font-medium text-white hover:bg-sky-500"
+            >
+              Workflow
+            </Link>
             <button
               type="button"
               onClick={handleDeleteProject}
@@ -189,6 +251,12 @@ export default function ProjectDetailPage() {
       {error && (
         <div className="mx-6 mt-4 rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-300 ring-1 ring-red-500/30">
           {error}
+        </div>
+      )}
+
+      {uploadNotice && !error && (
+        <div className="mx-6 mt-4 rounded-xl bg-amber-500/10 px-4 py-3 text-sm text-amber-200 ring-1 ring-amber-500/30">
+          {uploadNotice}
         </div>
       )}
 
@@ -287,6 +355,7 @@ export default function ProjectDetailPage() {
           </section>
         </div>
       </div>
+      <ActionDialogHost />
     </>
   );
 }

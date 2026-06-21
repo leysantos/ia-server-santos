@@ -98,6 +98,18 @@ class AppSettings(BaseSettings):
         default="qwen2.5-coder:latest", validation_alias="OLLAMA_CHAT_MODEL"
     )
     ollama_chat_timeout: int = Field(default=45, validation_alias="OLLAMA_CHAT_TIMEOUT")
+    ollama_chat_busy_timeout: int = Field(
+        default=180, validation_alias="OLLAMA_CHAT_BUSY_TIMEOUT"
+    )
+    ollama_chat_cpu_when_gpu_busy: bool = Field(
+        default=True, validation_alias="OLLAMA_CHAT_CPU_WHEN_GPU_BUSY"
+    )
+    ollama_chat_gpu_busy_vram_pct: float = Field(
+        default=75.0, validation_alias="OLLAMA_CHAT_GPU_BUSY_VRAM_PCT"
+    )
+    ollama_chat_light_model: str = Field(
+        default="gemma2:2b", validation_alias="OLLAMA_CHAT_LIGHT_MODEL"
+    )
     chat_use_llm: bool = Field(default=True, validation_alias="CHAT_USE_LLM")
 
     # --- Feature flags ---
@@ -153,6 +165,18 @@ class AppSettings(BaseSettings):
         default=0.25, validation_alias="RAG_PENALTY_NBR_EDITION_MISMATCH"
     )
 
+    # --- Workflow Projetos (Fase 2) ---
+    workflow_use_celery: bool = Field(default=True, validation_alias="WORKFLOW_USE_CELERY")
+    workflow_async_upload: bool = Field(default=True, validation_alias="WORKFLOW_ASYNC_UPLOAD")
+    redis_url: str = Field(default="redis://localhost:6379/0", validation_alias="REDIS_URL")
+    minio_enabled: bool = Field(default=True, validation_alias="MINIO_ENABLED")
+    minio_endpoint: str = Field(default="localhost:9000", validation_alias="MINIO_ENDPOINT")
+    minio_access_key: str = Field(default="minioadmin", validation_alias="MINIO_ACCESS_KEY")
+    minio_secret_key: str = Field(default="minioadmin", validation_alias="MINIO_SECRET_KEY")
+    minio_bucket: str = Field(default="ia-workflow", validation_alias="MINIO_BUCKET")
+    minio_secure: bool = Field(default=False, validation_alias="MINIO_SECURE")
+    minio_public_url: str | None = Field(default=None, validation_alias="MINIO_PUBLIC_URL")
+
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod
     def _parse_cors_origins(cls, value: Any) -> list[str]:
@@ -200,6 +224,10 @@ _LEGACY_FIELD_MAP: dict[str, str] = {
     "OLLAMA_BUDGET_TIMEOUT": "ollama_budget_timeout",
     "OLLAMA_CHAT_MODEL": "ollama_chat_model",
     "OLLAMA_CHAT_TIMEOUT": "ollama_chat_timeout",
+    "OLLAMA_CHAT_BUSY_TIMEOUT": "ollama_chat_busy_timeout",
+    "OLLAMA_CHAT_CPU_WHEN_GPU_BUSY": "ollama_chat_cpu_when_gpu_busy",
+    "OLLAMA_CHAT_GPU_BUSY_VRAM_PCT": "ollama_chat_gpu_busy_vram_pct",
+    "OLLAMA_CHAT_LIGHT_MODEL": "ollama_chat_light_model",
     "CHAT_USE_LLM": "chat_use_llm",
     "USE_INTENT_LAYER": "use_intent_layer",
     "USE_INTELLIGENT_AGENTS": "use_intelligent_agents",
@@ -226,6 +254,16 @@ _LEGACY_FIELD_MAP: dict[str, str] = {
     "RAG_BOOST_NBR_EDITION_RECENCY": "rag_boost_nbr_edition_recency",
     "RAG_BOOST_NBR_EDITION_MAX": "rag_boost_nbr_edition_max",
     "RAG_PENALTY_NBR_EDITION_MISMATCH": "rag_penalty_nbr_edition_mismatch",
+    "WORKFLOW_USE_CELERY": "workflow_use_celery",
+    "WORKFLOW_ASYNC_UPLOAD": "workflow_async_upload",
+    "REDIS_URL": "redis_url",
+    "MINIO_ENABLED": "minio_enabled",
+    "MINIO_ENDPOINT": "minio_endpoint",
+    "MINIO_ACCESS_KEY": "minio_access_key",
+    "MINIO_SECRET_KEY": "minio_secret_key",
+    "MINIO_BUCKET": "minio_bucket",
+    "MINIO_SECURE": "minio_secure",
+    "MINIO_PUBLIC_URL": "minio_public_url",
 }
 
 

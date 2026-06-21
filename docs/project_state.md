@@ -6,9 +6,9 @@
 | Campo | Valor |
 |-------|-------|
 | **Versão do sistema** | 1.0.0 |
-| **Última atualização** | 2026-06-20 |
-| **Marco atual** | Fase 2 (98%) — **Operational Transparency Layer** (Fases 1–2) |
-| **Próximo foco** | Teste PCI (combate a incêndio) com modo `pci` · workers assíncronos revisão |
+| **Última atualização** | 2026-06-21 |
+| **Marco atual** | Knowledge maintenance — OCR + FAISS compact + cobertura |
+| **Próximo foco** | ODA/LibreDWG composição real · editor carimbo · ICP-Brasil |
 | **Repositório** | [github.com/leysantos/ia-server-santos](https://github.com/leysantos/ia-server-santos) |
 | **Branch principal** | `main` |
 | **Modo padrão de agentes** | Inteligente (`USE_INTELLIGENT_AGENTS=true`) |
@@ -51,8 +51,12 @@ ia-server-santos/
 | Evolution Loop v1 | 🟢 implementado, **off por default** |
 | Agent Generation Loop v1 | 🟢 proposta/sandbox/promotion gate, **off por default** |
 | Learning Loop v1 + v2 | 🟢 feedback + auto-tune prompts (v2 opt-in) |
-| RAG v2 pipeline | 🟢 636+ chunks NBR indexados — validar consultas no `/chat` |
+| RAG v2 pipeline | 🟢 **9.598 chunks NBR** · 613 códigos · cobertura efetiva ~84% · RAG validado (NBR 6118/6122) |
 | Knowledge Layer multi-base | 🟢 FAISS por base (NBR, SINAPI, TCPO, TDR…) — `USE_KNOWLEDGE_ROUTER=false` |
+| **Norm Pack Studio** | 🟢 Gap analysis por pacote (arquitetura, documentação, PCI, estrutural) · `/settings/norm-packs` · API `/knowledge/norm-packs/*` · só PDF licenciado / legislação pública |
+| **Importação em lote NBR/NR** | 🟢 `/settings/imports` · pasta ou multi-PDF · classificação automática · SSE progresso **por arquivo na indexação FAISS** · job `norm_bulk` no Console · **CSV auditoria pós-lote** · CLI `scripts/ingest_nbr_folder.py` |
+| **Manutenção / Backup** | 🟢 `/settings/maintenance` · backup app, PostgreSQL, knowledge, FAISS → Google Drive · **restore** por stamp (`make restore STAMP=…`, UI e `/maintenance/restore`) · CLI `scripts/maintenance/run_backup.sh` · backup WSL completo **removido** |
+| **Serviços / DevOps** | 🟢 `/settings/servers` · API `/devops/*` · status PostgreSQL/API/Ollama/Redis/MinIO · subir stack backend (Docker + db-init) · start/stop frontend e Celery · console bash com blocklist · API e frontend manual (`make api`, `npm run dev`) |
 | Knowledge storage flat | 🟢 `knowledge/raw/documents/` + metadata sidecar + `catalog.jsonl` |
 | RAG agent-aware | 🟢 15 agentes com escopo isolado — `USE_AGENT_SCOPED_RAG=true` |
 | Engineering Orchestrator | 🟢 Separação NBR ↔ SINAPI — `USE_ENGINEERING_ORCHESTRATOR=true` |
@@ -60,12 +64,13 @@ ia-server-santos/
 | **Workspace (projetos + conversas)** | 🟢 CRUD projetos/conversas · busca · multi-turn · painel lateral no `/chat` |
 | **Project RAG multi-formato** | 🟢 FAISS por projeto — PDF, Office, CSV, TXT, DXF, IFC, DWG, PNG/JPG/ZIP |
 | **Project Review Engine** | 🟡 Fundação — digital twin, ingestão, OCR/BIM/CAD, agente, NCs, scoring, DOCX — `/projects/{id}/review` |
-| **Vision Analysis** | 🟢 Vision Engine — OCR → `gemma3:12b` → JSON → `qwen3:14b` → DOCX · SSE progresso · preview imagens · `/projects/{id}/vision` |
-| **Operational Transparency** | 🟢 ActivityPanel global · Orchestrator Console `/console` · timeline `/projects/{id}/activity` · `project_decisions` + auto-capture |
+| **Vision Analysis** | 🟢 Vision Engine — OCR → RAG CBMAM (modo PCI) → `gemma3:12b` → JSON → `qwen3:14b` → DOCX · checklist IT-11/NT-03 · SSE · `/projects/{id}/vision` |
+| **Workflow Projetos** | 🟡 Fase 3 — Wizard de Entrega (`/workflow/wizard`) · seleção manual arquivos · templates A4–A0 · nomenclatura `DISC-FLnn-TIPO-DESC-REV` · análise CAD/IA · GRD PDF · ZIP estruturado · Fase 2.1 (classificador, skip, presigned) mantida |
+| **Operational Transparency** | 🟢 ActivityPanel global · Operations Console `/console` (SSE live + fila Ollama + log `norm_bulk`/`knowledge`) · timeline `/projects/{id}/activity` · `project_decisions` + auto-capture |
 | **Orçamento `/budget`** | 🟢 PPD MC/OR · etapas/sub-etapas · ComD/SemD · cronograma Gantt + CPM · agente IA · **Especificação Técnica** (stream + preview Word + export DOCX) · BudgetTracePanel |
 | Chat streaming UX | 🟢 SSE instantâneo (`connected`) + tokens ~60fps (`flushSync` + rAF) |
 | Agente Geotecnia dedicado | 🟢 `GeotecniaIntelligentAgent` — NBR 6122/7185, classificação solo, A_min |
-| Frontend | 🟢 `/chat`, `/projects`, `/budget`, `/orchestrate`, `/console`, `/history`, `/settings` — falta `/copilot`, `/aed` |
+| Frontend | 🟢 `/chat`, `/projects`, `/budget`, `/orchestrate`, `/console`, `/history`, `/settings`, `/projects/{id}/workflow` — falta `/copilot`, `/aed` |
 | Auth SaaS | 🔴 não implementado |
 
 ## Feature flags importantes (defaults)
@@ -95,7 +100,7 @@ Config padrão: chat=`qwen3:8b`, eng=`qwen3:14b`, fallback=`qwen3-coder`, embed=
 
 ## Bloqueio principal
 
-**Bases de custo ainda não indexadas** — NBRs já estão no FAISS (636+ chunks). Falta popular SINAPI/TCPO em `backend/knowledge/raw/documents/`:
+**Bases de custo ainda não indexadas** — NBRs indexadas no FAISS (**9.598 chunks**, 696 paths / 943 efetivos com dedup). Falta popular SINAPI/TCPO em `backend/knowledge/raw/documents/`:
 
 | Metadata (`discipline`) | Exemplo de conteúdo |
 |-------------------------|---------------------|
@@ -141,9 +146,12 @@ Ativar multi-index explícito (opcional): `USE_KNOWLEDGE_ROUTER=true`
 |------|--------|--------|
 | **Fase 1** | ActivityPanel global · Orchestrator Console `/console` · aba Atividade `/projects/{id}/activity` · PipelineSteps + badges SSE | ✅ |
 | **Fase 2** | `project_activity_events` + `project_decisions` · auto-capture orchestrator/vision/budget/upload · BudgetTracePanel | ✅ |
+| **Console Fase 1** | `/console/live` · GPU/VRAM · `JobRegistry` (visão) · cancel/unload Ollama | ✅ |
+| **Console Fase 2** | SSE `/console/live/stream` · jobs chat/budget/orchestrator · barra fila Ollama | ✅ |
+| **Console Fase 3** | Log ao vivo (`ops_log`) · análise visual rápida (`skip_technical`) | ✅ |
 | **Fase 3** | pgvector memória cognitiva · SaaS multi-prefeitura · redesign UI completo | 🔴 adiar |
 
-**APIs novas:** `GET /console/logs` · `GET /console/stats` · `GET /projects/{id}/activity` · `GET /projects/{id}/decisions`
+**APIs novas:** `GET /console/logs` · `GET /console/stats` · `GET /console/live` · `GET /console/live/stream` · `POST /console/jobs/{id}/cancel` · `POST /console/ollama/unload` · `GET /projects/{id}/activity` · `GET /projects/{id}/decisions`
 
 ## Restrições arquiteturais recorrentes
 
@@ -591,7 +599,8 @@ handle(text)
 
 ### Gaps conhecidos da inteligência
 
-- [x] **NBR indexada** — 68 PDFs · 636+ chunks FAISS (validar qualidade das respostas)
+- [x] **NBR indexada** — force reindex + **manutenção** (`scripts/knowledge_maintenance.py`, `POST /knowledge/maintenance`) · extrator PyMuPDF+OCR · compact FAISS · purge órfãos
+- [ ] **~230 PDFs sem texto extraível** (14833 scans) — instalar `tesseract-ocr-por` para OCR completo
 - [ ] **SINAPI/TCPO não indexados no RAG** — orçamento determinístico via **Pricing Engine v1** (`backend/pricing/`) com CSV de exemplo; bases completas ainda pendentes
 - [ ] **Prompts genéricos** — um template único por disciplina; falta especialização fina (exc. geotecnia)
 - [ ] **Validação normativa** — LLM pode confundir nomenclaturas (ex.: classes I–IV vs A–D na NBR 6118)
@@ -1219,6 +1228,7 @@ Settings completas: `backend/config/settings.py`
 | R-08 | Baixa | Frontend sem `/aed` e `/copilot` | Criar páginas consumindo endpoints existentes |
 | R-05 | Baixa | CORS `allow_origins=["*"]` | Restringir em produção |
 | R-06 | Baixa | Sem autenticação | Fase 4 SaaS |
+| R-13 | Média | ~230 PDFs normativos sem texto (scan/OCR) + 367 chunks metadata≠FAISS | Pipeline OCR futuro; rebuild FAISS se delta crescer |
 
 ---
 
@@ -1226,7 +1236,10 @@ Settings completas: `backend/config/settings.py`
 
 | Data | Decisão | Motivo |
 |------|---------|--------|
-| 2026-06 | RAG v2 com FAISS substitui JSON vector store | Performance e persistência |
+| 2026-06-21 | Pipeline manutenção knowledge (OCR, órfãos, compact FAISS, index pending) | `pdf_text_extractor`, `knowledge_maintenance.py`, `POST /knowledge/maintenance` |
+| 2026-06-20 | Force reindex NBR + fix `pdf_indexer` (`doc_type`) + cobertura por PDF | Indexação falhava silenciosamente; banner reflete path/dedup/código |
+| 2026-06-20 | `normalize_nbr_code` + NBR explícita prioriza agente no router | `06122`≠`6122` quebrava boost; hint de disciplina bloqueava geotecnia |
+| 2026-06-20 | `search_many` repassa `nbr_boost` + oversample maior | RAG agent-scoped não aplicava boost FAISS nem rerank NBR |
 | 2026-06 | Router: regras antes de LLM | Determinismo + latência menor |
 | 2026-06 | `agent_registry.py` como fonte única de nomes | Eliminar inconsistências `{disc}_agent` |
 | 2026-06 | `BaseAgentIntelligent` separado de `BaseAgent` | Não quebrar agentes legados durante migração |
@@ -1264,7 +1277,17 @@ Settings completas: `backend/config/settings.py`
 | 2026-06 | Renumeração WBS automática | `renumber_wbs` após delete; endpoint `/itemization/renumber`; sync cronograma |
 | 2026-06 | UI ComD/SemD no orçamento | Colunas paralelas (azul/verde); rodapé custo sem BDI + BDI + total adotado (menor valor) |
 | 2026-06 | Vision Analysis Engine (`core/vision_engine/`) | Pipeline OCR→Gemma3→Qwen3; analisadores PDF/Image/Plant/PCI/Structural; workspace-status |
+| 2026-06 | PCI CBMAM — RAG + checklist IT-11/NT-03 | Modo `pci` injeta Knowledge Layer (agente incendio) antes do Gemma3; prompt exige E-5/rotas tracejadas; `GET /vision/pci-checklist` cruza 9 arquivos; audit `rag_sources` |
 | 2026-06 | Operational Transparency Layer (Fases 1–2) | ActivityPanel + Console + timeline; `project_activity_events`/`project_decisions`; auto-capture sem rewrite Agent-first |
+| 2026-06 | Workflow Projetos Fase 2 | MinIO/local storage · PDF ReportLab · ZIP entrega · Celery+Redis · workflow_jobs · upload async · download artefatos |
+| 2026-06 | Workflow classificação prancha/documento | PDFs com prefixo ARQ/PPCI+Rxx → pipeline completo; memorial/parecer/MD/memória de cálculo → indexação only; evita 9× pranchas falsas |
+| 2026-06 | Workflow Fase 3 Wizard GRD | Pacote de entrega com seleção manual, templates A0–A4, nomenclatura padrão escritório, GRD PDF, ZIP 01_PRANCHAS/02_MEMORIAIS/… |
+| 2026-06 | Norm Pack Studio (compliance ABNT) | Gap analysis + indexação em lote sem IA reescrever normas; `legal_source`: `abnt_licensed_pdf` \| `public_legislation`; produto comercializável multi-tenant |
+| 2026-06 | Importação em lote NBR/NR (~900 PDFs) | Classificação em cascata (filename → pypdf 1ª página → LLM leve só ambíguos); **não** usar agente completo por arquivo; index FAISS único ao final; `edition_outdated` para acervo histórico |
+| 2026-06 | Carimbo workflow — filtro legal NBR | RAG normativo + carimbo citam só `abnt_licensed_pdf`; legislação pública excluída do carimbo; metadado na ingestão e indexação PDF |
+| 2026-06 | Norm gaps Wizard + export CSV | Alertas de NBR crítica pendente no Wizard de Entrega; `norm_gaps` em get_package; CSV em Pacotes NBR e wizard |
+| 2026-06-20 | DevOps local em `/settings/servers` | Status/start PostgreSQL; console bash dev; API/frontend manuais |
+| 2026-06-20 | Restore por stamp + fim do backup WSL | Backups seletivos restauráveis em infra nova; export WSL descontinuado |
 
 ---
 

@@ -116,7 +116,8 @@ class VisionRouter:
 
         prompt = prompt_for_mode(mode)
         if extra_context:
-            prompt += f"\n\nContexto adicional:\n{extra_context[:2000]}"
+            limit = 4500 if mode == VisionAnalysisMode.PCI else 2000
+            prompt += f"\n\nContexto adicional:\n{extra_context[:limit]}"
 
         model_used = self.route_model(path)
         raw = self._chat_vision(prompt, images, model=model_used)

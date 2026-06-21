@@ -1,0 +1,8 @@
+{
+  "backup_drive_win": "G:\\Meu Drive\\Backups_IA_Server",
+  "backup_staging_dir": "/mnt/c/Backups/.ia-server-staging",
+  "keep_latest_sets": 1,
+  "include_knowledge_pdfs": false,
+  "include_faiss": true,
+  "include_database": true
+}

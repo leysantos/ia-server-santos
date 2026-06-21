@@ -61,14 +61,17 @@ def init_db() -> None:
     from core.database.migrate_audit_fks import migrate_audit_fks
     from core.database.migrate_project_memory import migrate_project_memory
     from core.database.migrate_project_review import migrate_project_review
+    from core.database.migrate_workflow import migrate_workflow
     from core.database.migrate_workspace import migrate_workspace
     from core.database.models import Base
+    import core.database.workflow_models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     migrate_workspace(engine)
     migrate_audit_fks(engine)
     migrate_project_review(engine)
     migrate_project_memory(engine)
+    migrate_workflow(engine)
 
 
 def is_db_enabled() -> bool:

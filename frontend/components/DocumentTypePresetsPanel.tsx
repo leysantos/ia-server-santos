@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { cn } from "@/lib/utils";
+import { useActionDialog } from "@/hooks/useActionDialog";
 import type { DocumentTypePreset, KnowledgeOptionsResponse } from "@/types/api";
 
 interface DocumentTypePresetsPanelProps {
@@ -57,6 +58,7 @@ export default function DocumentTypePresetsPanel({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const { confirm, ActionDialogHost } = useActionDialog();
 
   const resetForm = useCallback(() => {
     setForm(EMPTY_FORM);
@@ -117,7 +119,13 @@ export default function DocumentTypePresetsPanel({
   };
 
   const handleDelete = async (preset: DocumentTypePreset) => {
-    if (!window.confirm(`Excluir o tipo «${preset.label}»?`)) return;
+    const ok = await confirm({
+      title: "Excluir tipo de documento",
+      message: `Excluir o tipo «${preset.label}»? Documentos já indexados não serão afetados.`,
+      confirmLabel: "Excluir",
+      destructive: true,
+    });
+    if (!ok) return;
     setDeletingId(preset.id);
     setError(null);
     setSuccess(null);
@@ -324,6 +332,7 @@ export default function DocumentTypePresetsPanel({
           {success}
         </p>
       )}
+      <ActionDialogHost />
     </section>
   );
 }

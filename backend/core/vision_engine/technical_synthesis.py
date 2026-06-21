@@ -35,6 +35,7 @@ def synthesize_technical_report(
     ocr_data: dict[str, Any],
     vision_analysis: dict[str, Any],
     extra_context: str = "",
+    analysis_mode: str = "",
 ) -> dict[str, Any]:
     """Gera relatório técnico estruturado via Qwen3 14B."""
     from models.ollama_client import OllamaClient
@@ -54,9 +55,15 @@ def synthesize_technical_report(
         f"{_TECHNICAL_REPORT_PROMPT}\n\n"
         f"Arquivo: {filename}\n"
         f"Analisador: {analyzer}\n"
+        f"Modo: {analysis_mode or 'geral'}\n"
         f"OCR:\n{ocr_snippet}\n\n"
         f"Análise visual (Gemma3):\n{vision_snippet}\n"
     )
+    if analysis_mode == "pci":
+        prompt += (
+            "\nPara PCI/CBMAM: cite IT-11, NT-03, NBR 9077 e NBR 10898 nos achados. "
+            "Classifique NCs com código normativo (ex.: IT-11 item X).\n"
+        )
     if extra_context:
         prompt += f"\nContexto adicional:\n{extra_context[:1500]}\n"
 

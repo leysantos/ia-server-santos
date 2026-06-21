@@ -33,6 +33,7 @@ from core.project_review.vision_analysis_service import (
     is_visual_file,
 )
 from core.project_review.vision_prompts import VisionAnalysisMode
+from core.vision_engine.pci_cbmam_checklist import run_pci_cbmam_checklist
 from core.stream_events import format_sse
 from core.vision_engine.workspace_status import check_workspace_tools
 
@@ -81,6 +82,28 @@ class VisionService:
 
         return {"total": len(items), "items": items}
 
+    def get_pci_checklist(self, project_id: str, db: Session) -> dict[str, Any]:
+        """Checklist IT-11 / NT-03 cruzando todas as análises PCI do projeto."""
+        repo = ProjectReviewRepository(db)
+        pid = self._parse_uuid(project_id)
+        if not repo.get_project(pid):
+            raise HTTPException(status_code=404, detail="Projeto não encontrado")
+
+        rows = self._collect_analyses(repo, pid, [])
+        pci_rows = [
+            r
+            for r in rows
+            if (r.get("analysis_mode") or "").lower() == VisionAnalysisMode.PCI
+            or (r.get("analyzer") or "") == "pci"
+        ]
+        if not pci_rows:
+            pci_rows = rows
+
+        checklist = run_pci_cbmam_checklist(pci_rows)
+        checklist["project_id"] = project_id
+        checklist["modo"] = "pci"
+        return checklist
+
     def analyze(
         self,
         project_id: str,
@@ -88,6 +111,7 @@ class VisionService:
         file_ids: list[str],
         mode: str,
         extra_context: str,
+        skip_technical: bool = False,
         db: Session,
     ) -> dict[str, Any]:
         repo = ProjectReviewRepository(db)
@@ -118,10 +142,19 @@ class VisionService:
             )
 
         results = self._run_analysis_batch(
-            repo, pid, project, targets, mode=mode, extra_context=extra_context
+            repo,
+            pid,
+            project,
+            targets,
+            mode=mode,
+            extra_context=extra_context,
+            skip_technical=skip_technical,
         )
         db.commit()
         summary = self.vision.aggregate_report_summary(results)
+        pci_checklist = None
+        if mode == VisionAnalysisMode.PCI:
+            pci_checklist = run_pci_cbmam_checklist(results)
         try:
             from core.project_memory.service import record_vision_completion
 
@@ -144,6 +177,7 @@ class VisionService:
             "skipped": summary["skipped"],
             "items": [self._public_item(r) for r in results],
             "summary": summary,
+            "pci_checklist": pci_checklist,
         }
 
     def analyze_stream_events(
@@ -153,11 +187,17 @@ class VisionService:
         file_ids: list[str],
         mode: str,
         extra_context: str,
+        skip_technical: bool = False,
+        job_id: str | None = None,
     ) -> Iterator[str]:
         """Gera eventos SSE (progress / file_done / done / error) durante análise em lote."""
         q: queue.Queue[tuple[str, Any]] = queue.Queue()
+        from core.runtime.job_registry import get_job_registry
+
+        registry = get_job_registry()
 
         def worker() -> None:
+            runtime_job_id = job_id
             try:
                 with session_scope() as db:
                     repo = ProjectReviewRepository(db)
@@ -191,24 +231,102 @@ class VisionService:
                         return
 
                     total = len(targets)
-                    results: list[dict[str, Any]] = []
-                    step_frac = {
-                        "prepare": 0.02,
-                        "ocr": 0.10,
-                        "vision": 0.55,
-                        "technical": 0.88,
-                        "save": 0.96,
+                    job_meta = {
+                        "mode": mode,
+                        "total": total,
+                        "skip_technical": skip_technical,
                     }
+                    if not runtime_job_id:
+                        runtime_job_id = registry.register(
+                            kind="vision",
+                            label=f"Análise visual ({mode})"
+                            + (" · rápida" if skip_technical else ""),
+                            project_id=project_id,
+                            model=availability.get("primary"),
+                            meta=job_meta,
+                        ).id
+                    else:
+                        registry.update(
+                            runtime_job_id,
+                            label=f"Análise visual ({mode})"
+                            + (" · rápida" if skip_technical else ""),
+                            model=availability.get("primary"),
+                            total=total,
+                            meta=job_meta,
+                        )
+
+                    results: list[dict[str, Any]] = []
+                    if skip_technical:
+                        step_frac = {
+                            "prepare": 0.02,
+                            "ocr": 0.10,
+                            "rag": 0.18,
+                            "vision": 0.88,
+                            "save": 0.96,
+                        }
+                    else:
+                        step_frac = {
+                            "prepare": 0.02,
+                            "ocr": 0.08,
+                            "rag": 0.14,
+                            "vision": 0.52,
+                            "technical": 0.88,
+                            "save": 0.96,
+                        }
 
                     def pct(idx: int, step: str) -> int:
                         frac = (idx + step_frac.get(step, 0.05)) / total
                         return min(99, round(frac * 100))
 
                     for idx, (pf, path) in enumerate(targets):
+                        if runtime_job_id and registry.is_cancelled(runtime_job_id):
+                            registry.finish(
+                                runtime_job_id,
+                                status="cancelled",
+                                message="Cancelado pelo usuário",
+                            )
+                            q.put(
+                                (
+                                    "error",
+                                    {
+                                        "error": "Análise cancelada pelo usuário",
+                                        "cancelled": True,
+                                        "job_id": runtime_job_id,
+                                    },
+                                )
+                            )
+                            return
+
                         file_id = str(pf.id)
                         fname = pf.filename
 
                         def emit(phase: str, message: str) -> None:
+                            pct_val = pct(idx, phase)
+                            if runtime_job_id:
+                                registry.update(
+                                    runtime_job_id,
+                                    phase=phase,
+                                    message=message,
+                                    percent=pct_val,
+                                    current=idx + 1,
+                                    total=total,
+                                )
+                            from core.runtime.ops_log import append_ops_log
+
+                            append_ops_log(
+                                source="vision",
+                                message=message,
+                                project_id=project_id,
+                                job_id=runtime_job_id,
+                                phase=phase,
+                                meta={
+                                    "filename": fname,
+                                    "file_id": file_id,
+                                    "current": idx + 1,
+                                    "total": total,
+                                    "skip_technical": skip_technical,
+                                },
+                            )
                             q.put(
                                 (
                                     "progress",
@@ -234,12 +352,14 @@ class VisionService:
                             mode=mode,
                             extra_context=extra_context,
                             filename=fname,
+                            skip_technical=skip_technical,
                             on_progress=on_step,
                         )
                         row["project_file_id"] = file_id
 
                         emit("save", f"Salvando {fname}…")
                         self._persist_analysis_row(repo, pid, project, pf, row)
+                        db.commit()
                         results.append(row)
 
                         q.put(("file_done", {"item": self._public_item(row)}))
@@ -259,6 +379,9 @@ class VisionService:
                         )
 
                     summary = self.vision.aggregate_report_summary(results)
+                    pci_checklist = None
+                    if mode == VisionAnalysisMode.PCI:
+                        pci_checklist = run_pci_cbmam_checklist(results)
                     try:
                         from core.project_memory.service import record_vision_completion
 
@@ -272,24 +395,35 @@ class VisionService:
                         )
                     except Exception:
                         pass
+                    if runtime_job_id:
+                        registry.finish(
+                            runtime_job_id,
+                            status="completed",
+                            message=f"Concluído: {summary['analyzed']}/{summary['total']}",
+                        )
+                        registry.update(runtime_job_id, percent=100)
                     q.put(
                         (
                             "done",
                             {
                                 "project_id": project_id,
                                 "mode": mode,
+                                "job_id": runtime_job_id,
                                 "total": summary["total"],
                                 "analyzed": summary["analyzed"],
                                 "errors": summary["errors"],
                                 "skipped": summary["skipped"],
                                 "items": [self._public_item(r) for r in results],
                                 "summary": summary,
+                                "pci_checklist": pci_checklist,
                             },
                         )
                     )
             except Exception as exc:
                 logger.exception("Vision analyze stream falhou")
-                q.put(("error", {"error": str(exc)}))
+                if runtime_job_id:
+                    registry.finish(runtime_job_id, status="error", message=str(exc))
+                q.put(("error", {"error": str(exc), "job_id": runtime_job_id}))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -315,12 +449,18 @@ class VisionService:
         *,
         mode: str,
         extra_context: str,
+        skip_technical: bool = False,
     ) -> list[dict[str, Any]]:
         batch_input: list[tuple[Path, str, str]] = []
         for pf, path in targets:
             batch_input.append((path, pf.filename, str(pf.id)))
 
-        results = self.vision.analyze_batch(batch_input, mode=mode, extra_context=extra_context)
+        results = self.vision.analyze_batch(
+            batch_input,
+            mode=mode,
+            extra_context=extra_context,
+            skip_technical=skip_technical,
+        )
 
         for row in results:
             fid = row.get("project_file_id")
@@ -573,6 +713,8 @@ class VisionService:
             "analyzed_at": payload.get("analyzed_at"),
             "analysis": extract_analysis(payload) or payload.get("analysis"),
             "technical_report": extract_technical_report(payload),
+            "rag_sources": payload.get("rag_sources") or [],
+            "normative_context": payload.get("normative_context"),
         }
 
     @staticmethod
@@ -589,6 +731,8 @@ class VisionService:
             "analyzed_at": row.get("analyzed_at"),
             "analysis": row.get("analysis"),
             "technical_report": row.get("technical_report"),
+            "rag_sources": row.get("rag_sources") or [],
+            "normative_context": row.get("normative_context"),
         }
 
     @staticmethod

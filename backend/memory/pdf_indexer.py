@@ -4,7 +4,7 @@ from typing import Optional
 from config.settings import NBR_DIR, TDR_DIR
 from memory.chunker import split_text
 from memory.embeddings import NomicEmbedder
-from memory.nbr_catalog import infer_discipline, nbr_label, parse_nbr_code
+from memory.nbr_catalog import infer_discipline, nbr_label, parse_nbr_code, normalize_nbr_code
 from memory.faiss_store import FaissVectorStore
 from memory.models import DocumentChunk
 
@@ -32,46 +32,52 @@ class PDFIndexer:
 
     @staticmethod
     def extract_text(pdf_path: Path) -> list[tuple[int, str]]:
-        try:
-            from pypdf import PdfReader
-        except ImportError as exc:
-            raise ImportError(
-                "pypdf é necessário para indexar PDFs. Instale com: pip install pypdf"
-            ) from exc
+        from core.knowledge.pdf_text_extractor import extract_pdf_pages
 
-        reader = PdfReader(str(pdf_path))
-        pages: list[tuple[int, str]] = []
-
-        for index, page in enumerate(reader.pages, start=1):
-            text = page.extract_text() or ""
-            if text.strip():
-                pages.append((index, text))
-
-        return pages
+        return extract_pdf_pages(pdf_path)
 
     def _resolve_nbr_metadata(
         self,
         pdf_path: Path,
         discipline: str,
+        doc_type: str,
         content_hash: str = "",
     ) -> tuple[str, str, dict]:
-        nbr_code = parse_nbr_code(pdf_path.name)
-        resolved_discipline = discipline or infer_discipline(nbr_code)
-        label = nbr_label(nbr_code) or pdf_path.stem
+        from core.knowledge.metadata import read_metadata
+        from core.knowledge.norm_packs.legal import resolve_legal_source
+        from memory.nbr_catalog import resolve_norm_code
+        from memory.nbr_edition import parse_edition_year
 
-        metadata = {
+        sidecar = read_metadata(pdf_path) or {}
+        nbr_code = resolve_norm_code(pdf_path.name, sidecar)
+        resolved_discipline = discipline or infer_discipline(
+            nbr_code.split("-")[-1] if nbr_code and nbr_code.startswith("NR-") else nbr_code
+        )
+        label = nbr_label(nbr_code) if nbr_code and not nbr_code.startswith("NR-") else (nbr_code or pdf_path.stem)
+
+        metadata: dict = {
             "path": str(pdf_path.resolve()),
             "filename": pdf_path.name,
             "content_hash": content_hash,
+            "knowledge_base": "nbr",
         }
+        legal = resolve_legal_source(sidecar, file_path=pdf_path, doc_type=doc_type)
+        if legal.value != "missing":
+            metadata["legal_source"] = legal.value
+        if sidecar.get("content_type"):
+            metadata["content_type"] = sidecar["content_type"]
+        if sidecar.get("norm_kind"):
+            metadata["norm_kind"] = sidecar["norm_kind"]
         if nbr_code:
-            metadata["nbr_code"] = nbr_code
-            metadata["norma"] = nbr_label(nbr_code)
-            from memory.nbr_edition import parse_edition_year
-
-            edition_year = parse_edition_year(pdf_path.name, nbr_code)
+            metadata["nbr_code"] = normalize_nbr_code(nbr_code)
+            metadata["norm_code"] = metadata["nbr_code"]
+            if nbr_code.startswith("NR-"):
+                metadata["norma"] = nbr_code
+            else:
+                metadata["norma"] = nbr_label(nbr_code)
+            edition_year = sidecar.get("edition_year") or parse_edition_year(pdf_path.name, nbr_code)
             if edition_year:
-                metadata["edition_year"] = edition_year
+                metadata["edition_year"] = int(edition_year)
 
         return resolved_discipline, label, metadata
 
@@ -105,7 +111,7 @@ class PDFIndexer:
             raise ValueError(f"Nenhum texto extraído do PDF: {pdf_path.name}")
 
         resolved_discipline, label, metadata = self._resolve_nbr_metadata(
-            pdf_path, discipline, content_hash
+            pdf_path, discipline, doc_type, content_hash
         )
         source_name = source or label
         chunks_to_store: list[DocumentChunk] = []

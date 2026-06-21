@@ -3,16 +3,34 @@
 import Link from "next/link";
 import { SETTINGS_MODULES } from "@/components/settings/settings-nav";
 import { useSettingsKnowledge } from "@/contexts/SettingsKnowledgeContext";
+import { cn } from "@/lib/utils";
 
 export default function SettingsOverviewPage() {
   const { stats, catalog } = useSettingsKnowledge();
 
   const totalChunks = stats?.index?.total_multi_chunks ?? 0;
   const priceBases = catalog?.items.filter((i) => i.has_price_items).length ?? 0;
+  const nbrCov = stats?.nbr_coverage;
+  const nbrLow = nbrCov && nbrCov.catalog_codes > 0 && nbrCov.coverage_pct < 95;
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-3 sm:grid-cols-3">
+      {nbrLow && (
+        <div className="rounded-xl bg-amber-500/10 p-4 ring-1 ring-amber-500/40">
+          <p className="text-sm font-medium text-amber-200">
+            Indexação NBR incompleta — {nbrCov.coverage_pct}% de cobertura (
+            {nbrCov.not_indexed_codes} códigos pendentes)
+          </p>
+          <p className="mt-1 text-xs text-slate-400">
+            <Link href="/settings/indexing" className="text-amber-300 hover:underline">
+              Ir para Indexação FAISS
+            </Link>{" "}
+            para completar o índice RAG.
+          </p>
+        </div>
+      )}
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl bg-slate-900/60 p-4 ring-1 ring-slate-800">
           <p className="text-2xl font-bold text-white">{stats?.catalog_total ?? 0}</p>
           <p className="text-xs text-slate-500">Documentos no catálogo</p>
@@ -20,6 +38,22 @@ export default function SettingsOverviewPage() {
         <div className="rounded-xl bg-slate-900/60 p-4 ring-1 ring-slate-800">
           <p className="text-2xl font-bold text-cyan-400">{totalChunks}</p>
           <p className="text-xs text-slate-500">Chunks FAISS (IA)</p>
+        </div>
+        <div
+          className={cn(
+            "rounded-xl p-4 ring-1",
+            nbrLow ? "bg-amber-500/10 ring-amber-500/30" : "bg-slate-900/60 ring-slate-800",
+          )}
+        >
+          <p
+            className={cn(
+              "text-2xl font-bold",
+              nbrLow ? "text-amber-300" : "text-blue-300",
+            )}
+          >
+            {nbrCov ? `${nbrCov.coverage_pct}%` : "—"}
+          </p>
+          <p className="text-xs text-slate-500">Cobertura NBR no FAISS</p>
         </div>
         <div className="rounded-xl bg-slate-900/60 p-4 ring-1 ring-slate-800">
           <p className="text-2xl font-bold text-emerald-400">{priceBases}</p>

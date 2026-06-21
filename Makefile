@@ -1,4 +1,4 @@
-.PHONY: setup setup-backend setup-frontend api db-init index-nbrs test test-backend frontend docker-up auto-tune agent-generation
+.PHONY: setup setup-backend setup-frontend api db-init index-nbrs index-knowledge backup-app restore test test-backend frontend docker-up auto-tune agent-generation workflow-worker workflow-infra
 
 BACKEND_DIR := backend
 FRONTEND_DIR := frontend
@@ -27,6 +27,19 @@ db-init:
 index-nbrs:
 	cd $(BACKEND_DIR) && $(BACKEND_PYTHON) scripts/index_nbrs.py
 
+index-knowledge:
+	cd $(BACKEND_DIR) && $(BACKEND_PYTHON) scripts/index_knowledge_bases.py
+
+backup-app:
+	bash scripts/maintenance/run_backup.sh app,database,knowledge,faiss
+
+restore:
+ifndef STAMP
+	@echo "Uso: make restore STAMP=YYYYMMDD-HHMMSS [TARGETS=database,knowledge,faiss] [DRY_RUN=true]"
+	@exit 1
+endif
+	bash scripts/maintenance/restore.sh "$(STAMP)" "$(or $(TARGETS),database,knowledge,faiss)"
+
 test test-backend:
 	cd $(BACKEND_DIR) && $(BACKEND_PYTHON) -m pytest tests/ -v
 
@@ -35,6 +48,12 @@ frontend:
 
 docker-up:
 	cd infra/docker && docker compose up -d
+
+workflow-infra:
+	cd infra/docker && docker compose up -d redis minio
+
+workflow-worker:
+	cd $(BACKEND_DIR) && $(BACKEND_PYTHON) -m celery -A core.workflow.workers.celery_app:celery_app worker -l info -Q workflow -c 2
 
 auto-tune:
 	cd $(BACKEND_DIR) && $(BACKEND_PYTHON) scripts/run_auto_tune.py $(ARGS)

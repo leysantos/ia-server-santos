@@ -135,27 +135,48 @@ A legenda_relatorio deve ser uma frase clara pronta para publicação no relató
 
 
 def _PROMPT_PCI() -> str:
-    return f"""Você é especialista em projetos de Prevenção e Combate a Incêndio (PCI).
-Analise a planta/documento PCI e produza JSON:
+    return f"""Você é especialista em projetos de Prevenção e Combate a Incêndio (PCI) — CBMAM/AM.
+Analise a planta/documento PCI cruzando com o CONTEXTO NORMATIVO fornecido (ITs CBMAM indexadas).
+Produza JSON com esta estrutura EXATA:
 {{
   "disciplina": "pci",
-  "tipo_edificacao": "",
+  "tipo_edificacao": "E-5 — Edificação educacional (ou código CBMAM correto)",
+  "ocupacao_cbmam": "E-5",
+  "projeto_simplificado": true,
   "pavimentos": [],
-  "rotas_fuga": [],
-  "saidas_emergencia": [],
-  "sinalizacao": [],
+  "rotas_fuga": [
+    {{
+      "origem": "",
+      "destino": "",
+      "demarcacao": "tracejada|continua|nao_identificada",
+      "conforme_it11": true,
+      "observacao": ""
+    }}
+  ],
+  "saidas_emergencia": [{{"tipo": "", "largura_m": null, "quantidade_up": null, "localizacao": ""}}],
+  "sinalizacao": [{{"tipo": "", "local": "", "conforme_nbr10898": true}}],
   "hidrantes_mangotinhos": [],
+  "extintores": [],
   "sprinklers": [],
   "compartimentacao": [],
   "resistencia_fogo": [],
   "distancias_criticas": [],
+  "portas_portoes_rota_fuga": [{{"tipo": "correr|pivotante|etc", "exige_nt03": true, "local": ""}}],
   "inconsistencias": [],
-  "nao_conformidades": [],
-  "normas_aplicaveis": ["NBR 9077", "NBR 10898", "IT CBMAM"],
+  "nao_conformidades": [
+    {{"codigo": "IT-11|NT-03|NBR9077", "item": "", "descricao": "", "severidade": "baixa|media|alta|critica"}}
+  ],
+  "normas_aplicaveis": ["IT-11 CBMAM", "NT-03 CBMAM", "NBR 9077", "NBR 10898"],
+  "its_cbmam_citadas": ["IT-11", "NT-03"],
   "recomendacoes": [],
   "resumo_tecnico": ""
 }}
-Referencie ITs CBMAM quando aplicável.{_json_only_footer()}"""
+REGRAS OBRIGATÓRIAS:
+1. Preencha `tipo_edificacao` com código CBMAM (ex.: E-5 para escola/creche) — nunca deixe vazio se for edificação educacional.
+2. Identifique rotas de fuga VISÍVEIS (linhas tracejadas, setas, fluxo) em `rotas_fuga`; se ausentes na prancha, registre NC referenciando IT-11/NBR 9077.
+3. Se houver portão/porta de correr na rota de fuga, cite NT-03 e marque `exige_nt03: true`.
+4. Cite ITs CBMAM por número (IT-11, NT-03, etc.) em NCs e recomendações — use trechos do contexto normativo quando disponível.
+5. Para projeto simplificado térreo, verifique memorial, memória de população/saídas e sinalização mínima.{_json_only_footer()}"""
 
 
 def _PROMPT_ESTRUTURAL() -> str:

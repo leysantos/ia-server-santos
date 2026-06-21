@@ -6,6 +6,7 @@ import { useSettingsKnowledge } from "@/contexts/SettingsKnowledgeContext";
 export default function SettingsCatalogPage() {
   const {
     options,
+    stats,
     catalog,
     refresh,
     handleActivatePriceBase,
@@ -20,6 +21,7 @@ export default function SettingsCatalogPage() {
     <DocumentLibrary
       view="catalog"
       options={options}
+      stats={stats}
       catalog={catalog?.items ?? []}
       onActivatePriceBase={handleActivatePriceBase}
       onIndexBudgetModel={handleIndexBudgetModel}

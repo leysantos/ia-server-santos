@@ -13,6 +13,7 @@ from config.settings import (
     RAG_SEARCH_OVERSAMPLE,
 )
 from memory.models import DocumentChunk
+from memory.nbr_catalog import nbr_codes_match, normalize_nbr_code
 
 
 class FaissVectorStore:
@@ -120,7 +121,7 @@ class FaissVectorStore:
             meta_ct = (chunk.metadata or {}).get("content_type", "").lower()
             if meta_ct and meta_ct != content_type.lower():
                 return False
-        if nbr_code and chunk.metadata.get("nbr_code") != nbr_code:
+        if nbr_code and not nbr_codes_match(chunk.metadata.get("nbr_code"), nbr_code):
             return False
         return True
 
@@ -139,7 +140,7 @@ class FaissVectorStore:
             score += RAG_BOOST_DISCIPLINE
         if doc_type and chunk.doc_type == doc_type:
             score += RAG_BOOST_DOC_TYPE
-        if nbr_code and chunk.metadata.get("nbr_code") == nbr_code:
+        if nbr_code and nbr_codes_match(chunk.metadata.get("nbr_code"), nbr_code):
             score += RAG_BOOST_NBR
         return score
 
@@ -164,7 +165,7 @@ class FaissVectorStore:
         scores, indices = self.index.search(query_vec, oversample)
 
         ranked: list[tuple[DocumentChunk, float]] = []
-        boost_nbr = nbr_boost or nbr_code
+        boost_nbr = normalize_nbr_code(nbr_boost or nbr_code)
 
         for base_score, idx in zip(scores[0], indices[0]):
             if idx < 0 or idx >= len(self.chunks):

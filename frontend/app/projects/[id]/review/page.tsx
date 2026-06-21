@@ -82,11 +82,19 @@ export default function ProjectReviewPage() {
     setRunning(true);
     setError(null);
     try {
+      // Reutiliza análises visuais já salvas — não reexecuta Gemma/Qwen na GPU.
       const result = await api.startReview(projectId, { enable_vision: true });
       setSelectedReview(result);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao iniciar revisão");
+      const msg = err instanceof Error ? err.message : "Falha ao iniciar revisão";
+      if (msg.includes("409") || msg.toLowerCase().includes("análise visual")) {
+        setError(
+          `${msg} Conclua ou cancele a análise visual em /vision antes de iniciar a revisão.`
+        );
+      } else {
+        setError(msg);
+      }
     } finally {
       setRunning(false);
     }
@@ -139,6 +147,15 @@ export default function ProjectReviewPage() {
           {error}
         </div>
       )}
+
+      <p className="mx-6 mt-3 text-xs text-slate-500">
+        Reutiliza análises visuais já salvas no projeto. Se houver análise visual em andamento,
+        aguarde a conclusão ou cancele no{" "}
+        <Link href="/console" className="text-cyan-400 hover:text-cyan-300">
+          Console
+        </Link>{" "}
+        antes de iniciar.
+      </p>
 
       <div className="flex-1 overflow-y-auto p-6">
         <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-3">

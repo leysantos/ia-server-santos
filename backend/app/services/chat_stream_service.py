@@ -5,6 +5,7 @@ from core.conversation_context import build_assistant_meta, compose_thread_input
 from core.project_rag import resolve_project_id
 from core.database.service import append_conversation_messages, ensure_conversation
 from core.intent_layer import iter_intent_events
+from core.runtime.job_tracking import label_from_text, track_stream_job
 from core.stream_events import format_sse
 
 
@@ -70,17 +71,41 @@ class ChatStreamService:
         agent_input = compose_thread_input(text, active_conversation_id)
         final_output: dict | None = None
 
-        for event_type, data in iter_intent_events(
-            agent_input,
-            use_rag=use_rag,
-            persist=persist,
-            conversation_id=active_conversation_id,
+        with track_stream_job(
+            kind="chat",
+            label=label_from_text(text),
             project_id=active_project_id,
-        ):
-            if event_type == "done":
-                final_output = data
-                data = {**data, "conversation_id": active_conversation_id}
-            yield format_sse(event_type, data)
+            meta={"conversation_id": active_conversation_id},
+        ) as runtime_job:
+            from core.runtime.ollama_concurrency import resolve_chat_runtime
+
+            chat_plan = resolve_chat_runtime()
+            if chat_plan.status_message:
+                runtime_job.update(
+                    phase="gpu_wait" if chat_plan.parallel_mode == "gpu_wait" else "cpu_parallel",
+                    message=chat_plan.status_message,
+                )
+                yield format_sse(
+                    "status",
+                    {
+                        "message": chat_plan.status_message,
+                        "phase": chat_plan.parallel_mode,
+                        "chat_runtime": chat_plan.to_dict(),
+                    },
+                )
+
+            for event_type, data in iter_intent_events(
+                agent_input,
+                use_rag=use_rag,
+                persist=persist,
+                conversation_id=active_conversation_id,
+                project_id=active_project_id,
+            ):
+                runtime_job.update_from_stream(event_type, data)
+                if event_type == "done":
+                    final_output = data
+                    data = {**data, "conversation_id": active_conversation_id}
+                yield format_sse(event_type, data)
 
         if persist and active_conversation_id and final_output:
             result_text = final_output.get("result") or final_output.get("response") or ""

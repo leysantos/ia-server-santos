@@ -20,6 +20,16 @@ class Project(Base):
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    codigo: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    cliente: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    responsavel: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    disciplina: Mapped[str | None] = mapped_column(String(60), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(40), nullable=False, default="ativo", index=True)
+    empresa_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    versao_atual: Mapped[str] = mapped_column(String(20), nullable=False, default="REV00")
+    workflow_initialized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -61,6 +71,44 @@ class Project(Base):
         back_populates="project",
         cascade="all, delete-orphan",
         order_by="ProjectDecision.created_at.desc()",
+    )
+    empresa: Mapped["Company | None"] = relationship(back_populates="projects")
+    workflow_folders: Mapped[list["ProjectFolder"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="ProjectFolder.sort_order",
+    )
+    workflow_events: Mapped[list["WorkflowEvent"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="WorkflowEvent.created_at.desc()",
+    )
+    workflow_drawings: Mapped[list["WorkflowDrawing"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    workflow_sheets: Mapped[list["WorkflowSheet"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    workflow_revisions: Mapped[list["WorkflowRevision"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="WorkflowRevision.created_at.desc()",
+    )
+    workflow_versions: Mapped[list["WorkflowVersion"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="WorkflowVersion.created_at.desc()",
+    )
+    workflow_deliveries: Mapped[list["WorkflowDelivery"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    workflow_delivery_packages: Mapped[list["WorkflowDeliveryPackage"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="WorkflowDeliveryPackage.created_at.desc()",
     )
 
 

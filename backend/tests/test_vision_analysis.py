@@ -22,7 +22,9 @@ def test_supported_modes_includes_pci_estrutural():
 
 
 def test_prompt_pci_and_estrutural():
-    assert "PCI" in prompt_for_mode(VisionAnalysisMode.PCI) or "pci" in prompt_for_mode(VisionAnalysisMode.PCI).lower()
+    pci_prompt = prompt_for_mode(VisionAnalysisMode.PCI)
+    assert "PCI" in pci_prompt or "pci" in pci_prompt.lower()
+    assert "IT-11" in pci_prompt
     assert "estrutural" in prompt_for_mode(VisionAnalysisMode.ESTRUTURAL).lower()
 
 

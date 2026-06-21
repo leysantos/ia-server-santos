@@ -11,7 +11,9 @@ from __future__ import annotations
 import csv
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
+
+ProgressCallback = Callable[[dict[str, Any]], None]
 
 from config import settings
 from core.knowledge.constants import IMMUTABLE_KNOWLEDGE_BASES, KNOWLEDGE_PATHS, BASE_DOC_TYPES
@@ -58,7 +60,12 @@ class KnowledgeIndexer:
         summary["total_chunks_in_store"] = self.multi_store.total_chunks()
         return summary
 
-    def index_base(self, base_key: str, force: bool = False) -> dict[str, Any]:
+    def index_base(
+        self,
+        base_key: str,
+        force: bool = False,
+        on_progress: ProgressCallback | None = None,
+    ) -> dict[str, Any]:
         store = self.multi_store.get_store(base_key)
         doc_type = BASE_DOC_TYPES.get(base_key, base_key)
         summary = {
@@ -77,6 +84,24 @@ class KnowledgeIndexer:
 
         ensure_canonical_dir(base_key)
         seen_dedup: set[str] = set()
+        progress = {"current": 0, "total": self._count_candidate_files(base_key)}
+
+        def emit_file_progress(name: str) -> None:
+            progress["current"] += 1
+            if not on_progress:
+                return
+            total = max(progress["total"], 1)
+            current = progress["current"]
+            on_progress(
+                {
+                    "phase": "index",
+                    "current": current,
+                    "total": total,
+                    "percent": min(100, round(current / total * 100)),
+                    "message": f"Indexando {name} ({current}/{total})",
+                    "name": name,
+                }
+            )
 
         for directory, tier in get_all_read_paths(
             base_key,
@@ -99,11 +124,35 @@ class KnowledgeIndexer:
                     seen_dedup,
                     tier,
                     use_hash_dedup,
+                    on_file_done=emit_file_progress,
                 )
             )
 
         store.save()
         return summary
+
+    @staticmethod
+    def _count_candidate_files(base_key: str) -> int:
+        total = 0
+        for directory, _tier in get_all_read_paths(
+            base_key,
+            include_legacy=True,
+            include_discipline=True,
+            discipline_first=True,
+        ):
+            if not directory.exists():
+                continue
+            total += len(list(directory.glob("*.csv")))
+            for pattern in ("*.xlsx", "*.xls"):
+                total += len(list(directory.glob(pattern)))
+            total += len(list(directory.glob("*.docx")))
+            for pdf_path in directory.glob("*.pdf"):
+                try:
+                    if file_matches_base(pdf_path, base_key):
+                        total += 1
+                except Exception:
+                    total += 1
+        return total
 
     def _dedup_key(self, path: Path, use_hash: bool, base_key: str = "") -> str:
         if base_key == "nbr":
@@ -133,9 +182,14 @@ class KnowledgeIndexer:
         seen_dedup: set[str],
         tier: str,
         use_hash_dedup: bool = False,
+        on_file_done: Callable[[str], None] | None = None,
     ) -> list[dict]:
         file_results: list[dict] = []
         pdf_indexer = PDFIndexer(store=store, embedder=self.embedder)
+
+        def _tick(name: str) -> None:
+            if on_file_done:
+                on_file_done(name)
 
         for pdf_path in sorted(directory.glob("*.pdf")):
             if pdf_path.stat().st_size == 0:
@@ -144,12 +198,14 @@ class KnowledgeIndexer:
                     {"file": pdf_path.name, "status": "skipped_empty", "tier": tier, "chunks": 0}
                 )
                 logger.warning("PDF vazio ignorado na indexação: %s", pdf_path.name)
+                _tick(pdf_path.name)
                 continue
             try:
                 if not file_matches_base(pdf_path, base_key):
                     continue
             except Exception as exc:
                 summary["errors"].append({"file": str(pdf_path), "error": str(exc)})
+                _tick(pdf_path.name)
                 continue
 
             dedup = self._dedup_key(pdf_path, use_hash_dedup, base_key=base_key)
@@ -161,6 +217,7 @@ class KnowledgeIndexer:
                 logger.info(
                     "Dedup: %s ignorado (já indexado de fonte canônica)", pdf_path.name
                 )
+                _tick(pdf_path.name)
                 continue
             seen_dedup.add(dedup)
 
@@ -182,6 +239,7 @@ class KnowledgeIndexer:
                 )
             except Exception as exc:
                 summary["errors"].append({"file": str(pdf_path), "error": str(exc)})
+            _tick(pdf_path.name)
 
         for csv_path in sorted(directory.glob("*.csv")):
             if not file_matches_base(csv_path, base_key):
@@ -200,6 +258,7 @@ class KnowledgeIndexer:
                 self._record_file(summary, file_results, csv_path.name, count, tier)
             except Exception as exc:
                 summary["errors"].append({"file": str(csv_path), "error": str(exc)})
+            _tick(csv_path.name)
 
         for pattern in ("*.xlsx", "*.xls"):
             for xlsx_path in sorted(directory.glob(pattern)):
@@ -221,6 +280,7 @@ class KnowledgeIndexer:
                     self._record_file(summary, file_results, xlsx_path.name, count, tier)
                 except Exception as exc:
                     summary["errors"].append({"file": str(xlsx_path), "error": str(exc)})
+                _tick(xlsx_path.name)
 
         for pattern in ("*.docx",):
             for docx_path in sorted(directory.glob(pattern)):
@@ -239,6 +299,7 @@ class KnowledgeIndexer:
                     self._record_file(summary, file_results, docx_path.name, count, tier)
                 except Exception as exc:
                     summary["errors"].append({"file": str(docx_path), "error": str(exc)})
+                _tick(docx_path.name)
 
         if is_legacy_path(directory):
             logger.debug("Indexado path legado read-only: %s", directory)

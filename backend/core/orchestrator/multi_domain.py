@@ -168,6 +168,7 @@ def execute_agents(
     rag_engine: Optional[RAGEngine] = None,
     persist: bool = True,
     context_graph: Optional[ContextGraph] = None,
+    runtime_job=None,
 ) -> list[dict]:
     """Executa agentes por disciplina com plano do orquestrador inteligente."""
     user_input = route_result.get("input", "")
@@ -178,8 +179,18 @@ def execute_agents(
 
     engine = rag_engine or get_rag_engine()
     responses: list[dict] = []
+    total = len(disciplines)
 
-    for discipline in disciplines:
+    for index, discipline in enumerate(disciplines, start=1):
+        if runtime_job is not None:
+            runtime_job.update(
+                phase="execute",
+                message=f"Agente {discipline} ({index}/{total})",
+                current=index,
+                total=total,
+                percent=min(90, int((index - 1) / total * 90)) if total else None,
+            )
+
         if discipline not in AGENTS:
             response = {
                 "discipline": discipline,
@@ -298,34 +309,44 @@ def process_multi_domain_request(
 ) -> dict:
     """Pipeline principal: decompose → execute agents → synthesize."""
     from core.database.service import save_conversation, save_orchestrator_log
+    from core.runtime.job_tracking import label_from_text, track_sync_job
 
-    disciplines = decompose_problem(text)
+    with track_sync_job(kind="orchestrator", label=label_from_text(text)) as runtime_job:
+        runtime_job.update(phase="decompose", message="Decompondo disciplinas…")
+        disciplines = decompose_problem(text)
+        runtime_job.update(
+            phase="plan",
+            message=f"Plano: {', '.join(disciplines) if disciplines else '—'}",
+            meta={"disciplines": disciplines},
+        )
 
-    conversation = None
-    conversation_id = None
-    if persist:
-        conversation = save_conversation(input_text=text, mode="multi")
-        if conversation:
-            conversation_id = conversation.get("id")
+        conversation = None
+        conversation_id = None
+        if persist:
+            conversation = save_conversation(input_text=text, mode="multi")
+            if conversation:
+                conversation_id = conversation.get("id")
 
-    route_result = {
-        "input": text,
-        "disciplines": disciplines,
-        "_conversation_id": conversation_id,
-    }
+        route_result = {
+            "input": text,
+            "disciplines": disciplines,
+            "_conversation_id": conversation_id,
+        }
 
-    graph = ContextGraph()
+        graph = ContextGraph()
 
-    agent_results = execute_agents(
-        route_result,
-        use_rag=use_rag,
-        rag_engine=rag_engine,
-        persist=persist,
-        context_graph=graph,
-    )
+        agent_results = execute_agents(
+            route_result,
+            use_rag=use_rag,
+            rag_engine=rag_engine,
+            persist=persist,
+            context_graph=graph,
+            runtime_job=runtime_job,
+        )
 
-    global_context = graph.build_global_context()
-    synthesis = synthesize_results(agent_results, context=global_context)
+        runtime_job.update(phase="synthesis", message="Sintetizando relatório…", percent=95)
+        global_context = graph.build_global_context()
+        synthesis = synthesize_results(agent_results, context=global_context)
 
     results_by_discipline = {
         item.get("discipline", f"item_{index}"): item

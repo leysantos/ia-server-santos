@@ -12,7 +12,7 @@ from typing import Optional
 
 from config import settings
 from memory.models import DocumentChunk
-from memory.nbr_catalog import parse_nbr_code
+from memory.nbr_catalog import parse_nbr_code, nbr_codes_match
 
 _YEAR_PATTERN = re.compile(r"(?<![\d])(19\d{2}|20\d{2})(?![\d])")
 _MIN_YEAR = 1950
@@ -91,7 +91,7 @@ def compute_edition_boost(
         return 0.0
 
     nbr_q = nbr_query or parse_nbr_code(query)
-    if nbr_q and nbr_chunk != nbr_q:
+    if nbr_q and not nbr_codes_match(nbr_chunk, nbr_q):
         return 0.0
 
     chunk_year = chunk_edition_year(chunk)
@@ -160,7 +160,7 @@ def supplement_edition_hits(
         available: list[int] = []
         for key in base_keys:
             for chunk in multi_store.get_store(key).chunks:
-                if (chunk.metadata or {}).get("nbr_code") != nbr_query:
+                if not nbr_codes_match((chunk.metadata or {}).get("nbr_code"), nbr_query):
                     continue
                 y = chunk_edition_year(chunk)
                 if y:
@@ -181,7 +181,7 @@ def supplement_edition_hits(
     for key in base_keys:
         for chunk in multi_store.get_store(key).chunks:
             meta = chunk.metadata or {}
-            if meta.get("nbr_code") != nbr_query:
+            if not nbr_codes_match(meta.get("nbr_code"), nbr_query):
                 continue
             if chunk_edition_year(chunk) != target_year:
                 continue
@@ -189,12 +189,27 @@ def supplement_edition_hits(
             if sig in seen:
                 continue
             if not chunk.embedding:
-                continue
-            import numpy as np
+                if not multi_store.get_store(key).index:
+                    continue
+                try:
+                    import faiss
+                    import numpy as np
+
+                    chunk_idx = multi_store.get_store(key).chunks.index(chunk)
+                    if chunk_idx >= multi_store.get_store(key).index.ntotal:
+                        continue
+                    chunk_vec = multi_store.get_store(key).index.reconstruct(chunk_idx)
+                except (ValueError, RuntimeError):
+                    continue
+            else:
+                import numpy as np
+
+                chunk_vec = np.array(chunk.embedding, dtype=np.float32)
             import faiss
+            import numpy as np
 
             vec = np.array([query_embedding], dtype=np.float32)
-            emb = np.array([chunk.embedding], dtype=np.float32)
+            emb = np.array([chunk_vec], dtype=np.float32)
             faiss.normalize_L2(vec)
             faiss.normalize_L2(emb)
             sim = float(np.dot(vec, emb.T)[0][0])

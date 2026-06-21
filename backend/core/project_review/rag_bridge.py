@@ -58,7 +58,9 @@ def _discipline_to_agent_slug(discipline: str | None) -> str | None:
         "arquitetura": "arquitetura",
         "hidraulica": "hidraulica",
         "eletrica": "eletrica",
-        "pci": "pci",
+        "pci": "incendio",
+        "incendio": "incendio",
+        "incêndio": "incendio",
     }
     return mapping.get(discipline.lower())
 

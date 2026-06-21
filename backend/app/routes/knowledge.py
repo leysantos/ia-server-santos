@@ -1,8 +1,8 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import Response, StreamingResponse
 
 from app.schemas.knowledge import (
     KnowledgeCatalogResponse,
@@ -10,6 +10,8 @@ from app.schemas.knowledge import (
     KnowledgeDocumentUpdateRequest,
     KnowledgeDocumentUpdateResponse,
     KnowledgePurgeGenericLegislationResponse,
+    KnowledgeMaintenanceRequest,
+    KnowledgeMaintenanceResponse,
     DocumentTypePreset,
     DocumentTypePresetCreateRequest,
     DocumentTypePresetListResponse,
@@ -19,6 +21,11 @@ from app.schemas.knowledge import (
     KnowledgeIngestResponse,
     KnowledgeWebIngestRequest,
     KnowledgeWebIngestResponse,
+    NormPackAnalyzeResponse,
+    NormPackIndexRequest,
+    NormPackIndexResponse,
+    NormPackPreviewResponse,
+    NormPackListResponse,
     KnowledgeOptionsResponse,
     KnowledgeStatsResponse,
 )
@@ -78,9 +85,8 @@ def knowledge_stats():
 
 
 @router.get("/catalog", response_model=KnowledgeCatalogResponse)
-def knowledge_catalog(limit: int = 100):
-    """Últimos documentos ingeridos (catalog.jsonl)."""
-    limit = max(1, min(limit, 500))
+def knowledge_catalog(limit: int = Query(default=5000, ge=1, le=20000)):
+    """Documentos do catálogo (deduplicados por path, mais recentes primeiro)."""
     return KnowledgeCatalogResponse(**knowledge_service.get_catalog(limit=limit))
 
 
@@ -210,6 +216,73 @@ async def knowledge_ingest_web_stream(body: KnowledgeWebIngestRequest):
     )
 
 
+@router.post("/ingest-norms/stream")
+async def knowledge_ingest_norms_stream(request: Request):
+    """
+    Importação em lote de PDFs NBR/NR com classificação automática (SSE).
+
+    Classifica por nome do arquivo → texto da 1ª página → IA leve (opcional).
+    Indexação FAISS da base NBR roda uma vez ao final quando auto_index=true.
+    """
+    from core.knowledge.norm_bulk.constants import NORM_BULK_MAX_FILES
+
+    from core.knowledge.norm_bulk.constants import NORM_BULK_MAX_FILES
+    from core.knowledge.norm_bulk.upload_utils import extract_upload_files, is_upload_file
+
+    def _form_bool(value: object | None) -> bool:
+        return str(value or "").lower() in {"true", "1", "yes", "on"}
+
+    form = await request.form(max_files=NORM_BULK_MAX_FILES, max_fields=32)
+
+    files = extract_upload_files(form)
+    force = _form_bool(form.get("force"))
+    use_ai_fallback = _form_bool(form.get("use_ai_fallback"))
+    mark_edition_outdated = _form_bool(form.get("mark_edition_outdated"))
+    auto_index = _form_bool(form.get("auto_index")) if form.get("auto_index") is not None else True
+
+    if not files:
+        raise HTTPException(status_code=400, detail="Envie ao menos um PDF")
+
+    try:
+        tmp_dir, saved, pre_errors = await knowledge_service.save_norm_uploads(
+            files,
+            max_files=NORM_BULK_MAX_FILES,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not saved and pre_errors:
+        raise HTTPException(status_code=400, detail=pre_errors[0].get("error", "Nenhum PDF válido"))
+
+    def event_stream():
+        try:
+            for chunk in knowledge_service.ingest_norms_stream_events(
+                saved,
+                force=force,
+                use_ai_fallback=use_ai_fallback,
+                mark_edition_outdated=mark_edition_outdated,
+                auto_index=auto_index,
+                pre_errors=pre_errors,
+                cleanup_dir=tmp_dir,
+            ):
+                yield chunk
+        except ValueError as exc:
+            from core.stream_events import format_sse
+
+            yield format_sse("error", {"error": str(exc)})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Content-Type": "text/event-stream; charset=utf-8",
+        },
+    )
+
+
 @router.get("/ingest-web/preview")
 async def knowledge_ingest_web_preview(page_url: str):
     """Lista links detectados numa página (sem baixar)."""
@@ -314,6 +387,82 @@ def purge_generic_legislation_imports(dry_run: bool = False):
     return KnowledgePurgeGenericLegislationResponse(
         **knowledge_service.purge_generic_legislation_imports(dry_run=dry_run)
     )
+
+
+@router.post("/maintenance", response_model=KnowledgeMaintenanceResponse)
+def knowledge_maintenance(body: KnowledgeMaintenanceRequest | None = None):
+    """
+    Manutenção da base NBR: órfãos, dedup catálogo, metadata 9077/14833,
+    compact FAISS e indexação de PDFs pendentes (PyMuPDF + OCR).
+    """
+    req = body or KnowledgeMaintenanceRequest()
+    try:
+        return KnowledgeMaintenanceResponse(
+            **knowledge_service.run_maintenance(
+                purge_orphans=req.purge_orphans,
+                dedupe_catalog=req.dedupe_catalog,
+                repair_norms=req.repair_norms,
+                compact_faiss=req.compact_faiss,
+                index_pending=req.index_pending,
+                dry_run=req.dry_run,
+            )
+        )
+    except Exception as exc:
+        logger.exception("Falha na manutenção knowledge")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/norm-packs", response_model=NormPackListResponse)
+def list_norm_packs():
+    """Pacotes normativos curados (catálogo legal — sem geração de texto por IA)."""
+    return NormPackListResponse(**knowledge_service.list_norm_packs())
+
+
+@router.get("/norm-packs/{pack_id}/analyze", response_model=NormPackAnalyzeResponse)
+def analyze_norm_pack(pack_id: str):
+    """Gap analysis: PDF licenciado presente? indexado no FAISS?"""
+    try:
+        return NormPackAnalyzeResponse(**knowledge_service.analyze_norm_pack(pack_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/norm-packs/{pack_id}/preview", response_model=NormPackPreviewResponse)
+def preview_norm_pack_indexed(pack_id: str, nbr_code: str | None = None):
+    """Preview dos trechos FAISS das NBRs já indexadas no pacote."""
+    try:
+        return NormPackPreviewResponse(
+            **knowledge_service.preview_norm_pack(pack_id, nbr_code=nbr_code)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/norm-packs/{pack_id}/gap.csv")
+def export_norm_pack_gap_csv(pack_id: str):
+    """Exporta gap analysis do pacote em CSV (Excel)."""
+    try:
+        filename, content = knowledge_service.export_norm_pack_gap_csv(pack_id)
+        return Response(
+            content=content.encode("utf-8"),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/norm-packs/{pack_id}/index", response_model=NormPackIndexResponse)
+def index_norm_pack(pack_id: str, body: NormPackIndexRequest | None = None):
+    """Indexa em lote os PDFs licenciados do pacote na base NBR."""
+    force = body.force if body else False
+    try:
+        return NormPackIndexResponse(**knowledge_service.index_norm_pack(pack_id, force=force))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Falha ao indexar pacote normativo %s", pack_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.delete("/documents/{document_id}", response_model=KnowledgeDocumentDeleteResponse)

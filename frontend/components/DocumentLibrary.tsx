@@ -2,11 +2,13 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import ActionDialog from "@/components/ActionDialog";
+import KnowledgeCatalogStatsCards from "@/components/KnowledgeCatalogStatsCards";
 import { cn, formatDate } from "@/lib/utils";
 import type {
   KnowledgeCatalogEntry,
   KnowledgeIngestResponse,
   KnowledgeOptionsResponse,
+  KnowledgeStatsResponse,
   DocumentTypePreset,
   WebIngestProgress,
 } from "@/types/api";
@@ -45,6 +47,7 @@ interface DocumentLibraryProps {
   view?: "all" | "import" | "catalog";
   options: KnowledgeOptionsResponse;
   catalog: KnowledgeCatalogEntry[];
+  stats?: KnowledgeStatsResponse | null;
   onIngest?: (formData: FormData) => Promise<KnowledgeIngestResponse>;
   onIngestWeb?: (
     body: {
@@ -86,6 +89,7 @@ export default function DocumentLibrary({
   view = "all",
   options,
   catalog,
+  stats = null,
   onIngest,
   onIngestWeb,
   onActivatePriceBase,
@@ -649,10 +653,14 @@ export default function DocumentLibrary({
           <div>
             <h3 className="text-base font-semibold text-white">
               Catálogo ({filteredCatalog.length}
-              {catalogQuery.trim() ? ` de ${catalog.length}` : ""})
+              {catalogQuery.trim() ? ` de ${catalog.length}` : ""}
+              {stats?.catalog_total && catalog.length < stats.catalog_total
+                ? ` · ${catalog.length.toLocaleString("pt-BR")}/${stats.catalog_total.toLocaleString("pt-BR")} carregados`
+                : ""}
+              )
             </h3>
             <p className="mt-1 text-xs text-slate-500">
-              Pesquise por nome, número/ano (ex.: “6118”, “2019”), arquivo, tipo ou disciplina.
+              Pesquise por nome, número/ano (ex.: “6118”, “2019”, “IT”), arquivo, tipo ou disciplina.
             </p>
           </div>
           <label className="w-full sm:max-w-md">
@@ -802,6 +810,9 @@ export default function DocumentLibrary({
               </tbody>
             </table>
           </div>
+        )}
+        {(view === "catalog" || view === "all") && (
+          <KnowledgeCatalogStatsCards stats={stats} catalog={catalog} options={options} />
         )}
       </section>
       )}

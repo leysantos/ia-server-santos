@@ -25,7 +25,13 @@ class IngestionPipeline:
         self.enable_vision = enable_vision
         self.vision = VisionAnalysisService()
 
-    def process_file(self, path: Path, filename: str | None = None) -> dict[str, Any]:
+    def process_file(
+        self,
+        path: Path,
+        filename: str | None = None,
+        *,
+        existing_vision_json: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         path = Path(path).resolve()
         name = filename or path.name
         ext = path.suffix.lower()
@@ -43,9 +49,14 @@ class IngestionPipeline:
         extraction["disciplina_detectada"] = discipline
 
         vision_json: dict[str, Any] | None = None
-        if self.enable_vision and self.vision.router.should_use_vision(path):
+        if existing_vision_json and self.enable_vision:
+            vision_json = existing_vision_json
+            logger.info("Reutilizando análise visual existente: %s", name)
+        elif self.enable_vision and self.vision.router.should_use_vision(path):
             mode = "planta" if ext == ".pdf" else "obra"
-            result = self.vision.analyze_file(path, mode=mode, extra_context=text_sample[:1500], filename=name)
+            result = self.vision.analyze_file(
+                path, mode=mode, extra_context=text_sample[:1500], filename=name
+            )
             vision_json = result
             analysis = result.get("analysis") or {}
             if analysis.get("disciplina") and analysis["disciplina"] != "desconhecida":

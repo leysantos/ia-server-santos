@@ -120,6 +120,14 @@ export interface ProjectSummary {
   id: string;
   name: string;
   description?: string | null;
+  codigo?: string | null;
+  cliente?: string | null;
+  responsavel?: string | null;
+  disciplina?: string | null;
+  status?: string;
+  versao_atual?: string;
+  workflow_initialized?: boolean;
+  empresa_id?: string | null;
   created_at?: string;
   updated_at?: string;
   conversation_count: number;
@@ -161,6 +169,253 @@ export interface WorkspaceSearchResponse {
   total: number;
   projects: ProjectSummary[];
   conversations: ConversationSummary[];
+}
+
+export interface WorkflowFolderItem {
+  id: string;
+  nome: string;
+  path: string;
+  disciplina?: string | null;
+  sort_order: number;
+}
+
+export interface WorkflowDrawingItem {
+  id: string;
+  classificacao?: string | null;
+  escala?: string | null;
+  disciplina?: string | null;
+  project_file_id?: string | null;
+  filename?: string | null;
+  tipo_arquivo?: "prancha" | "documento" | "cad" | "bim" | string;
+  subtipo?: string | null;
+}
+
+export interface WorkflowInventoryItem {
+  file_id: string;
+  filename: string;
+  tipo_arquivo: string;
+  subtipo: string;
+  pipeline: string;
+  processed: boolean;
+}
+
+export interface WorkflowSummary {
+  total_arquivos: number;
+  arquivos_suportados: number;
+  pranchas: number;
+  documentos: number;
+  pranchas_geradas: number;
+  revisoes: number;
+  entregas: number;
+}
+
+export interface WorkflowSheetItem {
+  id: string;
+  numero_prancha?: string | null;
+  codigo_desenho?: string | null;
+  escala?: string | null;
+  disciplina?: string | null;
+  status: string;
+}
+
+export interface WorkflowRevisionItem {
+  id: string;
+  codigo: string;
+  autor?: string | null;
+  descricao?: string | null;
+  created_at?: string | null;
+}
+
+export interface WorkflowVersionItem {
+  id: string;
+  branch: string;
+  tag?: string | null;
+  commit_hash: string;
+  mensagem?: string | null;
+  created_at?: string | null;
+}
+
+export interface WorkflowEventItem {
+  id: string;
+  event_type: string;
+  payload?: Record<string, unknown> | null;
+  actor?: string | null;
+  created_at?: string | null;
+}
+
+export interface WorkflowProjectState {
+  project: {
+    id: string;
+    name: string;
+    codigo?: string | null;
+    cliente?: string | null;
+    responsavel?: string | null;
+    disciplina?: string | null;
+    status: string;
+    versao_atual: string;
+    workflow_initialized: boolean;
+    empresa_id?: string | null;
+  };
+  folders: WorkflowFolderItem[];
+  summary?: WorkflowSummary;
+  inventory?: WorkflowInventoryItem[];
+  drawings: WorkflowDrawingItem[];
+  sheets: WorkflowSheetItem[];
+  revisions: WorkflowRevisionItem[];
+  versions: WorkflowVersionItem[];
+  events: WorkflowEventItem[];
+  deliveries?: WorkflowDeliveryItem[];
+  jobs?: WorkflowJobItem[];
+}
+
+export interface WorkflowDashboardResponse {
+  projetos_ativos: number;
+  arquivos_processados: number;
+  pranchas_geradas: number;
+  revisoes_registradas: number;
+  publicacoes_recentes: number;
+  eventos_recentes: WorkflowEventItem[];
+}
+
+export interface WorkflowJobItem {
+  id: string;
+  project_id: string;
+  job_type: string;
+  status: string;
+  celery_task_id?: string | null;
+  file_id?: string | null;
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+  created_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
+export interface WorkflowDeliveryItem {
+  id: string;
+  status: string;
+  package_path?: string | null;
+  pdf_uri?: string | null;
+  pdf_key?: string | null;
+  pdf_download_url?: string | null;
+  zip_uri?: string | null;
+  zip_key?: string | null;
+  zip_download_url?: string | null;
+  storage_backend?: string | null;
+  created_at?: string | null;
+}
+
+export interface WorkflowProcessResponse {
+  mode?: string;
+  job_id?: string;
+  task_id?: string;
+  status?: string;
+  processed?: number;
+  skipped?: number;
+  pranchas?: number;
+  documentos?: number;
+}
+
+export interface SheetTemplateItem {
+  id: string;
+  nome: string;
+  formato: string;
+  orientacao: string;
+  disciplina?: string | null;
+  company_id?: string | null;
+}
+
+export interface DeliveryPackageSummary {
+  id: string;
+  titulo: string;
+  status: string;
+  codigo_emissao: string;
+  created_at?: string | null;
+  published_at?: string | null;
+}
+
+export interface DeliveryPackageItem {
+  id: string;
+  project_file_id: string;
+  filename?: string | null;
+  selected: boolean;
+  role: string;
+  disciplina?: string | null;
+  disciplina_codigo?: string | null;
+  folha_numero?: number | null;
+  tipo_desenho?: string | null;
+  titulo?: string | null;
+  codigo_sugerido?: string | null;
+  codigo_aprovado?: string | null;
+  arquivo_final?: string | null;
+  formato?: string | null;
+  escala?: string | null;
+  pasta_destino?: string | null;
+  revisao_documento?: string | null;
+  sort_order: number;
+  status: string;
+  analysis?: Record<string, unknown> | null;
+}
+
+export interface DeliveryPackageDetail {
+  package: {
+    id: string;
+    project_id: string;
+    status: string;
+    titulo: string;
+    codigo_emissao: string;
+    formato_padrao: string;
+    orientacao_padrao: string;
+    template_id?: string | null;
+    stamp_id?: string | null;
+    observacoes?: string | null;
+    package_path?: string | null;
+    published_delivery_id?: string | null;
+    created_at?: string | null;
+    published_at?: string | null;
+  };
+  items: DeliveryPackageItem[];
+  available_files: { id: string; filename: string; created_at?: string | null }[];
+  structure_preview: Record<string, string[]>;
+  norm_gaps?: ProjectNormGaps | null;
+}
+
+export interface ProjectNormGapItem {
+  nbr_code: string;
+  title: string;
+  status: "missing" | "not_indexed" | string;
+  critical: boolean;
+  pack_id: string;
+  pack_label: string;
+  discipline: string;
+  action: string;
+}
+
+export interface ProjectNormGaps {
+  has_critical_gaps: boolean;
+  has_any_gaps: boolean;
+  critical_missing_count: number;
+  critical_not_indexed_count: number;
+  missing_purchase_count: number;
+  not_indexed_count: number;
+  pending_total: number;
+  summary_message: string;
+  settings_path: string;
+  pack_ids: string[];
+  pending_items: ProjectNormGapItem[];
+  packs_checked?: { pack_id: string; pack_label: string; coverage_pct: number; critical_missing: number }[];
+}
+
+export interface DeliveryPublishResponse {
+  status: string;
+  delivery_id?: string;
+  package_id?: string;
+  sheets_created?: number;
+  revisions_created?: number;
+  total_items?: number;
+  zip?: { key?: string; uri?: string; backend?: string };
+  grd?: { key?: string; uri?: string; backend?: string };
+  package?: DeliveryPackageDetail["package"];
 }
 
 export interface OrchestratorLogItem {
@@ -303,9 +558,38 @@ export interface KnowledgeWebIngestResponse {
   downloaded: number;
   ingested: number;
   skipped: number;
-  errors: { stage?: string; error?: string; url?: string }[];
+  errors: { stage?: string; error?: string; url?: string; filename?: string; source?: string }[];
   files: Record<string, unknown>[];
   indexing?: Record<string, unknown>;
+}
+
+export interface NormBulkIngestResponse {
+  total_files: number;
+  ingested: number;
+  skipped: number;
+  errors: { filename?: string; source?: string; error?: string }[];
+  classified_preview?: {
+    filename: string;
+    norm_kind?: string;
+    norm_code?: string;
+    discipline?: string;
+    confidence?: number;
+    source?: string;
+  }[];
+  classified_count?: number;
+  indexing?: Record<string, unknown>;
+  report_filename?: string;
+  report_csv?: string;
+  audit_rows?: {
+    filename: string;
+    norm_kind?: string;
+    norm_code?: string;
+    discipline?: string;
+    confidence?: number;
+    status?: string;
+    status_label?: string;
+    reason?: string;
+  }[];
 }
 
 export interface KnowledgeCatalogEntry {
@@ -331,15 +615,263 @@ export interface KnowledgeCatalogResponse {
   items: KnowledgeCatalogEntry[];
 }
 
+export interface KnowledgeNormStats {
+  total: number;
+  current_count: number;
+  historical_count: number;
+  without_year_count: number;
+  nbr_count: number;
+  nr_count: number;
+  unknown_kind_count: number;
+  unique_codes: number;
+  multi_edition_codes: number;
+  unique_editions: number;
+  distinct_years: number;
+}
+
+export interface KnowledgeNbrCoverageStats {
+  base: string;
+  catalog_files: number;
+  files_on_disk: number;
+  files_missing_disk: number;
+  indexed_files: number;
+  effective_indexed_files?: number;
+  dedup_only_files?: number;
+  not_indexed_files: number;
+  catalog_codes: number;
+  indexed_codes: number;
+  not_indexed_codes: number;
+  faiss_chunks: number;
+  coverage_pct: number;
+  file_coverage_pct: number;
+  effective_file_coverage_pct?: number;
+  code_coverage_pct: number;
+  healthy: boolean;
+  sample_not_indexed: string[];
+  sample_not_indexed_codes?: string[];
+  sample_extra_indexed: string[];
+}
+
 export interface KnowledgeStatsResponse {
   catalog_total: number;
   catalog_log_entries?: number;
+  catalog_superseded?: number;
   by_content_type: Record<string, number>;
   index: {
     multi_index?: Record<string, number>;
     total_multi_chunks?: number;
     index_names?: Record<string, string>;
   };
+  norms?: KnowledgeNormStats;
+  nbr_coverage?: KnowledgeNbrCoverageStats;
+}
+
+export interface MaintenanceConfigResponse {
+  backup_drive_win: string;
+  backup_staging_dir: string;
+  keep_latest_sets: number;
+  include_knowledge_pdfs: boolean;
+  include_faiss: boolean;
+  include_database: boolean;
+  backup_staging_exists?: boolean;
+  backup_drive_exists?: boolean;
+  subfolders?: Record<string, boolean>;
+  config_path?: string;
+}
+
+export interface MaintenanceStatusResponse {
+  environment: {
+    is_wsl: boolean;
+    repo_root: string;
+    platform: string;
+  };
+  config: Record<string, unknown>;
+  history: MaintenanceBackupManifest[];
+}
+
+export interface MaintenanceBackupManifest {
+  id: string;
+  status: string;
+  started_at: string;
+  finished_at?: string;
+  targets: string[];
+  artifacts: Array<{
+    target: string;
+    path: string;
+    size_bytes: number;
+    size_human: string;
+    warning?: string;
+    started?: boolean;
+  }>;
+  errors: Array<{ target: string; error: string }>;
+  manifest_file?: string;
+}
+
+export interface MaintenanceInitResponse {
+  backup_staging_dir: string;
+  backup_drive_win: string;
+  created: string[];
+  subfolders: Record<string, boolean>;
+}
+
+export interface MaintenanceRestoreInspectResponse {
+  stamp: string;
+  artifacts: Record<string, { path: string; size_bytes: number; source: string }>;
+  missing: string[];
+  manifest_local: string | null;
+  manifest_drive: string | null;
+  restorable: boolean;
+}
+
+export interface MaintenanceRestoreResponse {
+  stamp: string;
+  targets: string[];
+  dry_run: boolean;
+  started_at: string;
+  finished_at?: string;
+  status: string;
+  steps: Array<Record<string, unknown>>;
+  errors: Array<{ target: string; error: string }>;
+}
+
+export type DevServiceStatus = "running" | "stopped" | "unknown";
+
+export interface DevServiceItem {
+  id: string;
+  label: string;
+  description: string;
+  group: string;
+  port: number | null;
+  managed: boolean;
+  status: DevServiceStatus;
+  detail: string;
+  pid: number | null;
+  log_file: string | null;
+  can_start: boolean;
+  can_stop: boolean;
+}
+
+export interface DevServicesResponse {
+  services: DevServiceItem[];
+  repo_root: string;
+  hints: Record<string, string>;
+}
+
+export interface DevServiceActionResponse {
+  id: string;
+  status: string;
+  message: string;
+  pid?: number | null;
+  log_file?: string | null;
+  services: DevServiceItem[];
+}
+
+export interface DevStackStartResponse {
+  results: Array<Record<string, unknown>>;
+  services: DevServiceItem[];
+}
+
+export interface ShellRunResponse {
+  ts: string;
+  command: string;
+  cwd: string;
+  exit_code: number;
+  output: string;
+  success: boolean;
+  truncated: boolean;
+}
+
+export interface ShellHistoryItem {
+  ts: string;
+  command: string;
+  cwd: string;
+  exit_code: number;
+  truncated?: boolean;
+}
+
+export interface NormPackListItem {
+  id: string;
+  label: string;
+  description: string;
+  tags: string[];
+  item_count: number;
+  critical_count: number;
+  agent_slug?: string | null;
+  discipline?: string | null;
+  group?: "transversal" | "disciplina" | string | null;
+}
+
+export interface NormPackListResponse {
+  legal_notice: string;
+  packs: NormPackListItem[];
+}
+
+export interface NormPackItemStatus {
+  nbr_code: string;
+  title: string;
+  discipline: string;
+  critical: boolean;
+  status: "indexed" | "not_indexed" | "missing" | string;
+  chunk_count: number;
+  document_id?: string | null;
+  filename?: string | null;
+  file_path?: string | null;
+  legal_source: string;
+  upload_instruction?: string | null;
+}
+
+export interface NormPackSummary {
+  total: number;
+  indexed: number;
+  not_indexed: number;
+  missing: number;
+  critical_missing: number;
+  coverage_pct: number;
+}
+
+export interface NormPackAnalyzeResponse {
+  pack_id: string;
+  label: string;
+  description: string;
+  tags: string[];
+  legal_notice: string;
+  summary: NormPackSummary;
+  items: NormPackItemStatus[];
+}
+
+export interface NormPackIndexResponse {
+  pack_id: string;
+  force: boolean;
+  indexed_chunks: number;
+  results: { nbr_code: string; status: string; chunks: number; error?: string }[];
+  errors: { nbr_code?: string; error?: string }[];
+  analysis_summary: NormPackSummary;
+}
+
+export interface NormPackChunkPreview {
+  chunk_index: number;
+  page?: number | null;
+  filename?: string | null;
+  text: string;
+  char_count: number;
+}
+
+export interface NormPackNbrPreviewItem {
+  nbr_code: string;
+  title: string;
+  filename?: string | null;
+  legal_source: string;
+  chunk_count: number;
+  chunks: NormPackChunkPreview[];
+}
+
+export interface NormPackPreviewResponse {
+  pack_id: string;
+  pack_label: string;
+  nbr_code_filter?: string | null;
+  indexed_count: number;
+  items: NormPackNbrPreviewItem[];
+  preview_notice: string;
 }
 
 export interface ChatMessage {
@@ -674,6 +1206,33 @@ export interface VisionAnalysisItem {
   analyzed_at?: string | null;
   analysis?: Record<string, unknown> | null;
   technical_report?: Record<string, unknown> | null;
+  rag_sources?: Array<Record<string, unknown>>;
+  normative_context?: Record<string, unknown> | null;
+}
+
+export interface PciChecklistItem {
+  id: string;
+  norma: string;
+  titulo: string;
+  descricao: string;
+  status: "conforme" | "parcial" | "pendente" | "nao_aplicavel";
+  evidencias: string[];
+  observacao?: string;
+}
+
+export interface PciChecklistResponse {
+  project_id: string;
+  modo: string;
+  total_itens: number;
+  conformes: number;
+  parciais: number;
+  pendentes: number;
+  nao_aplicaveis: number;
+  score_percent: number;
+  pronto_cbmam: boolean;
+  arquivos_analisados: number;
+  rag_audit: Record<string, unknown>;
+  itens: PciChecklistItem[];
 }
 
 export interface VisionAnalyzeResponse {
@@ -685,6 +1244,7 @@ export interface VisionAnalyzeResponse {
   skipped: number;
   items: VisionAnalysisItem[];
   summary: Record<string, unknown>;
+  pci_checklist?: PciChecklistResponse | null;
 }
 
 export interface VisionAnalyzeProgress {
@@ -812,4 +1372,102 @@ export interface ConsoleStatsResponse {
   agent_runs: number;
   activity_events: number;
   decisions: number;
+}
+
+export interface OllamaRunningModel {
+  name: string;
+  size_vram_mb: number;
+  context_length?: number | null;
+  expires_at?: string | null;
+}
+
+export interface RuntimeJobItem {
+  id: string;
+  kind: string;
+  label: string;
+  project_id?: string | null;
+  model?: string | null;
+  phase?: string | null;
+  message?: string | null;
+  percent?: number | null;
+  current?: number | null;
+  total?: number | null;
+  status: string;
+  cancel_requested?: boolean;
+  elapsed_sec?: number | null;
+  meta?: Record<string, unknown> | null;
+}
+
+export interface OllamaQueueItem {
+  job_id: string;
+  kind: string;
+  label: string;
+  model?: string | null;
+  state: "on_gpu" | "running" | "queued" | string;
+  position: number;
+  message?: string | null;
+  phase?: string | null;
+}
+
+export interface OllamaQueueSnapshot {
+  depth: number;
+  waiting_count: number;
+  on_gpu_count: number;
+  loaded_slots: number;
+  items: OllamaQueueItem[];
+}
+
+export interface OpsLogItem {
+  id: string;
+  ts: number;
+  source: string;
+  level: string;
+  message: string;
+  project_id?: string | null;
+  job_id?: string | null;
+  phase?: string | null;
+  meta?: Record<string, unknown> | null;
+  elapsed_sec?: number | null;
+}
+
+export interface VramModelSegment {
+  name: string;
+  size_vram_mb: number;
+  percent_of_total: number;
+}
+
+export interface VramSnapshot {
+  available: boolean;
+  total_mb?: number | null;
+  used_mb?: number | null;
+  free_mb?: number | null;
+  utilization_percent?: number | null;
+  memory_percent?: number | null;
+  ollama_allocated_mb: number;
+  other_mb?: number | null;
+  models: VramModelSegment[];
+}
+
+export interface ConsoleLiveResponse {
+  timestamp?: number | null;
+  ollama_reachable: boolean;
+  ollama_error?: string | null;
+  loaded_models: OllamaRunningModel[];
+  gpu?: Record<string, unknown> | null;
+  cpu_percent?: number | null;
+  memory_percent?: number | null;
+  active_jobs: RuntimeJobItem[];
+  recent_jobs: RuntimeJobItem[];
+  active_job_count: number;
+  loaded_model_count: number;
+  ollama_queue?: OllamaQueueSnapshot | null;
+  ops_logs?: OpsLogItem[];
+  vram?: VramSnapshot | null;
+}
+
+export interface UnloadResponse {
+  ok: boolean;
+  unloaded?: string[];
+  errors?: { model: string; error: string }[];
+  error?: string | null;
 }

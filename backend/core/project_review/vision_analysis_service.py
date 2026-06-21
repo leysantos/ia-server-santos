@@ -96,8 +96,14 @@ class VisionAnalysisService:
         *,
         mode: str | None = None,
         extra_context: str = "",
+        skip_technical: bool = False,
     ) -> list[dict[str, Any]]:
-        return self.pipeline.run_batch(items, mode=mode, extra_context=extra_context)
+        return self.pipeline.run_batch(
+            items,
+            mode=mode,
+            extra_context=extra_context,
+            skip_technical=skip_technical,
+        )
 
     @staticmethod
     def aggregate_report_summary(analyses: list[dict[str, Any]]) -> dict[str, Any]:

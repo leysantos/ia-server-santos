@@ -119,7 +119,10 @@ def retrieve_for_agent(
             discipline="CHAT",
         )
 
-    oversample_k = min(settings.RAG_TOP_K_MAX, max(k * 2, k))
+    oversample_k = min(
+        settings.RAG_TOP_K_MAX * settings.RAG_SEARCH_OVERSAMPLE,
+        max(k * settings.RAG_SEARCH_OVERSAMPLE, k * 2),
+    )
     hits: list[tuple[DocumentChunk, float]] = []
     search_keys = list(orch_route.base_keys) if orch_route else list(scope.base_keys)
     bases_used: list[str] = search_keys

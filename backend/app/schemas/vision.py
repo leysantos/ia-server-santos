@@ -28,6 +28,10 @@ class VisionAnalyzeRequest(BaseModel):
         description="obra|laudo|relatorio_fotografico|planta|pci|estrutural",
     )
     extra_context: str = ""
+    skip_technical: bool = Field(
+        default=False,
+        description="Análise rápida: OCR + Gemma3 Vision apenas (pula relatório Qwen3)",
+    )
 
 
 class VisionAnalysisItem(BaseModel):
@@ -42,6 +46,23 @@ class VisionAnalysisItem(BaseModel):
     analyzed_at: Optional[str] = None
     analysis: Optional[dict[str, Any]] = None
     technical_report: Optional[dict[str, Any]] = None
+    rag_sources: list[dict[str, Any]] = Field(default_factory=list)
+    normative_context: Optional[dict[str, Any]] = None
+
+
+class PciChecklistResponse(BaseModel):
+    project_id: str
+    modo: str = "pci"
+    total_itens: int = 0
+    conformes: int = 0
+    parciais: int = 0
+    pendentes: int = 0
+    nao_aplicaveis: int = 0
+    score_percent: float = 0.0
+    pronto_cbmam: bool = False
+    arquivos_analisados: int = 0
+    rag_audit: dict[str, Any] = Field(default_factory=dict)
+    itens: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class VisionAnalyzeResponse(BaseModel):
@@ -53,6 +74,7 @@ class VisionAnalyzeResponse(BaseModel):
     skipped: int
     items: list[VisionAnalysisItem]
     summary: dict[str, Any] = Field(default_factory=dict)
+    pci_checklist: Optional[PciChecklistResponse] = None
 
 
 class VisionReportRequest(BaseModel):

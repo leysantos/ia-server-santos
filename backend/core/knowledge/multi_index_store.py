@@ -17,6 +17,7 @@ from core.knowledge.content_types import BASE_KEY_TO_CONTENT_TYPE
 from memory.embeddings import NomicEmbedder
 from memory.faiss_store import FaissVectorStore
 from memory.models import DocumentChunk
+from memory.nbr_catalog import parse_nbr_code
 from memory.rag_metrics import RAGMetrics, timed_section
 from memory.rag_runtime import rag_query_context
 from memory.reranker import light_rerank
@@ -91,6 +92,7 @@ class MultiIndexKnowledgeStore:
             base_keys = list(base_keys)
 
         k = self._clamp_top_k(top_k)
+        nbr_boost = parse_nbr_code(query)
         metrics = RAGMetrics(top_k=k, discipline=discipline, bases_used=base_keys)
         content_type = BASE_KEY_TO_CONTENT_TYPE.get(base_keys[0]) if base_keys else None
 
@@ -122,7 +124,13 @@ class MultiIndexKnowledgeStore:
                     self.last_metrics = metrics
                     return cached[:k]
 
-            per_base = max(2, k // max(len(base_keys), 1))
+            per_base = max(
+                k,
+                min(
+                    settings.RAG_TOP_K_MAX * settings.RAG_SEARCH_OVERSAMPLE,
+                    k * settings.RAG_SEARCH_OVERSAMPLE,
+                ),
+            )
             merged: list[tuple[DocumentChunk, float]] = []
 
             with timed_section(metrics, "retrieval_time_ms"):
@@ -138,6 +146,7 @@ class MultiIndexKnowledgeStore:
                         discipline=discipline,
                         doc_type=doc_type,
                         content_type=ct,
+                        nbr_boost=nbr_boost,
                         min_score=settings.RAG_MIN_SCORE,
                     )
                     merged.extend(hits)
@@ -155,6 +164,7 @@ class MultiIndexKnowledgeStore:
                         query=query,
                         discipline=discipline,
                         content_type=content_type,
+                        nbr_code=nbr_boost,
                     )
                 merged.sort(key=lambda x: x[1], reverse=True)
                 merged = merged[:k]

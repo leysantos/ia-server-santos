@@ -311,6 +311,12 @@ class DisciplineIngester:
             extra_meta["original_upload_name"] = source.name
             extra_meta["storage_renamed"] = True
 
+        from core.knowledge.norm_packs.legal import legal_source_for_ingest
+
+        legal_src = legal_source_for_ingest(classification.content_type)
+        if legal_src:
+            extra_meta["legal_source"] = legal_src
+
         meta_payload = build_metadata_record(
             discipline_slugs=[classification.discipline_slug],
             layer=layer,

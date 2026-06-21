@@ -5,13 +5,17 @@ Expõe router, dispatcher, orchestrator e RAG v2 como endpoints HTTP.
 """
 
 from contextlib import asynccontextmanager
+import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from app.routes import aed, chat, console, copilot, feedback, health, history, knowledge, models, orchestrator, pricing, project_review, system, vision, workspace
+from app.routes import aed, chat, console, copilot, devops, feedback, health, history, knowledge, maintenance, models, orchestrator, pricing, project_review, system, vision, workflow, workspace
 from config.settings import get_settings
 from core.database import init_db, is_db_enabled
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -38,6 +42,17 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
 )
 
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
+    """Garante resposta JSON (com CORS) em erros não tratados."""
+    logger.exception("Erro não tratado: %s", exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc) or "Erro interno do servidor"},
+    )
+
+
 app.include_router(health.router)
 app.include_router(system.router)
 app.include_router(models.router)
@@ -52,7 +67,10 @@ app.include_router(workspace.router)
 app.include_router(project_review.router)
 app.include_router(vision.router)
 app.include_router(knowledge.router)
+app.include_router(maintenance.router)
+app.include_router(devops.router)
 app.include_router(pricing.router)
+app.include_router(workflow.router)
 
 
 @app.get("/")

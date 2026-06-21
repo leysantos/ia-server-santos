@@ -25,8 +25,20 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from core.knowledge.constants import IMMUTABLE_KNOWLEDGE_BASES, KNOWLEDGE_PATHS
-from core.knowledge.knowledge_indexer import KnowledgeIndexer
+try:
+    from core.knowledge.constants import IMMUTABLE_KNOWLEDGE_BASES, KNOWLEDGE_PATHS
+    from core.knowledge.knowledge_indexer import KnowledgeIndexer
+except ModuleNotFoundError as exc:
+    if "pydantic_settings" in str(exc):
+        print(
+            "ERRO: dependências do backend não encontradas.\n"
+            "Use o venv do projeto:\n"
+            "  cd backend && ../.venv/bin/python scripts/index_knowledge_bases.py\n"
+            "Ou na raiz: make index-knowledge",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    raise
 
 
 def main() -> int:

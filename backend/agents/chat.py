@@ -206,6 +206,18 @@ def is_conversational_short(text: str) -> bool:
     return any(marker in normalized for marker in markers)
 
 
+def should_answer_with_template(text: str, intent: ChatIntent | None = None) -> bool:
+    """Perguntas conversacionais conhecidas — sem LLM (funciona com GPU ocupada)."""
+    if is_conversational_short(text):
+        return True
+    resolved = intent or detect_intent(text)
+    if resolved.name == "greeting" and resolved.confidence == 1.0:
+        return True
+    if resolved.name in ("identity", "capabilities", "how_it_works", "help"):
+        return resolved.confidence >= 0.9
+    return False
+
+
 class ChatAgent(BaseAgent):
     """
     Agente conversacional — sem RAG/NBR.
@@ -228,9 +240,23 @@ class ChatAgent(BaseAgent):
         )
         self._last_model: Optional[str] = None
 
+    def _client_for_runtime(self):
+        from core.runtime.ollama_concurrency import resolve_chat_runtime
+
+        plan = resolve_chat_runtime()
+        client = OllamaClient(
+            primary_model=OLLAMA_CHAT_MODEL,
+            fallback_model=None,
+            timeout=plan.timeout_sec,
+        )
+        return client, plan
+
     def call_llm(self, text: str, intent: ChatIntent) -> str:
         prompt = build_prompt(text, intent)
         from config import settings
+
+        client, plan = self._client_for_runtime()
+        ollama_options = plan.ollama_options or None
 
         if settings.USE_MODEL_ROUTER or settings.USE_MODEL_EVALUATION:
             from core.models.model_router import get_model_router, routed_generate
@@ -243,15 +269,17 @@ class ChatAgent(BaseAgent):
                 context={"text": text, "module": "chat"},
                 module="chat",
                 discipline="CHAT",
-                client=self.llm_client,
-                timeout=OLLAMA_CHAT_TIMEOUT,
+                client=client,
+                timeout=plan.timeout_sec,
             )
         else:
             from core.llm_override import get_llm_model_override
 
             override = get_llm_model_override()
-            model = override or OLLAMA_CHAT_MODEL
-            result, model_used = self.llm_client.generate(prompt, model=model)
+            model = plan.model_override or override or OLLAMA_CHAT_MODEL
+            result, model_used = client.generate(
+                prompt, model=model, options=ollama_options
+            )
 
         self._last_model = model_used
         return post_format_response(result)
@@ -260,7 +288,7 @@ class ChatAgent(BaseAgent):
         intent = detect_intent(text)
         model: Optional[str] = None
 
-        if intent.name == "greeting" and intent.confidence == 1.0:
+        if should_answer_with_template(text, intent):
             result = pick_template_response(intent)
             source = "template"
         elif self.use_llm:
@@ -289,7 +317,7 @@ class ChatAgent(BaseAgent):
         """Stream de resposta conversacional (template ou LLM 8B)."""
         intent = detect_intent(text)
 
-        if is_conversational_short(text):
+        if should_answer_with_template(text, intent):
             yield pick_template_response(intent)
             return
 
@@ -300,22 +328,30 @@ class ChatAgent(BaseAgent):
 
                 from core.llm_override import get_llm_model_override
 
+                client, plan = self._client_for_runtime()
+                ollama_options = plan.ollama_options or None
                 override = get_llm_model_override()
                 if override:
-                    stream = self.llm_client.generate_stream(prompt, model=override)
+                    stream = client.generate_stream(
+                        prompt, model=override, options=ollama_options
+                    )
                 elif settings.USE_MODEL_ROUTER or settings.USE_MODEL_EVALUATION:
                     from core.models.model_router import get_model_router
 
                     router = get_model_router()
                     task_type = router.resolve_chat_task(text)
-                    model = router.get_model(task_type, {"text": text})
+                    model = plan.model_override or router.get_model(task_type, {"text": text})
                     fallbacks = router.get_fallback_models(task_type)
-                    stream = self.llm_client.generate_stream(
-                        prompt, model=model, fallback_models=fallbacks
+                    stream = client.generate_stream(
+                        prompt,
+                        model=model,
+                        fallback_models=fallbacks,
+                        options=ollama_options,
                     )
                 else:
-                    stream = self.llm_client.generate_stream(
-                        prompt, model=OLLAMA_CHAT_MODEL
+                    model = plan.model_override or OLLAMA_CHAT_MODEL
+                    stream = client.generate_stream(
+                        prompt, model=model, options=ollama_options
                     )
 
                 for token, model_used in stream:

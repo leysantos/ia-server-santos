@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import time
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -44,6 +45,13 @@ class WorkspaceService:
             raise HTTPException(status_code=503, detail="Banco de dados indisponível")
         PROJECTS_DATA_DIR.mkdir(parents=True, exist_ok=True)
         (PROJECTS_DATA_DIR / project["id"]).mkdir(parents=True, exist_ok=True)
+        if db is not None:
+            try:
+                from app.services.workflow_service import WorkflowService
+
+                WorkflowService().initialize_project(project["id"], db)
+            except Exception:
+                pass
         return project
 
     def get_project(self, project_id: str, db: Optional[Session] = None) -> dict:
@@ -142,6 +150,7 @@ class WorkspaceService:
 
         saved: list[dict] = []
         indexing: list[dict] = []
+        warmed_up = False
         for upload in files:
             filename = upload.filename or f"file-{uuid.uuid4().hex[:8]}"
             safe_name = Path(filename).name
@@ -159,15 +168,60 @@ class WorkspaceService:
             )
             if row:
                 saved.append(row)
-                index_result = index_project_file(
-                    project_id,
-                    dest,
-                    safe_name,
-                    force=True,
-                )
+                if not warmed_up:
+                    try:
+                        from memory.embeddings import NomicEmbedder
+
+                        NomicEmbedder().warmup()
+                    except Exception:
+                        pass
+                    warmed_up = True
+                elif len(saved) > 1:
+                    # Evita disputa de GPU ao indexar vários arquivos seguidos.
+                    time.sleep(1.0)
+                try:
+                    index_result = index_project_file(
+                        project_id,
+                        dest,
+                        safe_name,
+                        force=True,
+                    )
+                except Exception as exc:
+                    logger.warning("project upload index failed %s: %s", safe_name, exc)
+                    index_result = {
+                        "status": "error",
+                        "filename": safe_name,
+                        "error": str(exc),
+                        "chunks": 0,
+                        "hint": (
+                            "Arquivo salvo, mas indexação RAG falhou. "
+                            "Use Reindexar RAG quando o Ollama estiver disponível."
+                        ),
+                    }
                 indexing.append(index_result)
 
         if saved:
+            try:
+                from pathlib import Path
+
+                from config.settings import get_settings
+                from app.services.workflow_service import WorkflowService
+
+                settings = get_settings()
+                wf = WorkflowService()
+                cad_ext = {".dwg", ".dxf", ".ifc", ".pdf"}
+                for row in saved:
+                    if Path(row["filename"]).suffix.lower() in cad_ext:
+                        try:
+                            if settings.workflow_async_upload:
+                                wf.process_file(project_id, row["id"], db)
+                            else:
+                                wf.process_file(project_id, row["id"], db, sync=True)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
             try:
                 from core.project_memory.service import record_activity
 
@@ -247,7 +301,10 @@ class WorkspaceService:
             try:
                 import fitz
             except ImportError as exc:
-                raise HTTPException(status_code=503, detail="PyMuPDF não disponível") from exc
+                raise HTTPException(
+                    status_code=503,
+                    detail="PyMuPDF não instalado — execute: pip install pymupdf",
+                ) from exc
             doc = fitz.open(path)
             try:
                 if len(doc) == 0:

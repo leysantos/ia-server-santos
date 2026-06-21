@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import ShellHeader from "@/components/ShellHeader";
 import { useWorkspaceShell } from "@/components/WorkspaceShellContext";
+import { useActionDialog } from "@/hooks/useActionDialog";
 import { api } from "@/services/api";
 import type { ConversationSummary, ProjectSummary } from "@/types/api";
 import { cn } from "@/lib/utils";
@@ -30,6 +31,7 @@ function ConversationItem({
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(conv.title || conv.input_text);
+  const { confirm, ActionDialogHost } = useActionDialog();
 
   const handleRename = async () => {
     const next = title.trim();
@@ -45,7 +47,13 @@ function ConversationItem({
   };
 
   const handleDelete = async () => {
-    if (!confirm("Excluir esta conversa permanentemente?")) return;
+    const ok = await confirm({
+      title: "Excluir conversa",
+      message: "Excluir esta conversa permanentemente? Todo o histórico de mensagens será perdido.",
+      confirmLabel: "Excluir",
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await api.deleteConversation(conv.id);
       setMenuOpen(false);
@@ -56,7 +64,8 @@ function ConversationItem({
   };
 
   return (
-    <div className="group relative flex items-center gap-0.5">
+    <>
+      <div className="group relative flex items-center gap-0.5">
       {editing ? (
         <div className="flex flex-1 gap-1 px-1">
           <input
@@ -125,7 +134,9 @@ function ConversationItem({
           </div>
         </>
       )}
-    </div>
+      </div>
+      <ActionDialogHost />
+    </>
   );
 }
 

@@ -5,12 +5,17 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
+import threading
 import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _psutil = None
+_benchmark_cache: dict[str, Any] | None = None
+_benchmark_cache_at: float = 0.0
+_benchmark_lock = threading.Lock()
+_BENCHMARK_TTL_SEC = 1.5
 
 
 def _get_psutil():
@@ -60,7 +65,22 @@ def _read_gpu_stats() -> dict[str, Any]:
         return {"available": False, "percent": None, "memory_percent": None}
 
 
-def collect_system_benchmark() -> dict[str, Any]:
+def collect_system_benchmark(*, use_cache: bool = True) -> dict[str, Any]:
+    global _benchmark_cache, _benchmark_cache_at
+
+    if use_cache:
+        with _benchmark_lock:
+            if _benchmark_cache and (time.time() - _benchmark_cache_at) < _BENCHMARK_TTL_SEC:
+                return {**_benchmark_cache, "cached": True}
+
+    result = _collect_system_benchmark_uncached()
+    with _benchmark_lock:
+        _benchmark_cache = result
+        _benchmark_cache_at = time.time()
+    return result
+
+
+def _collect_system_benchmark_uncached() -> dict[str, Any]:
     psutil = _get_psutil()
     if psutil is None:
         return {

@@ -210,7 +210,12 @@ class KnowledgeService:
                 meta = read_metadata(path) or {}
             items.append({
                 "id": row.get("id", ""),
-                "name": row.get("name") or row.get("filename", path.name),
+                "name": (
+                    meta.get("norm_display_name")
+                    or meta.get("name")
+                    or row.get("name")
+                    or row.get("filename", path.name)
+                ),
                 "description": row.get("description", ""),
                 "filename": row.get("filename", path.name),
                 "path": row.get("path", ""),
@@ -238,11 +243,17 @@ class KnowledgeService:
         catalog = read_catalog()
         unique = _dedupe_catalog_rows(catalog)
         by_type = Counter(row.get("content_type", "unknown") for row in unique)
+        from core.knowledge.catalog_stats import compute_norm_catalog_stats
+        from core.knowledge.index_coverage import compute_nbr_index_coverage
+
         return {
             "catalog_total": len(unique),
             "catalog_log_entries": len(catalog),
+            "catalog_superseded": max(0, len(catalog) - len(unique)),
             "by_content_type": dict(by_type),
             "index": get_knowledge_router().stats(),
+            "norms": compute_norm_catalog_stats(unique),
+            "nbr_coverage": compute_nbr_index_coverage(unique),
         }
 
     async def ingest_files(
@@ -383,17 +394,83 @@ class KnowledgeService:
         force: bool = False,
         content_types: Optional[set[str | None]] = None,
     ) -> dict[str, Any]:
-        return self._run_indexing(
-            force=force,
-            index_base=base,
-            content_types=content_types,
-        )
+        from core.runtime.job_tracking import track_sync_job
+
+        label = f"Indexação FAISS — {base or 'todas as bases'}"
+
+        with track_sync_job(kind="knowledge", label=label) as job:
+
+            def on_progress(data: dict[str, Any]) -> None:
+                current = int(data.get("current") or 0)
+                total = int(data.get("total") or 0)
+                should_log = (
+                    current <= 1
+                    or (total > 0 and current >= total)
+                    or current % 10 == 0
+                )
+                job.update(
+                    phase="index",
+                    message=data.get("message"),
+                    current=current,
+                    total=total,
+                    percent=int(data.get("percent") or 0),
+                    log=should_log,
+                )
+
+            return self._run_indexing(
+                force=force,
+                index_base=base,
+                content_types=content_types,
+                on_progress=on_progress if base else None,
+            )
 
     def delete_document(self, document_id: str) -> dict[str, Any]:
         return delete_document(document_id)
 
     def purge_generic_legislation_imports(self, *, dry_run: bool = False) -> dict[str, Any]:
         return purge_generic_legislation_imports(dry_run=dry_run)
+
+    def run_maintenance(
+        self,
+        *,
+        purge_orphans: bool = True,
+        dedupe_catalog: bool = True,
+        repair_norms: bool = True,
+        compact_faiss: bool = True,
+        index_pending: bool = True,
+        dry_run: bool = False,
+        on_progress: Optional[Any] = None,
+    ) -> dict[str, Any]:
+        from config.settings import NBR_DIR
+        from core.knowledge.catalog_maintenance import (
+            dedupe_catalog_by_path,
+            purge_orphan_catalog_entries,
+            repair_priority_norm_sidecars,
+        )
+        from core.knowledge.faiss_maintenance import maintain_all_faiss
+        from core.knowledge.pending_indexer import index_pending_nbr_pdfs
+
+        result: dict[str, Any] = {}
+
+        if purge_orphans:
+            result["purge_orphans"] = purge_orphan_catalog_entries(dry_run=dry_run)
+        if dedupe_catalog:
+            result["dedupe_catalog"] = dedupe_catalog_by_path(dry_run=dry_run)
+        if repair_norms:
+            result["repair_norms"] = repair_priority_norm_sidecars(
+                NBR_DIR, dry_run=dry_run
+            )
+        if compact_faiss and not dry_run:
+            result["compact_faiss"] = maintain_all_faiss(compact=True, reembed=False)
+        if index_pending and not dry_run:
+            result["index_pending"] = index_pending_nbr_pdfs(on_progress=on_progress)
+
+        rows = read_catalog()
+        from core.knowledge.index_coverage import compute_nbr_index_coverage
+
+        result["coverage"] = compute_nbr_index_coverage(rows)
+        get_multi_index_store().reload_from_disk()
+        return result
 
     def update_document(
         self,
@@ -418,6 +495,7 @@ class KnowledgeService:
         force: bool = False,
         index_base: Optional[str] = None,
         content_types: Optional[set[str | None]] = None,
+        on_progress: Optional[Any] = None,
     ) -> dict[str, Any]:
         try:
             import pypdf  # noqa: F401
@@ -432,7 +510,7 @@ class KnowledgeService:
         if index_base:
             if index_base not in KNOWLEDGE_PATHS:
                 raise ValueError(f"Base inválida: {index_base}. Use: {', '.join(KNOWLEDGE_PATHS)}")
-            summary = indexer.index_base(index_base, force=force)
+            summary = indexer.index_base(index_base, force=force, on_progress=on_progress)
             get_multi_index_store().reload_from_disk()
             return {
                 "mode": "single",
@@ -455,7 +533,7 @@ class KnowledgeService:
                 }
                 for base_key in sorted(bases):
                     try:
-                        base_summary = indexer.index_base(base_key, force=force)
+                        base_summary = indexer.index_base(base_key, force=force, on_progress=on_progress)
                         combined["bases"][base_key] = base_summary
                         combined["total_chunks"] += base_summary.get("indexed_chunks", 0)
                     except Exception as exc:
@@ -604,3 +682,217 @@ class KnowledgeService:
             elif kind == "error":
                 yield format_sse("error", payload)
                 break
+
+    async def save_norm_uploads(
+        self,
+        files: list[Any],
+        *,
+        max_files: int | None = None,
+    ) -> tuple[Any, list[Path], list[dict[str, str]]]:
+        """Salva uploads PDF em diretório temporário para ingestão em lote de normas."""
+        from core.knowledge.norm_bulk.constants import NORM_BULK_MAX_FILES
+        from core.knowledge.norm_bulk.upload_utils import is_upload_file
+
+        limit = max_files if max_files is not None else NORM_BULK_MAX_FILES
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix="norm_bulk_"))
+        saved: list[Path] = []
+        errors: list[dict[str, str]] = []
+
+        for upload in files:
+            if not is_upload_file(upload):
+                continue
+            filename = Path(upload.filename or "documento.pdf").name
+            if not filename.lower().endswith(".pdf"):
+                errors.append({"filename": filename, "error": "Apenas PDFs são aceitos neste lote"})
+                continue
+            dest = tmp_dir / filename
+            if dest.exists():
+                stem, ext = dest.stem, dest.suffix
+                counter = 2
+                while dest.exists():
+                    dest = tmp_dir / f"{stem}_{counter}{ext}"
+                    counter += 1
+            content = await upload.read()
+            if not content:
+                errors.append({"filename": filename, "error": "Arquivo vazio"})
+                continue
+            dest.write_bytes(content)
+            saved.append(dest)
+
+        if len(saved) > limit:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise ValueError(f"Máximo {limit} PDFs por lote (recebidos: {len(saved)})")
+
+        return tmp_dir, saved, errors
+
+    def ingest_norms_stream_events(
+        self,
+        sources: list[Path],
+        *,
+        force: bool = False,
+        use_ai_fallback: bool = False,
+        mark_edition_outdated: bool = False,
+        auto_index: bool = True,
+        pre_errors: list[dict[str, str]] | None = None,
+        cleanup_dir: Path | None = None,
+    ):
+        """SSE para importação em lote de NBRs/NRs."""
+        import queue
+        import threading
+
+        from core.knowledge.norm_bulk.service import bulk_ingest_norm_pdfs
+        from core.runtime.job_tracking import track_sync_job
+        from core.stream_events import format_sse
+
+        q: queue.Queue[tuple[str, Any]] = queue.Queue()
+        label = f"Importação NBR/NR ({len(sources)} PDFs)"
+
+        def worker() -> None:
+            try:
+                with track_sync_job(kind="norm_bulk", label=label) as runtime_job:
+
+                    def on_ingest_progress(data: dict[str, Any]) -> None:
+                        runtime_job.update(
+                            phase=str(data.get("phase") or "ingest"),
+                            message=data.get("message"),
+                            current=data.get("current"),
+                            total=data.get("total"),
+                            percent=data.get("percent"),
+                            log=bool(data.get("message")),
+                        )
+                        q.put(("progress", data))
+
+                    result = bulk_ingest_norm_pdfs(
+                        sources,
+                        force=force,
+                        use_ai_fallback=use_ai_fallback,
+                        mark_edition_outdated=mark_edition_outdated,
+                        on_progress=on_ingest_progress,
+                    )
+                    if pre_errors:
+                        result.setdefault("errors", [])
+                        result["errors"] = list(result.get("errors", [])) + pre_errors
+
+                    if auto_index and result.get("ingested", 0) > 0:
+                        def on_index_progress(data: dict[str, Any]) -> None:
+                            inner_pct = int(data.get("percent") or 0)
+                            scaled = {
+                                **data,
+                                "percent": min(100, 92 + round(inner_pct * 0.08)),
+                            }
+                            current = int(data.get("current") or 0)
+                            total = int(data.get("total") or 0)
+                            should_log = (
+                                current <= 1
+                                or (total > 0 and current >= total)
+                                or current % 25 == 0
+                            )
+                            runtime_job.update(
+                                phase="index",
+                                message=data.get("message"),
+                                current=current,
+                                total=total,
+                                percent=scaled["percent"],
+                                log=should_log,
+                            )
+                            q.put(("progress", scaled))
+
+                        runtime_job.update(
+                            phase="index",
+                            message="Indexando base NBR (FAISS)…",
+                            percent=92,
+                        )
+                        q.put(
+                            (
+                                "progress",
+                                {
+                                    "phase": "index",
+                                    "current": 0,
+                                    "total": 1,
+                                    "percent": 92,
+                                    "message": "Indexando base NBR (FAISS)…",
+                                    "name": None,
+                                },
+                            )
+                        )
+                        result["indexing"] = self._run_indexing(
+                            force=force,
+                            index_base="nbr",
+                            content_types={"nbrs"},
+                            on_progress=on_index_progress,
+                        )
+                        runtime_job.update(
+                            phase="index",
+                            message="Indexação NBR concluída",
+                            percent=100,
+                        )
+                        q.put(
+                            (
+                                "progress",
+                                {
+                                    "phase": "index",
+                                    "current": 1,
+                                    "total": 1,
+                                    "percent": 100,
+                                    "message": "Indexação NBR concluída",
+                                    "name": None,
+                                },
+                            )
+                        )
+
+                    q.put(("done", result))
+            except Exception as exc:
+                logger.exception("Falha na ingestão em lote de normas (stream)")
+                q.put(("error", {"error": str(exc)}))
+            finally:
+                if cleanup_dir:
+                    shutil.rmtree(cleanup_dir, ignore_errors=True)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+        while True:
+            kind, payload = q.get()
+            if kind == "progress":
+                yield format_sse("progress", payload)
+            elif kind == "done":
+                yield format_sse("done", payload)
+                break
+            elif kind == "error":
+                yield format_sse("error", payload)
+                break
+
+    def list_norm_packs(self) -> dict[str, Any]:
+        from core.knowledge.norm_packs.service import NormPackService
+
+        return NormPackService().list_packs()
+
+    def analyze_norm_pack(self, pack_id: str) -> dict[str, Any]:
+        from core.knowledge.norm_packs.service import NormPackService
+
+        return NormPackService().analyze_pack(pack_id)
+
+    def index_norm_pack(self, pack_id: str, *, force: bool = False) -> dict[str, Any]:
+        from core.knowledge.norm_packs.service import NormPackService
+
+        return NormPackService().index_pack(pack_id, force=force)
+
+    def preview_norm_pack(
+        self,
+        pack_id: str,
+        *,
+        nbr_code: str | None = None,
+    ) -> dict[str, Any]:
+        from core.knowledge.norm_packs.service import NormPackService
+
+        return NormPackService().preview_pack(pack_id, nbr_code=nbr_code)
+
+    def export_norm_pack_gap_csv(self, pack_id: str) -> tuple[str, str]:
+        from core.knowledge.norm_packs.gap_export import export_pack_gap_csv
+
+        return export_pack_gap_csv(pack_id)
+
+    def export_project_norm_gaps_csv(self, gaps: dict[str, Any]) -> tuple[str, str]:
+        from core.knowledge.norm_packs.gap_export import export_project_gaps_csv
+
+        return export_project_gaps_csv(gaps)

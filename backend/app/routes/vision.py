@@ -17,6 +17,7 @@ from app.schemas.vision import (
     VisionWorkspaceStatusResponse,
     WorkspaceReportItem,
     WorkspaceToolItem,
+    PciChecklistResponse,
 )
 from app.services.vision_service import VisionService
 from core.database import get_db
@@ -73,6 +74,12 @@ def list_vision_analyses(project_id: str, db: Session = Depends(get_db)):
     )
 
 
+@router.get("/{project_id}/vision/pci-checklist", response_model=PciChecklistResponse)
+def pci_checklist(project_id: str, db: Session = Depends(get_db)):
+    """Checklist IT-11 / NT-03 / PSCIP cruzando análises visuais do projeto."""
+    return PciChecklistResponse(**service.get_pci_checklist(project_id, db))
+
+
 @router.post("/{project_id}/vision/analyze", response_model=VisionAnalyzeResponse)
 def analyze_vision(
     project_id: str,
@@ -85,6 +92,7 @@ def analyze_vision(
         file_ids=body.file_ids,
         mode=body.mode,
         extra_context=body.extra_context,
+        skip_technical=body.skip_technical,
         db=db,
     )
     return VisionAnalyzeResponse(
@@ -96,6 +104,9 @@ def analyze_vision(
         skipped=data["skipped"],
         items=[VisionAnalysisItem(**item) for item in data["items"]],
         summary=data.get("summary", {}),
+        pci_checklist=PciChecklistResponse(**data["pci_checklist"])
+        if data.get("pci_checklist")
+        else None,
     )
 
 
@@ -106,8 +117,17 @@ def analyze_vision_stream(
     db: Session = Depends(get_db),
 ):
     """Análise visual com progresso SSE (lotes grandes de fotos)."""
-    # Valida projeto antes de iniciar stream
+    from core.runtime.job_registry import get_job_registry
+
     service.list_analyses(project_id, db)
+    registry = get_job_registry()
+    job = registry.register(
+        kind="vision",
+        label=f"Análise visual ({body.mode})"
+        + (" · rápida" if body.skip_technical else ""),
+        project_id=project_id,
+        meta={"mode": body.mode, "skip_technical": body.skip_technical},
+    )
 
     def event_stream():
         try:
@@ -116,12 +136,15 @@ def analyze_vision_stream(
                 file_ids=body.file_ids,
                 mode=body.mode,
                 extra_context=body.extra_context,
+                skip_technical=body.skip_technical,
+                job_id=job.id,
             ):
                 yield chunk
         except Exception as exc:
             from core.stream_events import format_sse
 
-            yield format_sse("error", {"error": str(exc)})
+            registry.finish(job.id, status="error", message=str(exc))
+            yield format_sse("error", {"error": str(exc), "job_id": job.id})
 
     return StreamingResponse(
         event_stream(),

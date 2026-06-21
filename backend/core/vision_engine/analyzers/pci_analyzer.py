@@ -14,9 +14,9 @@ class PciAnalyzer(BaseAnalyzer):
 
     def enrich_context(self, ocr_data: dict[str, Any]) -> str:
         parts = [
-            "[PCI Analyzer — prevenção e combate a incêndio]",
-            "Verificar: rotas de fuga, sinalização, hidrantes, sprinklers, compartimentação, "
-            "distâncias, CBMPA/ITs aplicáveis.",
+            "[PCI Analyzer — prevenção e combate a incêndio / CBMAM-AM]",
+            "Verificar: rotas de fuga tracejadas (IT-11/NBR 9077), sinalização (NBR 10898), "
+            "saídas/UP, extintores, portão de correr (NT-03), tipo ocupação E-5 se educacional.",
         ]
         if ocr_data.get("texto"):
             parts.append(f"Texto OCR: {ocr_data['texto'][:2000]}")

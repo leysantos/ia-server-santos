@@ -156,11 +156,18 @@ class OllamaClient:
         return [m for m in resolved if m]
 
     def _generate_with_model(
-        self, prompt: str, model: str, *, format_json: bool = False
+        self,
+        prompt: str,
+        model: str,
+        *,
+        format_json: bool = False,
+        options: dict | None = None,
     ) -> str:
         body: dict = {"model": model, "prompt": prompt, "stream": False}
         if format_json:
             body["format"] = "json"
+        if options:
+            body["options"] = options
         response = requests.post(
             f"{self.base_url}/api/generate",
             json=body,
@@ -175,6 +182,7 @@ class OllamaClient:
         model: Optional[str] = None,
         fallback_models: Optional[list[str]] = None,
         format_json: bool = False,
+        options: Optional[dict] = None,
     ) -> tuple[str, str]:
         """
         Gera resposta LLM. Retorna (texto, modelo_utilizado).
@@ -191,7 +199,7 @@ class OllamaClient:
             try:
                 logger.info("Ollama generate model=%s json=%s", current_model, format_json)
                 text = self._generate_with_model(
-                    prompt, current_model, format_json=format_json
+                    prompt, current_model, format_json=format_json, options=options
                 )
                 return text, current_model
             except Exception as exc:
@@ -208,6 +216,7 @@ class OllamaClient:
         model: Optional[str] = None,
         fallback_models: Optional[list[str]] = None,
         format_json: bool = False,
+        options: Optional[dict] = None,
     ) -> Iterator[tuple[str, str]]:
         """
         Stream de tokens Ollama. Yields (token, model_name).
@@ -226,6 +235,8 @@ class OllamaClient:
                 body: dict = {"model": current_model, "prompt": prompt, "stream": True}
                 if format_json:
                     body["format"] = "json"
+                if options:
+                    body["options"] = options
                 with requests.post(
                     f"{self.base_url}/api/generate",
                     json=body,

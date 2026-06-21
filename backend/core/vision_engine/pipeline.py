@@ -18,6 +18,7 @@ from core.vision_engine.analyzers.plant_analyzer import PlantAnalyzer
 from core.vision_engine.analyzers.pci_analyzer import PciAnalyzer
 from core.vision_engine.analyzers.structural_analyzer import StructuralAnalyzer
 from core.vision_engine.technical_synthesis import synthesize_technical_report
+from core.vision_engine.pci_knowledge import format_pci_knowledge_block, retrieve_pci_normative_context
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,20 @@ class VisionEnginePipeline:
         ocr_context = analyzer.enrich_context(ocr_data)
         combined_context = "\n".join(p for p in (ocr_context, extra_context) if p).strip()
 
+        normative_context: dict[str, Any] | None = None
+        if analysis_mode == VisionAnalysisMode.PCI:
+            if on_progress:
+                on_progress({"phase": "rag", "message": f"RAG CBMAM/NBR — {display}"})
+            normative_context = retrieve_pci_normative_context(
+                filename=display,
+                ocr_text=str(ocr_data.get("texto") or ""),
+                extra_context=extra_context,
+            )
+            knowledge_block = format_pci_knowledge_block(normative_context)
+            combined_context = "\n\n".join(
+                p for p in (combined_context, knowledge_block) if p
+            ).strip()
+
         try:
             if on_progress:
                 on_progress({"phase": "vision", "message": f"Gemma3 Vision — {display}"})
@@ -109,16 +124,20 @@ class VisionEnginePipeline:
             if not skip_technical:
                 if on_progress:
                     on_progress({"phase": "technical", "message": f"Relatório Qwen3 — {display}"})
+                tech_extra = extra_context
+                if normative_context and normative_context.get("context_text"):
+                    tech_extra = f"{extra_context}\n\n{normative_context['context_text']}".strip()
                 technical_report = synthesize_technical_report(
                     filename=display,
                     analyzer=analyzer.label,
                     ocr_data=ocr_data,
                     vision_analysis=vision_raw,
-                    extra_context=extra_context,
+                    extra_context=tech_extra,
+                    analysis_mode=analysis_mode,
                 )
                 technical_model = technical_report.pop("_model_used", None)
 
-            return {
+            result: dict[str, Any] = {
                 "filename": display,
                 "analysis_mode": analysis_mode,
                 "analyzer": analyzer.analyzer_type.value,
@@ -131,6 +150,14 @@ class VisionEnginePipeline:
                 "analysis": vision_raw,
                 "technical_report": technical_report,
             }
+            if normative_context:
+                result["normative_context"] = {
+                    "rag_available": normative_context.get("rag_available"),
+                    "hits_count": normative_context.get("hits_count"),
+                    "bases_used": normative_context.get("bases_used"),
+                }
+                result["rag_sources"] = normative_context.get("sources") or []
+            return result
         except Exception as exc:
             logger.warning("VisionEngine falhou %s: %s", display, exc)
             return {
@@ -151,6 +178,7 @@ class VisionEnginePipeline:
         *,
         mode: str | None = None,
         extra_context: str = "",
+        skip_technical: bool = False,
         on_progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
@@ -160,6 +188,7 @@ class VisionEnginePipeline:
                 mode=mode,
                 extra_context=extra_context,
                 filename=fname,
+                skip_technical=skip_technical,
                 on_progress=on_progress,
             )
             if file_id:

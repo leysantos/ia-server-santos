@@ -16,6 +16,14 @@ import type {
   KnowledgeStatsResponse,
 } from "@/types/api";
 
+interface IndexProgress {
+  phase?: string | null;
+  message?: string | null;
+  percent?: number | null;
+  current?: number | null;
+  total?: number | null;
+}
+
 interface SettingsKnowledgeContextValue {
   options: KnowledgeOptionsResponse | null;
   stats: KnowledgeStatsResponse | null;
@@ -23,8 +31,9 @@ interface SettingsKnowledgeContextValue {
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
-  handleIndex: (base?: string) => Promise<string>;
+  handleIndex: (base?: string, force?: boolean) => Promise<string>;
   indexing: string | null;
+  indexProgress: IndexProgress | null;
   handleActivatePriceBase: (documentId: string) => Promise<void>;
   handleIndexBudgetModel: (documentId: string) => Promise<{ service_count: number; reason?: string }>;
   handleUpdateDocument: (
@@ -43,15 +52,20 @@ export function SettingsKnowledgeProvider({ children }: { children: ReactNode })
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [indexing, setIndexing] = useState<string | null>(null);
+  const [indexProgress, setIndexProgress] = useState<IndexProgress | null>(null);
 
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      const [optsRes, st, cat] = await Promise.all([
+      const [optsRes, st] = await Promise.all([
         api.knowledgeOptions(),
         api.knowledgeStats(),
-        api.knowledgeCatalog(200),
       ]);
+      const catalogLimit = Math.min(
+        20000,
+        Math.max(5000, (st?.catalog_total ?? 0) + 100)
+      );
+      const cat = await api.knowledgeCatalog(catalogLimit);
       setOptions(optsRes);
       setStats(st);
       setCatalog(cat);
@@ -67,16 +81,45 @@ export function SettingsKnowledgeProvider({ children }: { children: ReactNode })
   }, [refresh]);
 
   const handleIndex = useCallback(
-    async (base?: string) => {
-      setIndexing(base ?? "all");
+    async (base?: string, force = false) => {
+      const key = base ?? "all";
+      setIndexing(key);
+      setIndexProgress({ message: "Iniciando indexação…", percent: 0, current: 0, total: 0 });
+
+      const poll = window.setInterval(async () => {
+        try {
+          const live = await api.consoleLive();
+          const job =
+            live.active_jobs.find((j) => j.kind === "knowledge" || j.kind === "norm_bulk") ??
+            live.recent_jobs.find(
+              (j) =>
+                (j.kind === "knowledge" || j.kind === "norm_bulk") &&
+                j.status === "running",
+            );
+          if (job) {
+            setIndexProgress({
+              phase: job.phase,
+              message: job.message,
+              percent: job.percent,
+              current: job.current,
+              total: job.total,
+            });
+          }
+        } catch {
+          /* ignore poll errors */
+        }
+      }, 2000);
+
       try {
-        const result = await api.knowledgeIndex(base, false);
+        const result = await api.knowledgeIndex(base, force);
         await refresh();
         return base
           ? `Base ${base}: ${result.total_chunks} chunks indexados`
           : `Total: ${result.total_chunks} chunks no índice`;
       } finally {
+        window.clearInterval(poll);
         setIndexing(null);
+        setIndexProgress(null);
       }
     },
     [refresh]
@@ -128,6 +171,7 @@ export function SettingsKnowledgeProvider({ children }: { children: ReactNode })
       refresh,
       handleIndex,
       indexing,
+      indexProgress,
       handleActivatePriceBase,
       handleIndexBudgetModel,
       handleUpdateDocument,
@@ -142,6 +186,7 @@ export function SettingsKnowledgeProvider({ children }: { children: ReactNode })
       refresh,
       handleIndex,
       indexing,
+      indexProgress,
       handleActivatePriceBase,
       handleIndexBudgetModel,
       handleUpdateDocument,

@@ -6,7 +6,7 @@ from typing import Optional
 
 from config import settings
 from memory.models import DocumentChunk
-from memory.nbr_catalog import parse_nbr_code
+from memory.nbr_catalog import parse_nbr_code, nbr_codes_match
 from memory.nbr_edition import compute_edition_boost
 
 
@@ -38,7 +38,7 @@ def light_rerank(
             s += settings.RAG_BOOST_DISCIPLINE
         if ct and meta.get("content_type", "").lower() == ct:
             s += settings.RAG_BOOST_DOC_TYPE
-        if boost_nbr and meta.get("nbr_code") == boost_nbr:
+        if boost_nbr and nbr_codes_match(meta.get("nbr_code"), boost_nbr):
             s += settings.RAG_BOOST_NBR
         s += compute_edition_boost(query, chunk, nbr_query=boost_nbr)
         if meta.get("confidence") and float(meta["confidence"]) >= 0.85:

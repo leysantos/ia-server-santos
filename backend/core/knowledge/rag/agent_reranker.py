@@ -14,7 +14,7 @@ import re
 from typing import Optional
 
 from memory.models import DocumentChunk
-from memory.nbr_catalog import parse_nbr_code
+from memory.nbr_catalog import parse_nbr_code, nbr_codes_match
 
 from core.knowledge.rag.agent_scopes import (
     SOURCE_DOCUMENTATION,
@@ -57,8 +57,8 @@ def _agent_alignment_boost(
 
     nbr_query = parse_nbr_code(query)
     nbr_chunk = meta.get("nbr_code") or parse_nbr_code(chunk.source or "")
-    if nbr_query and nbr_chunk == nbr_query:
-        boost += 0.25
+    if nbr_query and nbr_codes_match(nbr_chunk, nbr_query):
+        boost += 0.55
     elif nbr_chunk and nbr_chunk in scope.priority_nbrs:
         boost += 0.15
 

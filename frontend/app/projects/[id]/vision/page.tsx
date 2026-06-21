@@ -1,13 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ProjectFilePreview from "@/components/ProjectFilePreview";
 import ShellHeader from "@/components/ShellHeader";
 import WorkspaceExpandButton, { WorkspaceCollapseStrip } from "@/components/WorkspaceExpandButton";
-import { useActivity } from "@/context/ActivityContext";
+import { useVisionJob } from "@/context/VisionJobContext";
 import { api } from "@/services/api";
 import type {
   ProjectDetail,
@@ -17,7 +17,7 @@ import type {
   VisionStatusResponse,
   VisionWorkspaceStatusResponse,
   VisionReportRequest,
-  VisionAnalyzeProgress,
+  PciChecklistResponse,
 } from "@/types/api";
 import { formatDate } from "@/lib/utils";
 
@@ -62,6 +62,33 @@ function analysisPreview(item: VisionAnalysisItem): string {
   return "Análise concluída.";
 }
 
+function statusBadgeClass(status: string): string {
+  switch (status) {
+    case "conforme":
+      return "bg-emerald-900/40 text-emerald-300";
+    case "parcial":
+      return "bg-amber-900/40 text-amber-300";
+    case "pendente":
+      return "bg-red-900/40 text-red-300";
+    default:
+      return "bg-slate-700/60 text-slate-400";
+  }
+}
+
+function mergeAnalyses(
+  persisted: VisionAnalysisItem[],
+  live: VisionAnalysisItem[]
+): VisionAnalysisItem[] {
+  const byFile = new Map<string, VisionAnalysisItem>();
+  for (const item of persisted) {
+    if (item.project_file_id) byFile.set(item.project_file_id, item);
+  }
+  for (const item of live) {
+    if (item.project_file_id) byFile.set(item.project_file_id, item);
+  }
+  return Array.from(byFile.values());
+}
+
 export default function ProjectVisionPage() {
   const params = useParams();
   const projectId = String(params.id);
@@ -73,6 +100,7 @@ export default function ProjectVisionPage() {
   const [analyses, setAnalyses] = useState<VisionAnalysisItem[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState("obra");
+  const [fastAnalysis, setFastAnalysis] = useState(false);
   const [extraContext, setExtraContext] = useState("");
   const [obraInfo, setObraInfo] = useState("");
   const [solicitante, setSolicitante] = useState("");
@@ -80,17 +108,41 @@ export default function ProjectVisionPage() {
   const [discipline, setDiscipline] = useState("arquitetura");
   const [prazo, setPrazo] = useState("");
   const [loading, setLoading] = useState(true);
-  const [analyzing, setAnalyzing] = useState(false);
   const [exporting, setExporting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastSummary, setLastSummary] = useState<Record<string, unknown> | null>(null);
-  const [visionProgress, setVisionProgress] = useState<VisionAnalyzeProgress | null>(null);
-  const { pushActivity, updateActivity } = useActivity();
+  const [pciChecklist, setPciChecklist] = useState<PciChecklistResponse | null>(null);
+  const [loadingChecklist, setLoadingChecklist] = useState(false);
+  const visionJob = useVisionJob();
+  const visionJobRef = useRef(visionJob);
+  visionJobRef.current = visionJob;
+  const {
+    analyzing,
+    progress: visionProgress,
+    partialItems,
+    lastResult,
+    error: jobError,
+    startAnalysis,
+  } = visionJob;
+  const isActiveJob = visionJob.projectId === projectId;
+  const showProgress = isActiveJob && (analyzing || visionProgress);
 
   const visualFiles = useMemo(
     () => (project?.files ?? []).filter((f) => isVisualFile(f.filename)),
     [project?.files]
   );
+
+  const loadChecklist = useCallback(async () => {
+    setLoadingChecklist(true);
+    try {
+      const data = await api.getPciChecklist(projectId);
+      setPciChecklist(data);
+    } catch {
+      setPciChecklist(null);
+    } finally {
+      setLoadingChecklist(false);
+    }
+  }, [projectId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -107,20 +159,45 @@ export default function ProjectVisionPage() {
       setStatus(st);
       setWorkspace(ws);
       setModes(md.modes);
-      setAnalyses(list.items);
+      const job = visionJobRef.current;
+      const liveItems =
+        job.projectId === projectId
+          ? job.lastResult?.items ?? job.partialItems
+          : [];
+      setAnalyses(mergeAnalyses(list.items, liveItems));
       const visual = proj.files.filter((f) => isVisualFile(f.filename));
       setSelectedIds(new Set(visual.map((f) => f.id)));
       if (proj.description) setObjeto(proj.description);
+      if (list.items.some((i) => i.analysis_mode === "pci")) {
+        void loadChecklist();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar análise visual");
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, loadChecklist]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Sincroniza resultados parciais/conclusão do job global (sobrevive à navegação).
+  useEffect(() => {
+    if (!isActiveJob) return;
+    if (partialItems.length > 0) {
+      setAnalyses((prev) => mergeAnalyses(prev, partialItems));
+    }
+    if (lastResult) {
+      setAnalyses(lastResult.items);
+      setLastSummary(lastResult.summary);
+      if (lastResult.pci_checklist) setPciChecklist(lastResult.pci_checklist);
+      else if (lastResult.mode === "pci") void loadChecklist();
+    }
+    if (jobError) {
+      setError(jobError);
+    }
+  }, [isActiveJob, partialItems, lastResult, jobError, loadChecklist]);
 
   const toggleFile = (file: ProjectFileItem) => {
     setSelectedIds((prev) => {
@@ -131,68 +208,30 @@ export default function ProjectVisionPage() {
     });
   };
 
-  const handleAnalyze = async () => {
-    setAnalyzing(true);
+  const handleAnalyze = () => {
+    if (analyzing) return;
     setError(null);
-    setVisionProgress({
-      phase: "prepare",
-      current: 0,
-      total: selectedIds.size || visualFiles.length,
-      percent: 0,
-      message: "Iniciando análise…",
-    });
-    const liveId = `vision-${Date.now()}`;
-    pushActivity({
-      id: liveId,
-      source: "vision",
-      message: `Análise visual (${mode}) iniciada`,
-      status: "running",
-      phase: "prepare",
+    const fileIds = selectedIds.size ? Array.from(selectedIds) : undefined;
+    startAnalysis({
       projectId,
+      projectName: project?.name,
+      fileIds,
+      mode,
+      extraContext,
+      skipTechnical: fastAnalysis,
+      onFileDone: (item) => {
+        setAnalyses((prev) => {
+          const next = prev.filter((a) => a.project_file_id !== item.project_file_id);
+          return [...next, item];
+        });
+      },
+      onComplete: (result) => {
+        setAnalyses(result.items);
+        setLastSummary(result.summary);
+        if (result.pci_checklist) setPciChecklist(result.pci_checklist);
+        else if (result.mode === "pci") void loadChecklist();
+      },
     });
-    try {
-      const fileIds = selectedIds.size ? Array.from(selectedIds) : undefined;
-      const result = await api.analyzeVisionWithProgress(
-        projectId,
-        { file_ids: fileIds, mode, extra_context: extraContext },
-        (progress) => {
-          setVisionProgress(progress);
-          updateActivity(liveId, {
-            message: progress.message,
-            phase: progress.phase,
-          });
-        },
-        (item) => {
-          setAnalyses((prev) => {
-            const next = prev.filter((a) => a.project_file_id !== item.project_file_id);
-            return [...next, item];
-          });
-        }
-      );
-      setAnalyses(result.items);
-      setLastSummary(result.summary);
-      setVisionProgress({
-        phase: "complete",
-        current: result.total,
-        total: result.total,
-        percent: 100,
-        message: "Análise concluída",
-      });
-      updateActivity(liveId, {
-        status: "done",
-        message: `Análise concluída: ${result.analyzed}/${result.total}`,
-        phase: mode,
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha na análise visual");
-      setVisionProgress(null);
-      updateActivity(liveId, {
-        status: "error",
-        message: err instanceof Error ? err.message : "Falha na análise visual",
-      });
-    } finally {
-      setAnalyzing(false);
-    }
   };
 
   const handleExport = async (reportType: VisionReportRequest["report_type"]) => {
@@ -265,7 +304,15 @@ export default function ProjectVisionPage() {
         </div>
       )}
 
-      {(analyzing || visionProgress) && (
+      {analyzing && !isActiveJob && (
+        <div className="mx-6 mt-4 rounded-xl bg-amber-500/10 px-4 py-3 text-sm text-amber-200 ring-1 ring-amber-500/30">
+          Há uma análise visual em andamento
+          {visionJob.projectName ? ` em «${visionJob.projectName}»` : ""}. Acompanhe pelo banner
+          verde no topo ou pelo painel Atividade.
+        </div>
+      )}
+
+      {(showProgress || (isActiveJob && analyzing)) && (
         <div className="mx-6 mt-4 rounded-xl bg-slate-900/80 px-4 py-3 ring-1 ring-slate-800">
           <div className="mb-2 flex items-center justify-between text-sm">
             <span className="text-slate-300">
@@ -367,7 +414,9 @@ export default function ProjectVisionPage() {
 
             {workspace?.pipeline && (
               <div className="mt-4 text-xs text-slate-500">
-                {workspace.pipeline.join(" → ")}
+                {fastAnalysis
+                  ? "OCR → Gemma3 Vision → JSON (modo rápido)"
+                  : workspace.pipeline.join(" → ")}
               </div>
             )}
 
@@ -385,6 +434,21 @@ export default function ProjectVisionPage() {
                     </option>
                   ))}
                 </select>
+              </label>
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl bg-slate-800/50 px-3 py-3 ring-1 ring-slate-700/80">
+                <input
+                  type="checkbox"
+                  checked={fastAnalysis}
+                  onChange={(e) => setFastAnalysis(e.target.checked)}
+                  className="mt-0.5 rounded border-slate-600 bg-slate-900 text-emerald-500"
+                />
+                <span className="text-sm text-slate-300">
+                  <span className="font-medium text-white">Análise rápida</span>
+                  <span className="mt-0.5 block text-xs text-slate-500">
+                    OCR + Gemma3 Vision apenas — pula o relatório Qwen3 (~40% mais rápido, menos
+                    VRAM). Export DOCX ainda usa o JSON da visão.
+                  </span>
+                </span>
               </label>
               <label className="block text-sm text-slate-400">
                 Contexto adicional
@@ -471,6 +535,85 @@ export default function ProjectVisionPage() {
             )}
           </section>
 
+          {(mode === "pci" || pciChecklist) && (
+            <section className="rounded-2xl bg-slate-900/60 p-4 ring-1 ring-slate-800 lg:col-span-3">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="font-medium text-white">Checklist IT-11 / NT-03 (CBMAM)</h2>
+                <button
+                  type="button"
+                  onClick={() => void loadChecklist()}
+                  disabled={loadingChecklist}
+                  className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-cyan-400 ring-1 ring-slate-700 hover:bg-slate-700 disabled:opacity-50"
+                >
+                  {loadingChecklist ? "Atualizando…" : "Atualizar checklist"}
+                </button>
+              </div>
+              {loadingChecklist && !pciChecklist ? (
+                <LoadingSpinner label="Gerando checklist…" />
+              ) : pciChecklist ? (
+                <>
+                  <div className="mb-4 flex flex-wrap gap-4 text-sm">
+                    <span className="text-slate-300">
+                      Score:{" "}
+                      <strong className="text-white">{pciChecklist.score_percent}%</strong>
+                    </span>
+                    <span className="text-emerald-400">{pciChecklist.conformes} conforme</span>
+                    <span className="text-amber-400">{pciChecklist.parciais} parcial</span>
+                    <span className="text-red-400">{pciChecklist.pendentes} pendente</span>
+                    <span
+                      className={
+                        pciChecklist.pronto_cbmam ? "text-emerald-400" : "text-amber-400"
+                      }
+                    >
+                      {pciChecklist.pronto_cbmam ? "Pronto CBMAM" : "Não pronto para protocolo"}
+                    </span>
+                  </div>
+                  {pciChecklist.rag_audit && (
+                    <p className="mb-4 rounded-lg bg-slate-800/50 px-3 py-2 text-xs text-slate-400">
+                      RAG:{" "}
+                      {String(
+                        (pciChecklist.rag_audit as Record<string, unknown>).observacao ?? "—"
+                      )}
+                    </p>
+                  )}
+                  <ul className="space-y-2">
+                    {pciChecklist.itens.map((item) => (
+                      <li
+                        key={item.id}
+                        className="rounded-xl bg-slate-800/50 px-3 py-2 text-sm ring-1 ring-slate-700/50"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={`rounded px-2 py-0.5 text-xs uppercase ${statusBadgeClass(item.status)}`}
+                          >
+                            {item.status}
+                          </span>
+                          <span className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-300">
+                            {item.norma}
+                          </span>
+                          <span className="font-medium text-slate-200">{item.titulo}</span>
+                        </div>
+                        <p className="mt-1 text-slate-400">{item.descricao}</p>
+                        {item.evidencias.length > 0 && (
+                          <p className="mt-1 text-xs text-slate-500">
+                            Evidências: {item.evidencias.join(", ")}
+                          </p>
+                        )}
+                        {item.observacao && (
+                          <p className="mt-1 text-xs text-amber-300/90">{item.observacao}</p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <p className="text-sm text-slate-500">
+                  Execute análise em modo PCI para gerar o checklist CBMAM.
+                </p>
+              )}
+            </section>
+          )}
+
           <section className="rounded-2xl bg-slate-900/60 p-4 ring-1 ring-slate-800 lg:col-span-3">
             <h2 className="mb-4 font-medium text-white">Resultados ({analyses.length})</h2>
             {analyses.length === 0 ? (
@@ -520,6 +663,9 @@ export default function ProjectVisionPage() {
                           ? ` · Qwen: ${item.technical_model_used}`
                           : ""}
                         {item.analyzed_at ? ` · ${formatDate(item.analyzed_at)}` : ""}
+                        {item.rag_sources && item.rag_sources.length > 0
+                          ? ` · RAG: ${item.rag_sources.length} trecho(s)`
+                          : ""}
                       </p>
                     )}
                     </div>
