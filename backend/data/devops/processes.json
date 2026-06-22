@@ -1,7 +1,0 @@
-{
-  "celery": {
-    "pid": 38653,
-    "started_at": "2026-06-21T17:34:20.750839+00:00",
-    "log_file": "/home/eng_fsantos/projetos/ia-server-santos/backend/data/devops/logs/celery-1782063260.log"
-  }
-}
