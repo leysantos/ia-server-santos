@@ -59,6 +59,7 @@ class BudgetProjectMetadata:
     obra_type: str = DEFAULT_OBRA_TYPE
     bdi: BdiConfig = field(default_factory=lambda: BdiConfig.from_obra_type(DEFAULT_OBRA_TYPE))
     template: str = "PPD_MC_OR"
+    price_bases: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -75,6 +76,7 @@ class BudgetProjectMetadata:
             "obra_type": self.obra_type,
             "bdi": self.bdi.to_dict(),
             "template": self.template,
+            "price_bases": list(self.price_bases),
         }
 
     @classmethod
@@ -104,6 +106,7 @@ class BudgetProjectMetadata:
             obra_type=obra_type,
             bdi=bdi,
             template=str(data.get("template") or "PPD_MC_OR"),
+            price_bases=list(data.get("price_bases") or []),
         )
 
     def set_obra_type(self, obra_type: str) -> None:

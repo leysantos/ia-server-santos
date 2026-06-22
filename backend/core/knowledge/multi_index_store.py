@@ -191,8 +191,13 @@ class MultiIndexKnowledgeStore:
         return {key: store.count() for key, store in self._stores.items()}
 
     def reload_from_disk(self) -> None:
+        from core.runtime.job_registry import get_job_registry
+
+        if get_job_registry().has_active_kind(("knowledge", "norm_bulk", "knowledge_import")):
+            logger.debug("reload_from_disk ignorado — indexação em andamento")
+            return
         for store in self._stores.values():
-            store.reload()
+            store.reload_if_changed()
 
     def total_chunks(self) -> int:
         return sum(self.stats().values())

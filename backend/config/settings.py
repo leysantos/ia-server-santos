@@ -72,7 +72,12 @@ class AppSettings(BaseSettings):
 
     # --- CORS ---
     cors_allowed_origins: list[str] = Field(
-        default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"],
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:3001",
+            "http://127.0.0.1:3001",
+        ],
         validation_alias="CORS_ALLOWED_ORIGINS",
     )
 

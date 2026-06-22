@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { BdiObraType, BudgetProjectInfo, PriceBaseInfo } from "@/types/api";
+import type { BdiObraType, BudgetProjectInfo } from "@/types/api";
 import { cn } from "@/lib/utils";
 import {
   budgetBtnIcon,
@@ -25,12 +25,9 @@ export interface ProjectFormValues {
 interface BudgetProjectFormProps {
   project?: BudgetProjectInfo;
   bdiTypes: BdiObraType[];
-  priceBases: Array<PriceBaseInfo & { documentId?: string }>;
-  activeBaseId?: string;
   disabled?: boolean;
   onChange: (values: ProjectFormValues) => void;
   onObraTypeChange: (type: string) => void;
-  onBaseChange: (baseId: string, isKnowledge: boolean) => void;
 }
 
 export function projectToForm(project?: BudgetProjectInfo, obraType = "RF"): ProjectFormValues {
@@ -51,12 +48,9 @@ function pct(rate: number) {
 export default function BudgetProjectForm({
   project,
   bdiTypes,
-  priceBases,
-  activeBaseId,
   disabled,
   onChange,
   onObraTypeChange,
-  onBaseChange,
 }: BudgetProjectFormProps) {
   const [expanded, setExpanded] = useState(true);
   const values = projectToForm(project, project?.obra_type);
@@ -140,25 +134,6 @@ export default function BudgetProjectForm({
                 onChange={(e) => set({ responsavel_tecnico: e.target.value })}
                 className={budgetInput}
               />
-            </label>
-            <label className={cn(budgetField, "md:col-span-2")}>
-              <span className={budgetFieldLabel}>Base de preços</span>
-              <select
-                disabled={disabled || priceBases.length === 0}
-                value={activeBaseId || ""}
-                onChange={(e) => {
-                  const opt = priceBases.find((b) => b.id === e.target.value);
-                  onBaseChange(e.target.value, Boolean(opt?.documentId));
-                }}
-                className={budgetSelect}
-              >
-                <option value="">Selecione a base…</option>
-                {priceBases.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name} ({b.item_count} itens)
-                  </option>
-                ))}
-              </select>
             </label>
             <label className={cn(budgetField, "md:col-span-2")}>
               <span className={budgetFieldLabel}>Tipo de obra (BDI)</span>

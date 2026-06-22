@@ -929,6 +929,7 @@ export interface BudgetProjectInfo {
   empresa?: string;
   responsavel_tecnico?: string;
   obra_type?: string;
+  price_bases?: BudgetPriceBaseSelection[];
   bdi?: {
     obra_type?: string;
     obra_label?: string;
@@ -997,6 +998,163 @@ export interface PriceBaseActiveStatus {
   base_name: string | null;
   item_count: number;
   hint?: string | null;
+}
+
+export interface PriceBankCounts {
+  compositions_closed: number;
+  compositions_open: number;
+  insumos: number;
+  open_items_total: number;
+}
+
+export interface PriceBankManifest {
+  source: string;
+  reference: string;
+  uf?: string;
+  desonerado?: boolean;
+  synced_at?: string;
+  counts: PriceBankCounts;
+  metadata?: Record<string, unknown>;
+}
+
+export interface PriceBankReference {
+  reference: string;
+  label: string;
+  source?: string;
+  synced_at?: string;
+  default_uf?: string;
+  active?: boolean;
+  counts?: PriceBankCounts;
+  metadata?: Record<string, unknown>;
+}
+
+/** Base de preço selecionada na sessão de orçamento (UF + período por fonte). */
+export interface BudgetPriceBaseSelection {
+  source: string;
+  label: string;
+  enabled: boolean;
+  uf: string;
+  reference: string;
+}
+
+export interface PriceBankStats {
+  loaded: boolean;
+  manifest?: PriceBankManifest;
+  counts: PriceBankCounts;
+  sample_closed?: { code: string; description: string; unit: string; price: number }[];
+  sample_open_codes?: string[];
+  references?: PriceBankReference[];
+  active_reference?: string;
+}
+
+export interface PriceBankInventoryPeriod {
+  reference: string;
+  label: string;
+  synced_at?: string;
+  default_uf?: string;
+  active?: boolean;
+  counts?: PriceBankCounts;
+  metadata?: Record<string, unknown>;
+}
+
+export interface PriceBankInventoryGroup {
+  source: string;
+  label: string;
+  auto_download?: boolean;
+  periods: PriceBankInventoryPeriod[];
+  last_sync?: PriceSyncSourceInfo["last_sync"];
+}
+
+export interface PriceBankInventory {
+  totals: PriceBankCounts;
+  period_count: number;
+  source_count: number;
+  groups: PriceBankInventoryGroup[];
+  sources: PriceSyncSourceInfo[];
+  active_reference?: string;
+}
+
+export interface PriceSyncSourceInfo {
+  name: string;
+  label: string;
+  auto_download: boolean;
+  download_url?: string;
+  custom?: boolean;
+  can_delete?: boolean;
+  last_sync?: {
+    source: string;
+    status: string;
+    reference?: string;
+    item_count?: number;
+    error?: string;
+    synced_at?: string;
+    metadata?: Record<string, unknown>;
+  } | null;
+}
+
+export interface PriceSyncStatusResponse {
+  sources: Record<string, unknown>;
+  available: string[];
+  bank: PriceBankStats;
+}
+
+export interface PriceSyncResult {
+  source: string;
+  status: string;
+  reference?: string;
+  item_count?: number;
+  document_id?: string;
+  path?: string;
+  download?: { local_path: string; metadata?: Record<string, unknown> };
+  ingest?: Record<string, unknown>;
+  faiss?: Record<string, unknown>;
+  providers?: Record<string, unknown>;
+}
+
+export interface OpenCompositionItem {
+  item_type: string;
+  code: string;
+  description: string;
+  unit: string;
+  coefficient: number;
+  unit_price: number;
+  partial_cost: number;
+  unit_price_sem?: number;
+  partial_cost_sem?: number;
+}
+
+export interface CompositionPeriodVariationWarning {
+  kind: "composition_total" | "item_unit_price";
+  metric: "comd" | "semd";
+  metric_label?: string;
+  code?: string;
+  description?: string;
+  item_type?: string;
+  current: number;
+  previous: number;
+  change_pct: number;
+  message: string;
+}
+
+export interface CompositionPeriodVariation {
+  previous_reference: string | null;
+  previous_label: string | null;
+  threshold_pct: number;
+  warnings: CompositionPeriodVariationWarning[];
+}
+
+export interface OpenCompositionDetail {
+  code: string;
+  description: string;
+  unit: string;
+  total_price: number;
+  total_price_sem?: number;
+  price_uf?: string;
+  available_ufs?: string[];
+  analytical_total_com?: number;
+  analytical_total_sem?: number;
+  period_variation?: CompositionPeriodVariation;
+  items: OpenCompositionItem[];
 }
 
 export interface BudgetGenerateRequest {

@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import ActionDialog from "@/components/ActionDialog";
 import BudgetEtapasPanel from "@/components/BudgetEtapasPanel";
 import BudgetMemoryPanel from "@/components/BudgetMemoryPanel";
+import BudgetPriceBasesPanel from "@/components/BudgetPriceBasesPanel";
 import BudgetProjectForm, { type ProjectFormValues } from "@/components/BudgetProjectForm";
 import BudgetSchedulePanel from "@/components/BudgetSchedulePanel";
 import BudgetTechSpecPanel from "@/components/BudgetTechSpecPanel";
@@ -19,11 +20,9 @@ import { useActivity } from "@/context/ActivityContext";
 import { api, BUDGET_SESSION_RESTORED, formatApiError, syncBudgetSessionSnapshot } from "@/services/api";
 import type {
   BdiObraType,
+  BudgetPriceBaseSelection,
   BudgetSessionResponse,
   BudgetSummary,
-  KnowledgeCatalogEntry,
-  PriceBaseActiveStatus,
-  PriceBaseInfo,
 } from "@/types/api";
 import { cn } from "@/lib/utils";
 
@@ -36,8 +35,6 @@ type DialogState = {
   variant: "success" | "error" | "confirm" | "info";
   onConfirm?: () => void;
 };
-
-type PriceBaseOption = PriceBaseInfo & { documentId?: string };
 
 export default function BudgetPage() {
   return (
@@ -62,9 +59,7 @@ function BudgetPageContent() {
   const [savedItems, setSavedItems] = useState<BudgetSummary[]>([]);
   const [activeDbId, setActiveDbId] = useState<string | null>(null);
   const [bdiTypes, setBdiTypes] = useState<BdiObraType[]>([]);
-  const [legacyBases, setLegacyBases] = useState<PriceBaseInfo[]>([]);
-  const [catalogBases, setCatalogBases] = useState<PriceBaseOption[]>([]);
-  const [priceBaseStatus, setPriceBaseStatus] = useState<PriceBaseActiveStatus | null>(null);
+  const [sinapiImported, setSinapiImported] = useState(false);
   const [obraType, setObraType] = useState("RF");
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("etapas");
@@ -92,30 +87,13 @@ function BudgetPageContent() {
     [projectId, session?.project_id]
   );
 
-  const refreshBases = useCallback(async () => {
-    const [pricingRes, catalogRes] = await Promise.all([
-      api.pricingListBases().catch(() => ({ bases: [] as PriceBaseInfo[], active: undefined })),
-      api.knowledgeCatalog(100).catch(() => ({ items: [] as KnowledgeCatalogEntry[] })),
-    ]);
-    setLegacyBases(pricingRes.bases);
-    setPriceBaseStatus(pricingRes.active ?? null);
-    const fromCatalog: PriceBaseOption[] = (catalogRes.items || [])
-      .filter(
-        (item) =>
-          (item.content_type === "sinapi" || item.content_type === "tcpo") &&
-          (item.price_item_count ?? 0) > 0
-      )
-      .map((item) => ({
-        id: item.id,
-        name: item.name || item.filename,
-        filename: item.filename,
-        format: item.content_type || "sinapi",
-        item_count: item.price_item_count ?? 0,
-        created_at: item.catalog_ts || "",
-        active: pricingRes.active?.base_id === item.id,
-        documentId: item.id,
-      }));
-    setCatalogBases(fromCatalog);
+  const refreshSinapiStatus = useCallback(async () => {
+    try {
+      const res = await api.pricingSyncBankReferences();
+      setSinapiImported((res.references ?? []).length > 0);
+    } catch {
+      setSinapiImported(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -124,8 +102,8 @@ function BudgetPageContent() {
       setObraType(r.default);
     }).catch(() => {});
     refreshSaved();
-    refreshBases();
-  }, [refreshBases, refreshSaved]);
+    refreshSinapiStatus();
+  }, [refreshSinapiStatus, refreshSaved]);
 
   useEffect(() => {
     if (!projectId) {
@@ -160,21 +138,7 @@ function BudgetPageContent() {
     });
   }, []);
 
-  const priceBases = useMemo(() => {
-    const seen = new Set<string>();
-    const merged: PriceBaseOption[] = [];
-    for (const b of [...catalogBases, ...legacyBases]) {
-      if (seen.has(b.id)) continue;
-      seen.add(b.id);
-      merged.push(b);
-    }
-    return merged;
-  }, [catalogBases, legacyBases]);
-
-  const activeBaseId =
-    priceBases.find((b) => b.active)?.id ||
-    priceBaseStatus?.base_id ||
-    "";
+  const priceBasesDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const persistProject = useCallback(
     (values: ProjectFormValues) => {
@@ -197,6 +161,28 @@ function BudgetPageContent() {
     },
     [session]
   );
+
+  const handlePriceBasesChange = (next: BudgetPriceBaseSelection[]) => {
+    if (!session) return;
+    setSession({
+      ...session,
+      project: {
+        ...session.project,
+        price_bases: next,
+      },
+    });
+    if (priceBasesDebounce.current) clearTimeout(priceBasesDebounce.current);
+    priceBasesDebounce.current = setTimeout(async () => {
+      try {
+        const updated = await api.pricingUpdateProject(session.session_id, {
+          price_bases: next,
+        });
+        setSession(updated);
+      } catch (err) {
+        showActionError(err, "Falha ao aplicar bases de preços");
+      }
+    }, 500);
+  };
 
   const handleProjectChange = (values: ProjectFormValues) => {
     if (!session) return;
@@ -230,42 +216,33 @@ function BudgetPageContent() {
     }
   };
 
-  const handleBaseChange = async (baseId: string, isKnowledge: boolean) => {
-    if (!baseId) return;
-    setLoading(true);
-    try {
-      if (isKnowledge) {
-        await api.knowledgeActivatePriceBase(baseId);
-      } else {
-        await api.pricingActivateBase(baseId);
-      }
-      await refreshBases();
-      if (session) {
-        const base = priceBases.find((b) => b.id === baseId);
-        const updated = await api.pricingUpdateProject(session.session_id, {
-          base_preco: base?.name || "",
-        });
-        setSession(updated);
-      }
-    } catch (err) {
-      setDialog({
-        open: true,
-        title: "Falha ao trocar base",
-        message: err instanceof Error ? err.message : "Erro",
-        variant: "error",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleNew = async () => {
     setLoading(true);
     setError(null);
     setActiveDbId(null);
     try {
       const result = await api.pricingNewTemplate(obraType);
-      setSession(result);
+      let nextSession = result;
+      try {
+        const refs = await api.pricingSyncBankReferences();
+        const first = refs.references?.[0];
+        if (first?.reference) {
+          nextSession = await api.pricingUpdateProject(result.session_id, {
+            price_bases: [
+              {
+                source: "sinapi",
+                label: "SINAPI",
+                enabled: true,
+                uf: "SP",
+                reference: first.reference,
+              },
+            ],
+          });
+        }
+      } catch {
+        /* aplica depois na UI */
+      }
+      setSession(nextSession);
       setActiveTab("etapas");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao criar orçamento");
@@ -495,13 +472,13 @@ function BudgetPageContent() {
               }
             />
 
-            {!priceBaseStatus?.loaded && (
+            {!sinapiImported && (
               <div className="rounded-xl bg-amber-500/10 px-4 py-3 text-sm text-amber-200 ring-1 ring-amber-500/30">
-                Configure uma base de preços em{" "}
-                <a href="/settings" className="text-cyan-300 underline">
-                  Configurações → Biblioteca
+                Importe ao menos um período SINAPI em{" "}
+                <a href="/settings/price-bases" className="text-cyan-300 underline">
+                  Configurações → Bases de preços
                 </a>{" "}
-                antes de compor serviços.
+                e selecione base, UF e versão abaixo antes de compor serviços.
               </div>
             )}
 
@@ -536,16 +513,20 @@ function BudgetPageContent() {
                 )}
 
                 {!isFullHeightTab && (
-                  <BudgetProjectForm
-                    project={session.project}
-                    bdiTypes={bdiTypes}
-                    priceBases={priceBases}
-                    activeBaseId={activeBaseId}
-                    disabled={loading}
-                    onChange={handleProjectChange}
-                    onObraTypeChange={handleObraTypeChange}
-                    onBaseChange={handleBaseChange}
-                  />
+                  <>
+                    <BudgetProjectForm
+                      project={session.project}
+                      bdiTypes={bdiTypes}
+                      disabled={loading}
+                      onChange={handleProjectChange}
+                      onObraTypeChange={handleObraTypeChange}
+                    />
+                    <BudgetPriceBasesPanel
+                      value={session.project?.price_bases ?? []}
+                      disabled={loading}
+                      onChange={handlePriceBasesChange}
+                    />
+                  </>
                 )}
 
                 <div className="flex shrink-0 gap-1 border-b border-slate-700/60">

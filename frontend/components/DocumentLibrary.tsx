@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ActionDialog from "@/components/ActionDialog";
 import KnowledgeCatalogStatsCards from "@/components/KnowledgeCatalogStatsCards";
 import { cn, formatDate } from "@/lib/utils";
+import { useKnowledgeWebImportOptional } from "@/context/KnowledgeWebImportContext";
 import type {
   KnowledgeCatalogEntry,
   KnowledgeIngestResponse,
@@ -91,7 +92,6 @@ export default function DocumentLibrary({
   catalog,
   stats = null,
   onIngest,
-  onIngestWeb,
   onActivatePriceBase,
   onIndexBudgetModel,
   onUpdateDocument,
@@ -108,10 +108,16 @@ export default function DocumentLibrary({
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<KnowledgeIngestResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<{ open: boolean; title: string; message: string }>({
+  const [dialog, setDialog] = useState<{
+    open: boolean;
+    title: string;
+    message: string;
+    variant?: "success" | "error" | "info";
+  }>({
     open: false,
     title: "",
     message: "",
+    variant: "info",
   });
   const [editItem, setEditItem] = useState<KnowledgeCatalogEntry | null>(null);
   const [editName, setEditName] = useState("");
@@ -124,16 +130,20 @@ export default function DocumentLibrary({
   const [webUrl, setWebUrl] = useState("");
   const [webDocType, setWebDocType] = useState("auto");
   const [webForceOverwrite, setWebForceOverwrite] = useState(false);
-  const [webImporting, setWebImporting] = useState(false);
-  const [webProgress, setWebProgress] = useState<WebIngestProgress | null>(null);
-  const [webResult, setWebResult] = useState<string | null>(null);
-  const [webErrors, setWebErrors] = useState<{ url?: string; error?: string; stage?: string }[]>([]);
   const [catalogQuery, setCatalogQuery] = useState("");
+  const webImportJob = useKnowledgeWebImportOptional();
+  const webImporting = webImportJob?.importing ?? false;
+  const webProgress = webImportJob?.progress ?? null;
+  const webResult = webImportJob?.resultSummary ?? null;
+  const webImportError = webImportJob?.error ?? null;
+  const webErrorsFromJob = webImportJob?.errors ?? [];
 
   const filteredCatalog = useMemo(() => {
+    const priceTypes = new Set(["sinapi", "tcpo", "bases_precos", "orse", "cicro"]);
+    const base = view === "catalog" ? catalog.filter((i) => !priceTypes.has(i.content_type)) : catalog;
     const q = catalogQuery.trim().toLowerCase();
-    if (!q) return catalog;
-    return catalog.filter((item) => {
+    if (!q) return base;
+    return base.filter((item) => {
       const hay = [
         item.name,
         item.filename,
@@ -146,7 +156,19 @@ export default function DocumentLibrary({
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [catalog, catalogQuery]);
+  }, [catalog, catalogQuery, view]);
+
+  useEffect(() => {
+    if (!webImportJob || webImportJob.importing) return;
+    if (webImportJob.resultSummary) {
+      setWebUrl("");
+      setWebForceOverwrite(false);
+      onRefresh?.();
+    }
+    if (webImportJob.error) {
+      setError(webImportJob.error);
+    }
+  }, [webImportJob, onRefresh]);
 
   const pickFile = useCallback((incoming: File) => {
     setFile(incoming);
@@ -207,10 +229,18 @@ export default function DocumentLibrary({
       setDialog({
         open: true,
         title: "Documento excluído",
-        message: `"${name}" foi removido do catálogo e dos índices da IA.`,
+        message: `"${name}" foi removido do catálogo, do banco de preços (se SINAPI) e dos índices da IA.`,
+        variant: "success",
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao excluir documento");
+      const message = err instanceof Error ? err.message : "Erro ao excluir documento";
+      setDeleteTarget(null);
+      setDialog({
+        open: true,
+        title: "Falha ao excluir",
+        message,
+        variant: "error",
+      });
     } finally {
       setDeleting(false);
     }
@@ -295,75 +325,26 @@ export default function DocumentLibrary({
   };
 
   const handleWebImport = async () => {
-    if (!webUrl.trim() || !onIngestWeb) return;
-    setWebImporting(true);
-    setWebProgress({
-      phase: "parse",
-      current: 0,
-      total: 1,
-      percent: 0,
-      message: "Iniciando importação…",
-    });
-    setWebResult(null);
-    setWebErrors([]);
-    setError(null);
-    try {
-      const hint = resolveDocPreset(webDocType, options.document_type_presets ?? []);
-      const res = await onIngestWeb(
-        {
-          page_url: webUrl.trim(),
-          ...(hint?.contentType ? { content_type: hint.contentType } : {}),
-          ...(hint?.discipline ? { discipline: hint.discipline } : {}),
-          max_files: 200,
-          force: webForceOverwrite,
-        },
-        (progress) => setWebProgress(progress)
-      );
-      const ok = res.ingested > 0 || res.downloaded > 0;
-      const skipped = res.skipped ?? 0;
-      let summary = `${res.ingested} documento(s) importado(s) · ${res.downloaded} baixado(s) · ${res.discovered} link(s) encontrado(s)`;
-      const pagesFetched = res.pages_fetched;
-      if (pagesFetched && pagesFetched > 1) {
-        summary += ` · ${pagesFetched} página(s) varridas`;
-      }
-      if (skipped > 0) {
-        summary += ` · ${skipped} ignorado(s)`;
-        if (res.ingested === 0 && !webForceOverwrite) {
-          summary += " — marque «Forçar reimportação» para substituir arquivos já existentes";
-        }
-      }
-      setWebResult(summary);
-      setWebProgress({
-        phase: "done",
-        current: 1,
-        total: 1,
-        percent: 100,
-        message: "Importação concluída",
-      });
-      if (res.errors?.length) {
-        setWebErrors(res.errors);
-        if (!ok) {
-          setError(
-            res.errors[0]?.error ||
-              "Nenhum arquivo baixado. Verifique se a URL aponta para a página com os anexos (não a home do site)."
-          );
-        }
-      }
-      if (ok) {
-        setWebUrl("");
-        setWebForceOverwrite(false);
-        onRefresh?.();
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro na importação web");
-      setWebProgress(null);
-    } finally {
-      setWebImporting(false);
+    if (!webUrl.trim()) return;
+    if (!webImportJob) {
+      setError("Importação web indisponível nesta tela.");
+      return;
     }
+
+    setError(null);
+    webImportJob.clearResult();
+
+    const hint = resolveDocPreset(webDocType, options.document_type_presets ?? []);
+    webImportJob.startImport({
+      page_url: webUrl.trim(),
+      ...(hint?.contentType ? { content_type: hint.contentType } : {}),
+      ...(hint?.discipline ? { discipline: hint.discipline } : {}),
+      force: webForceOverwrite,
+    });
   };
 
   const showUpload = view === "all" || view === "import";
-  const showWeb = (view === "all" || view === "import") && !!onIngestWeb;
+  const showWeb = (view === "all" || view === "import") && !!webImportJob;
   const showCatalog = view === "all" || view === "catalog";
 
   return (
@@ -628,20 +609,25 @@ export default function DocumentLibrary({
             </div>
           )}
           {webResult && (
-            <p className={`mt-3 text-sm ${webErrors.length && !webResult.startsWith("0") ? "text-emerald-400" : webErrors.length ? "text-amber-300" : "text-emerald-400"}`}>
+            <p className={`mt-3 text-sm ${webErrorsFromJob.length && !webResult.startsWith("0") ? "text-emerald-400" : webErrorsFromJob.length ? "text-amber-300" : "text-emerald-400"}`}>
               {webResult}
             </p>
           )}
-          {webErrors.length > 0 && (
+          {webImportError && !webImporting && (
+            <p className="mt-3 text-sm text-red-300">{webImportError}</p>
+          )}
+          {webErrorsFromJob.length > 0 && (
             <ul className="mt-2 space-y-1 rounded-lg bg-red-500/10 p-3 text-xs text-red-300 ring-1 ring-red-500/20">
-              {webErrors.slice(0, 5).map((e, i) => (
+              {webErrorsFromJob.slice(0, 5).map((e, i) => (
                 <li key={i}>
                   {e.stage ? `[${e.stage}] ` : ""}
                   {e.error}
                   {e.url ? ` — ${e.url}` : ""}
                 </li>
               ))}
-              {webErrors.length > 5 && <li>… e mais {webErrors.length - 5} erro(s)</li>}
+              {webErrorsFromJob.length > 5 && (
+                <li>… e mais {webErrorsFromJob.length - 5} erro(s)</li>
+              )}
             </ul>
           )}
         </section>
@@ -649,6 +635,11 @@ export default function DocumentLibrary({
 
       {showCatalog && (
       <section className="rounded-2xl bg-slate-900/40 p-6 ring-1 ring-slate-800">
+        {error && (
+          <div className="mb-4 rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-300 ring-1 ring-red-500/30">
+            {error}
+          </div>
+        )}
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h3 className="text-base font-semibold text-white">
@@ -661,6 +652,9 @@ export default function DocumentLibrary({
             </h3>
             <p className="mt-1 text-xs text-slate-500">
               Pesquise por nome, número/ano (ex.: “6118”, “2019”, “IT”), arquivo, tipo ou disciplina.
+              {view === "catalog" && (
+                <> SINAPI/TCPO não aparecem aqui — use Configurações → Bases de preços.</>
+              )}
             </p>
           </div>
           <label className="w-full sm:max-w-md">
@@ -821,7 +815,7 @@ export default function DocumentLibrary({
         open={dialog.open}
         title={dialog.title}
         message={dialog.message}
-        variant="success"
+        variant={dialog.variant ?? "success"}
         onCancel={() => setDialog((d) => ({ ...d, open: false }))}
       />
 
@@ -909,7 +903,7 @@ export default function DocumentLibrary({
         title="Excluir documento"
         message={
           deleteTarget
-            ? `Remover "${deleteTarget.name || deleteTarget.filename}" do catálogo?\n\nO arquivo, metadados e trechos no índice FAISS serão apagados.${
+            ? `Remover "${deleteTarget.name || deleteTarget.filename}" do catálogo?\n\nO arquivo, metadados, índice FAISS e banco SINAPI (se aplicável) serão apagados.${
                 deleteTarget.is_active_price_base
                   ? "\n\nEste documento é a base de preços ativa — será desativada."
                   : ""
@@ -917,8 +911,9 @@ export default function DocumentLibrary({
             : ""
         }
         variant="confirm"
+        destructive
         confirmLabel={deleting ? "Excluindo…" : "Excluir"}
-        onConfirm={deleting ? undefined : handleConfirmDelete}
+        onConfirm={deleting ? undefined : () => void handleConfirmDelete()}
         onCancel={() => !deleting && setDeleteTarget(null)}
       />
     </>

@@ -1,0 +1,12 @@
+{
+  "sources": {
+    "sinapi": {
+      "name": "sinapi",
+      "label": "SINAPI",
+      "download_url": "https://www.caixa.gov.br/site/Paginas/downloads.aspx#categoria_888",
+      "custom": false,
+      "created_at": ""
+    }
+  },
+  "updated_at": "2026-06-22T18:39:38.852463+00:00"
+}

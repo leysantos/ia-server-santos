@@ -27,6 +27,12 @@ export default function NormBulkImportBanner() {
         <div className="flex items-center gap-3">
           <span className="font-mono text-xs text-violet-400">{pct}%</span>
           <Link
+            href="/console"
+            className="rounded-lg bg-slate-800/80 px-3 py-1 text-xs font-medium text-slate-200 ring-1 ring-slate-600 hover:bg-slate-700"
+          >
+            Console
+          </Link>
+          <Link
             href="/settings/imports"
             className="rounded-lg bg-violet-600/30 px-3 py-1 text-xs font-medium text-violet-100 ring-1 ring-violet-500/40 hover:bg-violet-600/50"
           >

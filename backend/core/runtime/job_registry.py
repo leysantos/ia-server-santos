@@ -137,6 +137,11 @@ class JobRegistry:
                 removed += 1
         return removed
 
+    def has_active_kind(self, kinds: str | tuple[str, ...]) -> bool:
+        wanted = (kinds,) if isinstance(kinds, str) else tuple(kinds)
+        with self._lock:
+            return any(job.status == "running" and job.kind in wanted for job in self._jobs.values())
+
 
 _registry = JobRegistry()
 

@@ -90,10 +90,17 @@ export function SettingsKnowledgeProvider({ children }: { children: ReactNode })
         try {
           const live = await api.consoleLive();
           const job =
-            live.active_jobs.find((j) => j.kind === "knowledge" || j.kind === "norm_bulk") ??
+            live.active_jobs.find(
+              (j) =>
+                j.kind === "knowledge" ||
+                j.kind === "norm_bulk" ||
+                j.kind === "knowledge_import"
+            ) ??
             live.recent_jobs.find(
               (j) =>
-                (j.kind === "knowledge" || j.kind === "norm_bulk") &&
+                (j.kind === "knowledge" ||
+                  j.kind === "norm_bulk" ||
+                  j.kind === "knowledge_import") &&
                 j.status === "running",
             );
           if (job) {

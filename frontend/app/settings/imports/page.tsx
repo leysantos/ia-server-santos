@@ -3,7 +3,7 @@
 import DocumentLibrary from "@/components/DocumentLibrary";
 import NormBulkImport from "@/components/NormBulkImport";
 import { useSettingsKnowledge } from "@/contexts/SettingsKnowledgeContext";
-import { api, knowledgeIngestWebWithProgress } from "@/services/api";
+import { api } from "@/services/api";
 
 export default function SettingsImportsPage() {
   const { options, refresh } = useSettingsKnowledge();
@@ -18,12 +18,6 @@ export default function SettingsImportsPage() {
       options={options}
       catalog={[]}
       onIngest={(formData) => api.knowledgeIngest(formData)}
-      onIngestWeb={(body, onProgress) =>
-        knowledgeIngestWebWithProgress(
-          { ...body, auto_index: true },
-          onProgress ?? (() => {})
-        )
-      }
       onRefresh={refresh}
     />
     </div>

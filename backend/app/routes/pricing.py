@@ -161,6 +161,7 @@ class ProjectUpdateRequest(BaseModel):
     orcamento: Optional[str] = None
     data_ref: Optional[str] = None
     processo: Optional[str] = None
+    price_bases: Optional[list[dict[str, Any]]] = None
 
 
 class EtapaCreateRequest(BaseModel):
@@ -553,6 +554,403 @@ async def reload_bases():
     ensure_providers_registered()
     loaded = await run_sync(reload_all_bases)
     return {"reloaded": loaded, "data_dir": str(_DEFAULT_DATA_DIR)}
+
+
+def _raise_price_sync_http_error(exc: Exception) -> None:
+    from pricing.sync.sinapi_errors import SinapiDownloadError
+
+    if isinstance(exc, SinapiDownloadError):
+        raise HTTPException(status_code=503, detail=exc.to_dict()) from exc
+    if isinstance(exc, FileNotFoundError):
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if isinstance(exc, ValueError):
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    logger.exception("price sync falhou")
+    raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+class PriceSyncRequest(BaseModel):
+    uf: str = Field(default="SP", min_length=2, max_length=2)
+    year: Optional[int] = None
+    month: Optional[int] = Field(default=None, ge=1, le=12)
+    local_file: Optional[str] = None
+    index_faiss: bool = True
+    reload_providers: bool = True
+    set_active: bool = False
+    include_open: bool = Field(
+        default=True,
+        description="Importar composições abertas (analítico/CPU)",
+    )
+    include_closed: bool = Field(
+        default=True,
+        description="Importar composições fechadas (sintéticas)",
+    )
+    include_insumos: bool = Field(default=True, description="Importar catálogo de insumos")
+
+
+@router.get("/sync/bank")
+def price_sync_bank(reference: str | None = Query(default=None)):
+    from pricing.sync.service import get_price_sync_service
+
+    return get_price_sync_service().bank_stats(reference=reference)
+
+
+@router.get("/sync/bank/references")
+def price_sync_bank_references():
+    from pricing.sync.service import get_price_sync_service
+
+    return {"references": get_price_sync_service().list_references()}
+
+
+@router.get("/sync/bank/inventory")
+def price_sync_bank_inventory():
+    """Totais globais e períodos importados agrupados por fonte (SINAPI, PPD/SEMINF, etc.)."""
+    from pricing.sync.service import get_price_sync_service
+
+    return get_price_sync_service().bank_inventory()
+
+
+class PriceBankActiveRequest(BaseModel):
+    reference: str = Field(..., min_length=3)
+
+
+@router.post("/sync/bank/active")
+def price_sync_bank_set_active(body: PriceBankActiveRequest):
+    from pricing.sync.service import get_price_sync_service
+
+    active = get_price_sync_service().set_active_reference(body.reference)
+    return {"active_reference": active}
+
+
+@router.delete("/sync/bank/references/{reference}")
+def price_sync_bank_delete_reference(reference: str):
+    from pricing.sync.service import get_price_sync_service
+
+    try:
+        return get_price_sync_service().delete_reference(reference)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.delete("/sync/bank/faiss/sinapi")
+def price_sync_bank_purge_sinapi_faiss(reference: str | None = Query(default=None)):
+    """Remove chunks legados SINAPI/TCPO do índice RAG cost_index (não afeta price_bank)."""
+    from pricing.sync.service import get_price_sync_service
+
+    return get_price_sync_service().purge_sinapi_faiss(reference=reference)
+
+
+@router.get("/tools/references")
+def pricing_tools_list_references():
+    from pricing.tools.budget_pricing_tools import BudgetPricingTools
+
+    return {"references": BudgetPricingTools.list_references()}
+
+
+@router.get("/tools/composition/{code}")
+def pricing_tools_open_composition(
+    code: str,
+    uf: str = Query(default="SP", min_length=2, max_length=2),
+    reference: str | None = Query(default=None),
+    format: str = Query(default="json", pattern="^(json|markdown)$"),
+):
+    """Consulta CPU aberta no price_bank (ComD/SemD por UF)."""
+    from pricing.tools.budget_pricing_tools import BudgetPricingTools
+
+    try:
+        comp = BudgetPricingTools.get_open_composition(code, uf=uf.upper(), reference=reference)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if format == "markdown":
+        return {
+            "markdown": BudgetPricingTools.format_open_composition_markdown(comp),
+            "meta": {
+                "code": comp.get("code"),
+                "uf": comp.get("price_uf"),
+                "reference": comp.get("reference"),
+            },
+        }
+    return comp
+
+
+@router.get("/sync/bank/composition/{code}")
+def price_sync_bank_composition(
+    code: str,
+    uf: str = Query(default="SP", min_length=2, max_length=2),
+    reference: str | None = Query(default=None),
+    compare_previous: bool = Query(default=True),
+):
+    from pricing.budget.price_bank_index import PriceBankIndex
+    from pricing.budget.price_bank_period_variation import compute_period_variation_warnings
+    from pricing.sync.service import get_price_sync_service
+
+    ref = PriceBankIndex.resolve_reference(reference)
+    comp = get_price_sync_service().get_open_composition(code, uf=uf.upper(), reference=ref)
+    if not comp:
+        raise HTTPException(status_code=404, detail=f"Composição aberta '{code}' não encontrada")
+    if compare_previous:
+        comp["period_variation"] = compute_period_variation_warnings(
+            comp, uf=uf.upper(), reference=ref
+        )
+    return comp
+
+
+@router.post("/sync/{source}/upload")
+async def price_sync_upload(
+    source: str,
+    file: UploadFile = File(...),
+    uf: str = Query(default="SP", min_length=2, max_length=2),
+    index_faiss: bool = Query(default=True),
+    reload_providers: bool = Query(default=True),
+    set_active: bool = Query(default=False),
+):
+    from config.settings import KNOWLEDGE_DIR
+    from pricing.sync.connectors import is_known_source
+    from pricing.sync.service import get_price_sync_service
+
+    if not is_known_source(source):
+        raise HTTPException(status_code=404, detail=f"Fonte '{source}' desconhecida")
+
+    suffix = Path(file.filename or "upload.zip").suffix.lower()
+    if suffix not in (".zip", ".xlsx", ".xls", ".csv"):
+        raise HTTPException(status_code=400, detail="Formato não suportado — use ZIP, XLSX ou CSV")
+
+    dest_dir = KNOWLEDGE_DIR / "sync" / "uploads" / source.lower()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = dest_dir / (file.filename or f"upload{suffix}")
+    content = await file.read()
+    dest_path.write_bytes(content)
+
+    try:
+        return await run_sync(
+            get_price_sync_service().sync,
+            source,
+            local_file=dest_path,
+            uf=uf,
+            index_faiss=index_faiss,
+            reload_providers=reload_providers,
+            set_active=set_active,
+        )
+    except Exception as exc:
+        _raise_price_sync_http_error(exc)
+
+
+@router.get("/sync/status")
+def price_sync_status():
+    from pricing.sync.service import get_price_sync_service
+
+    return get_price_sync_service().status()
+
+
+@router.get("/sync/sources")
+def price_sync_sources():
+    from pricing.sync.service import get_price_sync_service
+
+    return {"sources": get_price_sync_service().list_sources()}
+
+
+class PriceSourceCreateRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=40)
+    label: str = Field(..., min_length=2, max_length=80)
+    download_url: str = Field(default="")
+
+
+class PriceSourceConfigRequest(BaseModel):
+    download_url: str | None = None
+    label: str | None = Field(default=None, max_length=80)
+
+
+@router.post("/sync/sources")
+def price_sync_create_source(body: PriceSourceCreateRequest):
+    from pricing.sync.service import get_price_sync_service
+
+    try:
+        profile = get_price_sync_service().create_custom_source(
+            name=body.name,
+            label=body.label,
+            download_url=body.download_url,
+        )
+        return {"source": profile}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.patch("/sync/sources/{name}")
+def price_sync_update_source(name: str, body: PriceSourceConfigRequest):
+    from pricing.sync.service import get_price_sync_service
+
+    try:
+        profile = get_price_sync_service().update_source_config(
+            name,
+            download_url=body.download_url,
+            label=body.label,
+        )
+        return {"source": profile}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/sync/sources/{name}")
+def price_sync_delete_source(name: str):
+    from pricing.sync.service import get_price_sync_service
+
+    try:
+        return get_price_sync_service().delete_custom_source(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/sync/{source}/stream")
+async def price_sync_stream(source: str, body: PriceSyncRequest | None = None):
+    from pricing.sync.connectors import is_known_source, list_all_source_names
+    from pricing.sync.service import get_price_sync_service
+    from pricing.sync.stream import sync_stream_events
+
+    if not is_known_source(source):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Fonte '{source}' desconhecida. Disponíveis: {list_all_source_names()}",
+        )
+    body = body or PriceSyncRequest()
+    options: dict[str, Any] = {
+        "uf": body.uf,
+        "year": body.year,
+        "month": body.month,
+        "index_faiss": body.index_faiss,
+        "reload_providers": body.reload_providers,
+        "set_active": body.set_active,
+    }
+    if body.local_file:
+        options["local_file"] = Path(body.local_file)
+
+    service = get_price_sync_service()
+
+    def event_stream():
+        try:
+            for chunk in sync_stream_events(service, source, **options):
+                yield chunk
+        except Exception as exc:
+            from core.stream_events import format_sse
+
+            yield format_sse("error", {"error": str(exc)})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Content-Type": "text/event-stream; charset=utf-8",
+        },
+    )
+
+
+@router.post("/sync/{source}/upload/stream")
+async def price_sync_upload_stream(
+    source: str,
+    file: UploadFile = File(...),
+    uf: str = Query(default="SP", min_length=2, max_length=2),
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    month: int | None = Query(default=None, ge=1, le=12),
+    index_faiss: bool = Query(default=True),
+    reload_providers: bool = Query(default=True),
+    set_active: bool = Query(default=False),
+):
+    from config.settings import KNOWLEDGE_DIR
+    from pricing.sync.connectors import is_known_source
+    from pricing.sync.service import get_price_sync_service
+    from pricing.sync.stream import sync_stream_events
+
+    if not is_known_source(source):
+        raise HTTPException(status_code=404, detail=f"Fonte '{source}' desconhecida")
+
+    suffix = Path(file.filename or "upload.zip").suffix.lower()
+    allowed = {".zip", ".xlsx", ".xls", ".csv"}
+    if source.lower() == "ppd_seminf":
+        allowed.add(".xlsm")
+    if suffix not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail="Formato não suportado — use ZIP, XLSX, XLSM ou CSV",
+        )
+
+    dest_dir = KNOWLEDGE_DIR / "sync" / "uploads" / source.lower()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = dest_dir / (file.filename or f"upload{suffix}")
+    content = await file.read()
+    dest_path.write_bytes(content)
+
+    service = get_price_sync_service()
+    options: dict[str, Any] = {
+        "local_file": dest_path,
+        "uf": uf,
+        "index_faiss": index_faiss,
+        "reload_providers": reload_providers,
+        "set_active": set_active,
+    }
+    if year is not None:
+        options["year"] = year
+    if month is not None:
+        options["month"] = month
+
+    def event_stream():
+        try:
+            for chunk in sync_stream_events(service, source, **options):
+                yield chunk
+        except Exception as exc:
+            from core.stream_events import format_sse
+
+            yield format_sse("error", {"error": str(exc)})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Content-Type": "text/event-stream; charset=utf-8",
+        },
+    )
+
+
+@router.post("/sync/{source}")
+async def price_sync_source(source: str, body: PriceSyncRequest | None = None):
+    from pricing.sync.connectors import is_known_source, list_all_source_names
+    from pricing.sync.service import get_price_sync_service
+
+    if not is_known_source(source):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Fonte '{source}' desconhecida. Disponíveis: {list_all_source_names()}",
+        )
+    body = body or PriceSyncRequest()
+    options: dict[str, Any] = {
+        "uf": body.uf,
+        "year": body.year,
+        "month": body.month,
+        "index_faiss": body.index_faiss,
+        "reload_providers": body.reload_providers,
+        "set_active": body.set_active,
+    }
+    if body.local_file:
+        options["local_file"] = Path(body.local_file)
+
+    try:
+        return await run_sync(get_price_sync_service().sync, source, **options)
+    except Exception as exc:
+        _raise_price_sync_http_error(exc)
+
+
+@router.post("/sync")
+async def price_sync_all(skip_manual: bool = Query(default=True)):
+    from pricing.sync.service import get_price_sync_service
+
+    return await run_sync(
+        get_price_sync_service().sync_all,
+        skip_manual=skip_manual,
+    )
 
 
 @router.post("/providers/{name}/load")

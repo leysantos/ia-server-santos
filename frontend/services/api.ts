@@ -22,6 +22,7 @@ import type {
   ModelsStatusResponse,
   BdiObraType,
   BudgetGenerateRequest,
+  BudgetPriceBaseSelection,
   BudgetSessionResponse,
   BudgetStreamEvent,
   BudgetSummary,
@@ -33,6 +34,13 @@ import type {
   OrchestrateResponse,
   PriceBaseActiveStatus,
   PriceBaseInfo,
+  PriceBankReference,
+  PriceBankStats,
+  PriceBankInventory,
+  PriceSyncResult,
+  PriceSyncSourceInfo,
+  PriceSyncStatusResponse,
+  OpenCompositionDetail,
   SystemBenchmarkResponse,
   ProjectDetail,
   ProjectFormatsResponse,
@@ -147,6 +155,10 @@ export function formatApiError(errorText: string, status?: number): string {
   try {
     const parsed = JSON.parse(trimmed) as { detail?: unknown };
     if (typeof parsed.detail === "string") return parsed.detail;
+    if (parsed.detail && typeof parsed.detail === "object" && "message" in parsed.detail) {
+      const msg = (parsed.detail as { message?: string }).message;
+      if (msg) return msg;
+    }
     if (parsed.detail != null) return JSON.stringify(parsed.detail);
   } catch {
     /* texto puro */
@@ -387,6 +399,38 @@ export async function* knowledgeIngestWebStream(
     }
   }
 
+  if (buffer.trim()) {
+    const event = parseSseBlock(buffer.trim());
+    if (event) {
+      yield { type: event.type, data: event.data };
+    }
+  }
+}
+
+async function* readSseStream(
+  response: Response
+): AsyncGenerator<{ type: string; data: unknown }> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("Streaming não suportado neste navegador");
+  }
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split("\n\n");
+    buffer = blocks.pop() ?? "";
+    for (const block of blocks) {
+      const trimmed = block.trim();
+      if (!trimmed || trimmed.startsWith(":")) continue;
+      const event = parseSseBlock(trimmed);
+      if (event) {
+        yield { type: event.type, data: event.data };
+      }
+    }
+  }
   if (buffer.trim()) {
     const event = parseSseBlock(buffer.trim());
     if (event) {
@@ -1263,6 +1307,243 @@ export const api = {
     return request("/pricing/bases/reload", { method: "POST" });
   },
 
+  pricingSyncStatus(): Promise<PriceSyncStatusResponse> {
+    return request("/pricing/sync/status");
+  },
+
+  pricingSyncSources(): Promise<{ sources: PriceSyncSourceInfo[] }> {
+    return request("/pricing/sync/sources");
+  },
+
+  pricingSyncCreateSource(body: {
+    name: string;
+    label: string;
+    download_url?: string;
+  }): Promise<{ source: { name: string; label: string; download_url: string; custom: boolean } }> {
+    return request("/pricing/sync/sources", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  pricingSyncUpdateSourceConfig(
+    name: string,
+    body: { download_url?: string; label?: string }
+  ): Promise<{ source: { name: string; label: string; download_url: string; custom: boolean } }> {
+    return request(`/pricing/sync/sources/${encodeURIComponent(name)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  },
+
+  pricingSyncDeleteSource(name: string): Promise<{ deleted: string }> {
+    return request(`/pricing/sync/sources/${encodeURIComponent(name)}`, { method: "DELETE" });
+  },
+
+  pricingSyncBank(reference?: string): Promise<PriceBankStats> {
+    const qs = reference ? `?reference=${encodeURIComponent(reference)}` : "";
+    return request(`/pricing/sync/bank${qs}`);
+  },
+
+  pricingSyncBankReferences(): Promise<{ references: PriceBankReference[] }> {
+    return request("/pricing/sync/bank/references");
+  },
+
+  pricingSyncBankInventory(): Promise<PriceBankInventory> {
+    return request("/pricing/sync/bank/inventory");
+  },
+
+  pricingSyncSetActiveReference(reference: string): Promise<{ active_reference: string }> {
+    return request("/pricing/sync/bank/active", {
+      method: "POST",
+      body: JSON.stringify({ reference }),
+    });
+  },
+
+  pricingSyncDeleteReference(reference: string): Promise<{
+    reference: string;
+    index_removed: boolean;
+    directory_removed: boolean;
+    sync_files_removed: string[];
+    faiss_purge?: { chunks_removed: number; remaining: number };
+  }> {
+    return request(`/pricing/sync/bank/references/${encodeURIComponent(reference)}`, {
+      method: "DELETE",
+    });
+  },
+
+  pricingPurgeSinapiFaiss(reference?: string): Promise<{
+    index: string;
+    reference: string | null;
+    chunks_removed: number;
+    remaining: number;
+  }> {
+    const params = reference ? `?reference=${encodeURIComponent(reference)}` : "";
+    return request(`/pricing/sync/bank/faiss/sinapi${params}`, { method: "DELETE" });
+  },
+
+  pricingSyncOpenComposition(
+    code: string,
+    options?: { uf?: string; reference?: string }
+  ): Promise<OpenCompositionDetail> {
+    const params = new URLSearchParams();
+    if (options?.uf) params.set("uf", options.uf);
+    if (options?.reference) params.set("reference", options.reference);
+    const qs = params.toString();
+    return request(
+      `/pricing/sync/bank/composition/${encodeURIComponent(code)}${qs ? `?${qs}` : ""}`
+    );
+  },
+
+  pricingSyncSource(
+    source: string,
+    body?: {
+      uf?: string;
+      year?: number;
+      month?: number;
+      index_faiss?: boolean;
+      reload_providers?: boolean;
+      set_active?: boolean;
+    }
+  ): Promise<PriceSyncResult> {
+    return request(`/pricing/sync/${encodeURIComponent(source)}`, {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    });
+  },
+
+  async pricingSyncSourceWithProgress(
+    source: string,
+    body: {
+      uf?: string;
+      year?: number;
+      month?: number;
+      index_faiss?: boolean;
+      reload_providers?: boolean;
+      set_active?: boolean;
+    } | undefined,
+    onProgress: (progress: WebIngestProgress) => void,
+    signal?: AbortSignal
+  ): Promise<PriceSyncResult> {
+    const response = await fetch(
+      `${API_BASE_URL}/pricing/sync/${encodeURIComponent(source)}/stream`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify(body ?? {}),
+        signal,
+      }
+    );
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    for await (const event of readSseStream(response)) {
+      if (event.type === "progress") {
+        onProgress(event.data as WebIngestProgress);
+      } else if (event.type === "done") {
+        return event.data as PriceSyncResult;
+      } else if (event.type === "error") {
+        const payload = event.data as { error?: string };
+        throw new Error(payload.error || "Erro na importação");
+      }
+    }
+    throw new Error("Importação encerrada sem resultado");
+  },
+
+  async pricingSyncUploadWithProgress(
+    source: string,
+    file: File,
+    options: {
+      uf?: string;
+      year?: number;
+      month?: number;
+      index_faiss?: boolean;
+      reload_providers?: boolean;
+      set_active?: boolean;
+    } | undefined,
+    onProgress: (progress: WebIngestProgress) => void,
+    signal?: AbortSignal
+  ): Promise<PriceSyncResult> {
+    const params = new URLSearchParams();
+    if (options?.uf) params.set("uf", options.uf);
+    if (options?.year != null) params.set("year", String(options.year));
+    if (options?.month != null) params.set("month", String(options.month));
+    if (options?.index_faiss === false) params.set("index_faiss", "false");
+    if (options?.reload_providers === false) params.set("reload_providers", "false");
+    if (options?.set_active === false) params.set("set_active", "false");
+    const qs = params.toString();
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await fetch(
+      `${API_BASE_URL}/pricing/sync/${encodeURIComponent(source)}/upload/stream${qs ? `?${qs}` : ""}`,
+      {
+        method: "POST",
+        headers: getMultipartAuthHeaders(),
+        body: formData,
+        signal,
+      }
+    );
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    for await (const event of readSseStream(response)) {
+      if (event.type === "progress") {
+        onProgress(event.data as WebIngestProgress);
+      } else if (event.type === "done") {
+        return event.data as PriceSyncResult;
+      } else if (event.type === "error") {
+        const payload = event.data as { error?: string };
+        throw new Error(payload.error || "Erro no upload");
+      }
+    }
+    throw new Error("Upload encerrado sem resultado");
+  },
+
+  async pricingSyncUpload(
+    source: string,
+    file: File,
+    options?: {
+      uf?: string;
+      index_faiss?: boolean;
+      reload_providers?: boolean;
+      set_active?: boolean;
+    }
+  ): Promise<PriceSyncResult> {
+    const params = new URLSearchParams();
+    if (options?.uf) params.set("uf", options.uf);
+    if (options?.index_faiss === false) params.set("index_faiss", "false");
+    if (options?.reload_providers === false) params.set("reload_providers", "false");
+    if (options?.set_active === false) params.set("set_active", "false");
+    const qs = params.toString();
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await fetch(
+      `${API_BASE_URL}/pricing/sync/${encodeURIComponent(source)}/upload${qs ? `?${qs}` : ""}`,
+      {
+        method: "POST",
+        headers: getMultipartAuthHeaders(),
+        body: formData,
+      }
+    );
+    if (!response.ok) {
+      const text = await response.text();
+      try {
+        const parsed = JSON.parse(text) as { detail?: string | { message?: string; code?: string } };
+        const detail = parsed.detail;
+        if (typeof detail === "object" && detail?.message) {
+          throw new Error(detail.message);
+        }
+        if (typeof detail === "string") {
+          throw new Error(detail);
+        }
+      } catch (e) {
+        if (e instanceof Error && e.message !== text) throw e;
+      }
+      throw new Error(text || `Erro HTTP ${response.status}`);
+    }
+    return response.json();
+  },
+
   pricingImportPpd(file?: File): Promise<BudgetSessionResponse> {
     if (file) {
       const formData = new FormData();
@@ -1398,7 +1679,10 @@ export const api = {
     });
   },
 
-  pricingUpdateProject(sessionId: string, body: Record<string, string | undefined>): Promise<BudgetSessionResponse> {
+  pricingUpdateProject(
+    sessionId: string,
+    body: Record<string, string | undefined | BudgetPriceBaseSelection[] | undefined>
+  ): Promise<BudgetSessionResponse> {
     return withBudgetSessionRecovery(sessionId, (sid) =>
       request(`/pricing/budget/${sid}/project`, {
         method: "PATCH",

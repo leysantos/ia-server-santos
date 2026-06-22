@@ -15,6 +15,14 @@
       "discipline": "INCÊNDIO",
       "register_price_base": false,
       "register_budget_model": false
+    },
+    {
+      "id": "instrucao_normativa_sicro",
+      "label": "INSTRUÇÃO NORMATIVA - SICRO",
+      "content_type": "nbrs",
+      "discipline": "ORÇAMENTO",
+      "register_price_base": false,
+      "register_budget_model": false
     }
   ]
 }

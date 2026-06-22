@@ -6,9 +6,9 @@
 | Campo | Valor |
 |-------|-------|
 | **Versão do sistema** | 1.0.0 |
-| **Última atualização** | 2026-06-21 |
-| **Marco atual** | Knowledge maintenance — OCR + FAISS compact + cobertura |
-| **Próximo foco** | ODA/LibreDWG composição real · editor carimbo · ICP-Brasil |
+| **Última atualização** | 2026-06-22 |
+| **Marco atual** | Separação banco de preços vs conhecimento RAG · SINAPI multi-UF no orçamento |
+| **Próximo foco** | Reimport PPD/modelos · ODA/LibreDWG · ICP-Brasil |
 | **Repositório** | [github.com/leysantos/ia-server-santos](https://github.com/leysantos/ia-server-santos) |
 | **Branch principal** | `main` |
 | **Modo padrão de agentes** | Inteligente (`USE_INTELLIGENT_AGENTS=true`) |
@@ -51,10 +51,11 @@ ia-server-santos/
 | Evolution Loop v1 | 🟢 implementado, **off por default** |
 | Agent Generation Loop v1 | 🟢 proposta/sandbox/promotion gate, **off por default** |
 | Learning Loop v1 + v2 | 🟢 feedback + auto-tune prompts (v2 opt-in) |
-| RAG v2 pipeline | 🟢 **9.598 chunks NBR** · 613 códigos · cobertura efetiva ~84% · RAG validado (NBR 6118/6122) |
-| Knowledge Layer multi-base | 🟢 FAISS por base (NBR, SINAPI, TCPO, TDR…) — `USE_KNOWLEDGE_ROUTER=false` |
+| RAG v2 pipeline | 🟢 **~14.5k chunks NBR** · cobertura ~90% códigos · OCR Tesseract ativo · retry pendentes em andamento |
+| **Sync bases de preço** | 🟢 barra unificada · tipos custom · download SINAPI via portal `categoria_888` (API SharePoint + retificações) · inventário · **sem catálogo RAG** |
+| Knowledge Layer multi-base | 🟢 FAISS por base (NBR, TDR, catálogos…) — SINAPI/TCPO **fora** do catálogo/FAISS RAG |
 | **Norm Pack Studio** | 🟢 Gap analysis por pacote (arquitetura, documentação, PCI, estrutural) · `/settings/norm-packs` · API `/knowledge/norm-packs/*` · só PDF licenciado / legislação pública |
-| **Importação em lote NBR/NR** | 🟢 `/settings/imports` · pasta ou multi-PDF · classificação automática · SSE progresso **por arquivo na indexação FAISS** · job `norm_bulk` no Console · **CSV auditoria pós-lote** · CLI `scripts/ingest_nbr_folder.py` |
+| **Importação em lote NBR/NR** | 🟢 `/settings/imports` · pasta ou multi-PDF · classificação automática (**IN SICRO → ORÇAMENTO**) · SSE progresso **por arquivo na indexação FAISS** · **embed batch Ollama + indexação parcial** (chunks resilientes) · job `norm_bulk` no Console · **CSV auditoria pós-lote** · CLI `scripts/ingest_nbr_folder.py` |
 | **Manutenção / Backup** | 🟢 `/settings/maintenance` · backup app, PostgreSQL, knowledge, FAISS → Google Drive · **restore** por stamp (`make restore STAMP=…`, UI e `/maintenance/restore`) · CLI `scripts/maintenance/run_backup.sh` · backup WSL completo **removido** |
 | **Serviços / DevOps** | 🟢 `/settings/servers` · API `/devops/*` · status PostgreSQL/API/Ollama/Redis/MinIO · subir stack backend (Docker + db-init) · start/stop frontend e Celery · console bash com blocklist · API e frontend manual (`make api`, `npm run dev`) |
 | Knowledge storage flat | 🟢 `knowledge/raw/documents/` + metadata sidecar + `catalog.jsonl` |
@@ -100,22 +101,26 @@ Config padrão: chat=`qwen3:8b`, eng=`qwen3:14b`, fallback=`qwen3-coder`, embed=
 
 ## Bloqueio principal
 
-**Bases de custo ainda não indexadas** — NBRs indexadas no FAISS (**9.598 chunks**, 696 paths / 943 efetivos com dedup). Falta popular SINAPI/TCPO em `backend/knowledge/raw/documents/`:
+**Bases de custo — operacionais via `price_bank`, não via catálogo RAG**
 
-| Metadata (`discipline`) | Exemplo de conteúdo |
-|-------------------------|---------------------|
-| `estruturas` | NBRs |
-| `orcamento` | SINAPI, TCPO |
-| `geral` | TDRs, projetos |
-| `arquitetura` | Catálogos |
-| `meio_ambiente` | Dados regionais |
-
-Disciplina e tipo (`content_type`) ficam no sidecar `{arquivo}.knowledge.json` e em `catalog.jsonl` — **sem subpastas por disciplina ou tipo**.
+NBRs: **~14.5k chunks** FAISS (90%+ cobertura). SINAPI/TCPO vivem em `knowledge/price_bank/BR-YYYY-MM/` + `composition_index` (orçamento). Sync **não** grava mais em `catalog.jsonl` nem indexa `cost_index`. Purge: `DELETE /pricing/sync/bank/faiss/sinapi` ou botão na UI. Import via UI ou API:
 
 ```bash
-cd backend && python3 scripts/index_knowledge_bases.py
-# Ou via UI: http://localhost:3000/settings → Upload em lote / Indexar NBR
+# Sync mês/ano específico (SSE)
+curl -N -X POST http://localhost:8000/pricing/sync/sinapi/stream \
+  -H 'Content-Type: application/json' \
+  -d '{"uf":"SP","year":2026,"month":5,"index_faiss":true}'
+
+# Listar referências / trocar ativa
+curl http://localhost:8000/pricing/sync/bank/references
+curl -X POST http://localhost:8000/pricing/sync/bank/active \
+  -H 'Content-Type: application/json' -d '{"reference":"BR-2026-05"}'
+
+# Prévia CPU por UF e período
+curl 'http://localhost:8000/pricing/sync/bank/composition/95995?uf=AM&reference=BR-2026-05'
 ```
+
+UI: `/settings/price-bases` → seletor **tipo de base** + **mês/ano** + botões download automático / ZIP / importar local · tabela de períodos por fonte · prévia CPU com filtro de base · `/budget` → painel Bases de preços.
 
 Dependências de indexação (knowledge): `pip install pypdf python-multipart openpyxl python-docx xlrd`  
 Dependências de indexação (project RAG): `ezdxf ifcopenshell` (opcional CAD/BIM)
@@ -1236,6 +1241,8 @@ Settings completas: `backend/config/settings.py`
 
 | Data | Decisão | Motivo |
 |------|---------|--------|
+| 2026-06-22 | **Avisos variação SINAPI na prévia CPU** | Compara com mês anterior importado; alerta >30% (total + insumos, ex. CBUQ 1518) |
+| 2026-06-20 | **Separar banco de preços (SINAPI/TCPO) do catálogo RAG** | Sync grava só `price_bank`; catálogo `/settings/catalog` = NBR/TDR/modelos; purge `cost_index` ao excluir período; UI stats sem SINAPI FAISS |
 | 2026-06-21 | Pipeline manutenção knowledge (OCR, órfãos, compact FAISS, index pending) | `pdf_text_extractor`, `knowledge_maintenance.py`, `POST /knowledge/maintenance` |
 | 2026-06-20 | Force reindex NBR + fix `pdf_indexer` (`doc_type`) + cobertura por PDF | Indexação falhava silenciosamente; banner reflete path/dedup/código |
 | 2026-06-20 | `normalize_nbr_code` + NBR explícita prioriza agente no router | `06122`≠`6122` quebrava boost; hint de disciplina bloqueava geotecnia |
@@ -1287,7 +1294,14 @@ Settings completas: `backend/config/settings.py`
 | 2026-06 | Carimbo workflow — filtro legal NBR | RAG normativo + carimbo citam só `abnt_licensed_pdf`; legislação pública excluída do carimbo; metadado na ingestão e indexação PDF |
 | 2026-06 | Norm gaps Wizard + export CSV | Alertas de NBR crítica pendente no Wizard de Entrega; `norm_gaps` em get_package; CSV em Pacotes NBR e wizard |
 | 2026-06-20 | DevOps local em `/settings/servers` | Status/start PostgreSQL; console bash dev; API/frontend manuais |
-| 2026-06-20 | Restore por stamp + fim do backup WSL | Backups seletivos restauráveis em infra nova; export WSL descontinuado |
+| 2026-06-21 | SINAPI formato nacional 2025+ | ZIP único `SINAPI-AAAA-MM-formato-xlsx.zip`; planilha Referência multi-UF; parser CSD/CCD+Analítico; ComD e SemD no banco |
+| 2026-06-21 | Links SINAPI Caixa (upload manual) | `default.aspx` entra em redirect loop; UI/API usam `caixa.gov.br/sinapi` + `downloads.aspx#categoria_{UF}`; espelho sumário como fallback |
+| 2026-06-21 | Import SINAPI com barra de progresso SSE | Endpoints `/pricing/sync/{source}/stream` e `/upload/stream`; UI `PriceImportProgressBar`; fases download→parse→bank→ingest→FAISS |
+| 2026-06-21 | ComD + SemD sempre (sem checkbox) | `dual_desoneracao` no manifest; campos `price_sem_desoneracao` / `unit_price_sem` no banco |
+| 2026-06-21 | CORS dev porta 3001 | Next.js fallback quando :3000 ocupado; `CORS_ALLOWED_ORIGINS` inclui 3001 |
+| 2026-06-22 | Embed batch Ollama + indexação parcial na importação normas | HTTP 500 sob carga em lotes SICRO; `/api/embed` em batch de 4, throttle 150ms, backoff maior em 5xx, chunks falhos ignorados (não abortam PDF inteiro); classificador IN SICRO → ORÇAMENTO |
+| 2026-06-22 | Save atômico FAISS (`chunks.json`) | `JSONDecodeError` ao importar DNIT/SICRO: UI fazia `reload_from_disk` enquanto `save()` gravava 50MB; escrita temp+`os.replace`, backup `.bak`, reload só se mtime mudou e sem job `knowledge`/`norm_bulk` ativo |
+| 2026-06-22 | Importação web em background + Console | `KnowledgeWebImportContext` + banner global; job `knowledge_import` no Operations Console; fetch sem AbortSignal — navegar para `/console` não cancela importação DNIT/SICRO |
 
 ---
 

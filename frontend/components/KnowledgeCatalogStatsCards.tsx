@@ -31,6 +31,15 @@ const INDEX_BASE_COLORS: Record<string, string> = {
   budget_models: "text-fuchsia-300",
 };
 
+/** Índices FAISS de conhecimento normativo — SINAPI/TCPO operam via price_bank. */
+const RAG_KNOWLEDGE_INDEX_KEYS = new Set([
+  "nbr",
+  "tdr",
+  "catalogos",
+  "regional",
+  "budget_models",
+]);
+
 interface KnowledgeCatalogStatsCardsProps {
   stats: KnowledgeStatsResponse | null;
   catalog: KnowledgeCatalogEntry[];
@@ -115,6 +124,7 @@ export default function KnowledgeCatalogStatsCards({
   const byType = useMemo(() => {
     const fromStats = stats?.by_content_type ?? {};
     const entries = Object.entries(fromStats)
+      .filter(([value]) => !["sinapi", "tcpo", "bases_precos", "orse", "cicro"].includes(value))
       .map(([value, count]) => ({
         value,
         count,
@@ -125,6 +135,18 @@ export default function KnowledgeCatalogStatsCards({
   }, [stats?.by_content_type, options]);
 
   const indexChunks = stats?.index?.multi_index ?? {};
+  const ragIndexChunks = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(indexChunks).filter(([base]) => RAG_KNOWLEDGE_INDEX_KEYS.has(base))
+      ),
+    [indexChunks]
+  );
+  const legacyPriceFaiss = useMemo(() => {
+    const sinapi = indexChunks.sinapi ?? 0;
+    const tcpo = indexChunks.tcpo ?? 0;
+    return sinapi + tcpo;
+  }, [indexChunks]);
   const indexNames = stats?.index?.index_names ?? {};
   const totalDocs = stats?.catalog_total ?? catalog.length;
   const totalChunks = stats?.index?.total_multi_chunks ?? 0;
@@ -141,7 +163,8 @@ export default function KnowledgeCatalogStatsCards({
       <div>
         <h4 className="text-sm font-semibold text-white">Resumo do acervo</h4>
         <p className="mt-0.5 text-xs text-slate-500">
-          Totais do catálogo central e cobertura dos índices FAISS para busca pela IA.
+          Conhecimento normativo (NBR, TDR, catálogos). Bases SINAPI/TCPO ficam em{" "}
+          <span className="text-slate-400">Configurações → Bases de preços</span>.
         </p>
       </div>
 
@@ -264,13 +287,13 @@ export default function KnowledgeCatalogStatsCards({
         </div>
       )}
 
-      {Object.keys(indexChunks).length > 0 && (
+      {Object.keys(ragIndexChunks).length > 0 && (
         <div>
           <h4 className="mb-3 text-xs font-medium uppercase tracking-wider text-slate-500">
-            Chunks por índice FAISS
+            Chunks por índice FAISS (conhecimento)
           </h4>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {Object.entries(indexChunks)
+            {Object.entries(ragIndexChunks)
               .sort(([, a], [, b]) => b - a)
               .map(([base, chunks]) => {
                 const baseLabel =
@@ -295,6 +318,12 @@ export default function KnowledgeCatalogStatsCards({
                 );
               })}
           </div>
+          {legacyPriceFaiss > 0 && (
+            <p className="mt-2 text-xs text-amber-400/90">
+              {legacyPriceFaiss.toLocaleString("pt-BR")} chunks legados SINAPI/TCPO ainda no FAISS
+              (não usados no orçamento). Limpe em Bases de preços → «Limpar índice RAG SINAPI».
+            </p>
+          )}
         </div>
       )}
     </div>

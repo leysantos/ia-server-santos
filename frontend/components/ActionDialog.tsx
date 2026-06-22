@@ -167,12 +167,14 @@ export default function ActionDialog({
           <button
             ref={confirmRef}
             type="button"
+            disabled={!onConfirm}
             onClick={() => {
-              onConfirm?.();
-              if (variant !== "confirm") onCancel();
+              void Promise.resolve(onConfirm?.()).then(() => {
+                if (variant === "confirm") onCancel();
+              });
             }}
             className={cn(
-              "rounded-lg px-4 py-2 text-sm font-medium transition",
+              "rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-50",
               confirmButtonClass
             )}
           >

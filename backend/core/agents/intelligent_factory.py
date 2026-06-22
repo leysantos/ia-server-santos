@@ -5,9 +5,11 @@ Factory de agentes inteligentes (RAG v2 + LLM) para o dispatcher.
 from core.agent_registry import get_agent_name
 from core.agents.base_agent_intelligent import DISCIPLINE_NBRS, BaseAgentIntelligent
 from core.agents.geotecnia_intelligent import GeotecniaIntelligentAgent
+from core.agents.orcamento_intelligent import OrcamentoIntelligentAgent
 
 _AGENT_OVERRIDES: dict[str, type[BaseAgentIntelligent]] = {
     "GEOTECNIA": GeotecniaIntelligentAgent,
+    "ORÇAMENTO": OrcamentoIntelligentAgent,
 }
 
 

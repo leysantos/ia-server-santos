@@ -239,7 +239,10 @@ class KnowledgeService:
 
     def get_stats(self) -> dict[str, Any]:
         router = get_knowledge_router()
-        router._store.reload_from_disk()
+        try:
+            router._store.reload_from_disk()
+        except Exception as exc:
+            logger.warning("Stats: reload FAISS ignorado (%s)", exc)
         catalog = read_catalog()
         unique = _dedupe_catalog_rows(catalog)
         by_type = Counter(row.get("content_type", "unknown") for row in unique)
@@ -601,10 +604,12 @@ class KnowledgeService:
         import threading
 
         from core.knowledge.web_ingest import bulk_ingest_from_page
+        from core.runtime.job_tracking import track_sync_job
         from core.stream_events import format_sse
 
         q: queue.Queue[tuple[str, Any]] = queue.Queue()
         ct = normalize_content_type(content_type) if content_type else None
+        label = f"Importação web — {page_url[:72]}"
 
         def _scale_progress(data: dict[str, Any]) -> dict[str, Any]:
             phase = str(data.get("phase") or "")
@@ -619,53 +624,95 @@ class KnowledgeService:
 
         def worker() -> None:
             try:
-                def on_progress(data: dict[str, Any]) -> None:
-                    q.put(("progress", _scale_progress(data)))
+                with track_sync_job(kind="knowledge_import", label=label) as runtime_job:
 
-                result = bulk_ingest_from_page(
-                    page_url,
-                    discipline=discipline,
-                    content_type=ct,
-                    description_prefix=description_prefix,
-                    max_files=max_files,
-                    force=force,
-                    on_progress=on_progress,
-                )
-
-                if auto_index and result.get("ingested", 0) > 0:
-                    q.put(
-                        (
-                            "progress",
-                            {
-                                "phase": "index",
-                                "current": 0,
-                                "total": 1,
-                                "percent": 92,
-                                "message": "Indexando FAISS para busca pela IA…",
-                                "name": None,
-                            },
+                    def on_progress(data: dict[str, Any]) -> None:
+                        scaled = _scale_progress(data)
+                        runtime_job.update(
+                            phase=str(scaled.get("phase") or "ingest"),
+                            message=scaled.get("message"),
+                            current=scaled.get("current"),
+                            total=scaled.get("total"),
+                            percent=scaled.get("percent"),
+                            log=bool(scaled.get("message")),
                         )
-                    )
-                    result["indexing"] = self._run_indexing(
+                        q.put(("progress", scaled))
+
+                    result = bulk_ingest_from_page(
+                        page_url,
+                        discipline=discipline,
+                        content_type=ct,
+                        description_prefix=description_prefix,
+                        max_files=max_files,
                         force=force,
-                        index_base="nbr" if ct == "nbrs" else None,
-                        content_types={ct} if ct else None,
-                    )
-                    q.put(
-                        (
-                            "progress",
-                            {
-                                "phase": "index",
-                                "current": 1,
-                                "total": 1,
-                                "percent": 100,
-                                "message": "Indexação concluída",
-                                "name": None,
-                            },
-                        )
+                        on_progress=on_progress,
                     )
 
-                q.put(("done", result))
+                    if auto_index and result.get("ingested", 0) > 0:
+                        def on_index_progress(data: dict[str, Any]) -> None:
+                            inner_pct = int(data.get("percent") or 0)
+                            scaled = {
+                                **data,
+                                "percent": min(100, 92 + round(inner_pct * 0.08)),
+                                "phase": "index",
+                            }
+                            runtime_job.update(
+                                phase="index",
+                                message=data.get("message"),
+                                current=data.get("current"),
+                                total=data.get("total"),
+                                percent=scaled["percent"],
+                                log=(
+                                    int(data.get("current") or 0) <= 1
+                                    or int(data.get("current") or 0) % 25 == 0
+                                ),
+                            )
+                            q.put(("progress", scaled))
+
+                        q.put(
+                            (
+                                "progress",
+                                {
+                                    "phase": "index",
+                                    "current": 0,
+                                    "total": 1,
+                                    "percent": 92,
+                                    "message": "Indexando FAISS para busca pela IA…",
+                                    "name": None,
+                                },
+                            )
+                        )
+                        runtime_job.update(
+                            phase="index",
+                            message="Indexando FAISS para busca pela IA…",
+                            percent=92,
+                        )
+                        result["indexing"] = self._run_indexing(
+                            force=force,
+                            index_base="nbr" if ct == "nbrs" else None,
+                            content_types={ct} if ct else None,
+                            on_progress=on_index_progress,
+                        )
+                        runtime_job.update(
+                            phase="index",
+                            message="Indexação concluída",
+                            percent=100,
+                        )
+                        q.put(
+                            (
+                                "progress",
+                                {
+                                    "phase": "index",
+                                    "current": 1,
+                                    "total": 1,
+                                    "percent": 100,
+                                    "message": "Indexação concluída",
+                                    "name": None,
+                                },
+                            )
+                        )
+
+                    q.put(("done", result))
             except Exception as exc:
                 logger.exception("Falha na ingestão web (stream)")
                 q.put(("error", {"error": str(exc)}))

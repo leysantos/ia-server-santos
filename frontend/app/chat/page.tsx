@@ -1,17 +1,15 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { flushSync } from "react-dom";
-import { useRouter, useSearchParams } from "next/navigation";
-import ChatBox, { type ChatSendOptions } from "@/components/ChatBox";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import ChatBox from "@/components/ChatBox";
 import MessageList from "@/components/MessageList";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ShellHeader from "@/components/ShellHeader";
 import WorkspaceExpandButton, { WorkspaceCollapseStrip } from "@/components/WorkspaceExpandButton";
-import { useActivity } from "@/context/ActivityContext";
-import { chatStream, api } from "@/services/api";
-import type { ChatMessage, ChatResponse, ConversationDetail } from "@/types/api";
-import { generateId } from "@/lib/utils";
+import { useChatStream } from "@/context/ChatStreamContext";
+import { api } from "@/services/api";
+import type { ChatMessage, ConversationDetail } from "@/types/api";
 
 function messagesFromConversation(conv: ConversationDetail): ChatMessage[] {
   if (conv.messages?.length) {
@@ -33,63 +31,33 @@ function messagesFromConversation(conv: ConversationDetail): ChatMessage[] {
 }
 
 function ChatPageContent() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const urlConversationId = searchParams.get("c");
   const projectId = searchParams.get("project");
 
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [conversationId, setConversationId] = useState<string | null>(urlConversationId);
-  const [conversationTitle, setConversationTitle] = useState<string | null>(null);
+  const {
+    messages,
+    loading,
+    error,
+    activeModel,
+    sendMessage,
+    clearError,
+    hydrateHistory,
+    shouldSkipHistoryReload,
+    conversationTitle,
+  } = useChatStream();
+
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [activeModel, setActiveModel] = useState<string | null>(null);
-
-  const streamRafRef = useRef<number | null>(null);
-  const pendingContentRef = useRef<{ id: string; content: string; meta: ChatMessage["meta"] } | null>(null);
-  const conversationIdRef = useRef<string | null>(urlConversationId);
-  const { pushActivity, updateActivity } = useActivity();
 
   useEffect(() => {
-    conversationIdRef.current = conversationId;
-  }, [conversationId]);
-
-  useEffect(() => {
-    return () => {
-      if (streamRafRef.current != null) cancelAnimationFrame(streamRafRef.current);
-    };
-  }, []);
-
-  const flushPendingContent = useCallback(() => {
-    streamRafRef.current = null;
-    const pending = pendingContentRef.current;
-    if (!pending) return;
-    flushSync(() => {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === pending.id ? { ...msg, content: pending.content, meta: pending.meta } : msg
-        )
-      );
-    });
-  }, []);
-
-  const scheduleContentUpdate = useCallback(
-    (id: string, content: string, meta: ChatMessage["meta"]) => {
-      pendingContentRef.current = { id, content, meta };
-      if (streamRafRef.current != null) return;
-      streamRafRef.current = requestAnimationFrame(flushPendingContent);
-    },
-    [flushPendingContent]
-  );
-
-  useEffect(() => {
-    setConversationId(urlConversationId);
-    conversationIdRef.current = urlConversationId;
+    if (shouldSkipHistoryReload(urlConversationId)) {
+      return;
+    }
 
     if (!urlConversationId) {
-      setMessages([]);
-      setConversationTitle(null);
+      if (!loading) {
+        hydrateHistory(null, [], null);
+      }
       return;
     }
 
@@ -98,14 +66,16 @@ function ChatPageContent() {
     api
       .conversation(urlConversationId)
       .then((conv) => {
-        if (cancelled) return;
-        setConversationTitle(conv.title || conv.input_text);
-        setMessages(messagesFromConversation(conv));
+        if (cancelled || shouldSkipHistoryReload(urlConversationId)) return;
+        hydrateHistory(
+          urlConversationId,
+          messagesFromConversation(conv),
+          conv.title || conv.input_text
+        );
       })
       .catch(() => {
-        if (!cancelled) {
-          setMessages([]);
-          setConversationTitle(null);
+        if (!cancelled && !shouldSkipHistoryReload(urlConversationId)) {
+          hydrateHistory(urlConversationId, [], null);
         }
       })
       .finally(() => {
@@ -115,157 +85,7 @@ function ChatPageContent() {
     return () => {
       cancelled = true;
     };
-  }, [urlConversationId]);
-
-  const updateAssistant = useCallback((id: string, patch: Partial<ChatMessage>) => {
-    setMessages((prev) => prev.map((msg) => (msg.id === id ? { ...msg, ...patch } : msg)));
-  }, []);
-
-  const handleSend = useCallback(
-    async (text: string, options: ChatSendOptions) => {
-      const userMessage: ChatMessage = { id: generateId(), role: "user", content: text };
-      const assistantId = generateId();
-      const assistantPlaceholder: ChatMessage = {
-        id: assistantId,
-        role: "assistant",
-        content: "",
-        meta: { streaming: true, streamStatus: "Analisando intenção..." },
-      };
-
-      setMessages((prev) => [...prev, userMessage, assistantPlaceholder]);
-      setLoading(true);
-      setError(null);
-
-      const liveActivityId = `chat-${assistantId}`;
-      pushActivity({
-        id: liveActivityId,
-        source: "chat",
-        message: text.slice(0, 120),
-        status: "running",
-        phase: "intent",
-        projectId: projectId ?? undefined,
-      });
-
-      try {
-        let accumulated = "";
-        let finalResponse: ChatResponse | null = null;
-        let streamMeta: ChatMessage["meta"] = { streaming: true, streamStatus: "Conectando..." };
-
-        for await (const event of chatStream({
-          text,
-          use_rag: options.useRag,
-          persist: options.persist,
-          conversation_id: conversationIdRef.current ?? undefined,
-          project_id: projectId ?? undefined,
-          llm_model: options.llmModel !== "auto" ? options.llmModel : undefined,
-        })) {
-          if (event.type === "status") {
-            const message = String(event.data.message ?? "Processando...");
-            const model = event.data.llm_model ? String(event.data.llm_model) : undefined;
-            if (model) setActiveModel(model);
-            const stepAgent = event.data.step
-              ? String((event.data.step as { agent?: string }).agent ?? "")
-              : undefined;
-            const stepDiscipline = event.data.step
-              ? String((event.data.step as { discipline?: string }).discipline ?? "")
-              : undefined;
-            updateActivity(liveActivityId, {
-              message,
-              phase: stepDiscipline || stepAgent || "processing",
-              agent: stepAgent,
-              discipline: stepDiscipline,
-            });
-            streamMeta = {
-              streaming: true,
-              streamStatus: message,
-              llmModel: model,
-              discipline: event.data.step
-                ? String((event.data.step as { discipline?: string }).discipline ?? "")
-                : streamMeta?.discipline,
-              agent: event.data.step
-                ? String((event.data.step as { agent?: string }).agent ?? "")
-                : streamMeta?.agent,
-            };
-            flushSync(() => updateAssistant(assistantId, { meta: streamMeta }));
-          }
-
-          if (event.type === "token") {
-            const token = String(event.data.token ?? "");
-            const model = event.data.llm_model ? String(event.data.llm_model) : undefined;
-            if (model) setActiveModel(model);
-            if (token) accumulated += token;
-            streamMeta = {
-              streaming: true,
-              streamStatus: undefined,
-              llmModel: model ?? streamMeta?.llmModel,
-              discipline: String(event.data.discipline ?? streamMeta?.discipline ?? ""),
-              agent: String(event.data.agent ?? streamMeta?.agent ?? ""),
-            };
-            scheduleContentUpdate(assistantId, accumulated, streamMeta);
-          }
-
-          if (event.type === "done") {
-            finalResponse = event.data as unknown as ChatResponse;
-            accumulated = finalResponse.result || accumulated;
-            if (finalResponse.conversation_id) {
-              setConversationId(finalResponse.conversation_id);
-              conversationIdRef.current = finalResponse.conversation_id;
-              if (!urlConversationId) {
-                const params = new URLSearchParams({ c: finalResponse.conversation_id });
-                if (projectId) params.set("project", projectId);
-                router.replace(`/chat?${params.toString()}`);
-              }
-            }
-          }
-        }
-
-        if (streamRafRef.current != null) {
-          cancelAnimationFrame(streamRafRef.current);
-          streamRafRef.current = null;
-        }
-        pendingContentRef.current = null;
-
-        const finalModel =
-          (finalResponse?.extra?.llm_model as string | undefined) ||
-          (finalResponse?.extra?.model as string | undefined);
-        if (finalModel) setActiveModel(finalModel);
-
-        updateAssistant(assistantId, {
-          content:
-            accumulated ||
-            finalResponse?.result ||
-            finalResponse?.response ||
-            "Sem resposta do agente.",
-          meta: {
-            streaming: false,
-            streamStatus: undefined,
-            llmModel: finalModel,
-            discipline: finalResponse?.discipline || finalResponse?.route?.discipline,
-            agent: finalResponse?.agent || finalResponse?.route?.agent,
-            extra: finalResponse?.extra,
-            raw: finalResponse ?? undefined,
-          },
-        });
-        updateActivity(liveActivityId, {
-          status: "done",
-          message: "Resposta concluída",
-          agent: finalResponse?.agent || finalResponse?.route?.agent,
-          discipline: finalResponse?.discipline || finalResponse?.route?.discipline,
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Erro ao comunicar com a API";
-        setError(message);
-        updateActivity(liveActivityId, { status: "error", message });
-        updateAssistant(assistantId, {
-          content: `Erro: ${message}. Verifique se o backend está rodando em http://localhost:8000`,
-          meta: { streaming: false, streamStatus: undefined },
-        });
-      } finally {
-        setLoading(false);
-      }
-    },
-    [updateAssistant, scheduleContentUpdate, projectId, router, urlConversationId, pushActivity, updateActivity]
-  );
+  }, [urlConversationId, hydrateHistory, shouldSkipHistoryReload, loading]);
 
   return (
     <>
@@ -288,7 +108,7 @@ function ChatPageContent() {
               {conversationTitle ? conversationTitle : "Chat IA"}
             </h1>
             <p className="truncate text-sm text-slate-500">
-              {conversationId
+              {urlConversationId || messages.length > 0
                 ? "Continuando conversa · multi-turn com histórico"
                 : "Intent Layer → streaming em tempo real → agentes especializados"}
             </p>
@@ -297,19 +117,35 @@ function ChatPageContent() {
       </ShellHeader>
 
       {error && (
-        <div className="mx-6 mt-4 rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-300 ring-1 ring-red-500/30">
-          {error}
+        <div className="mx-6 mt-4 flex items-center justify-between gap-3 rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-300 ring-1 ring-red-500/30">
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={clearError}
+            className="shrink-0 text-xs text-red-400 underline hover:text-red-200"
+          >
+            Fechar
+          </button>
         </div>
       )}
 
-      {loadingHistory ? (
+      {loadingHistory && !loading ? (
         <div className="flex flex-1 items-center justify-center">
           <LoadingSpinner label="Carregando conversa..." />
         </div>
       ) : (
         <>
           <MessageList messages={messages} loading={loading} />
-          <ChatBox onSend={handleSend} loading={loading} />
+          <ChatBox
+            onSend={(text, options) =>
+              sendMessage(text, {
+                ...options,
+                conversationId: urlConversationId,
+                projectId,
+              })
+            }
+            loading={loading}
+          />
         </>
       )}
     </>

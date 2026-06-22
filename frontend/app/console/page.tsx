@@ -25,7 +25,8 @@ const KIND_LABELS: Record<string, string> = {
   chat: "Chat",
   budget: "Orçamento",
   orchestrator: "Orquestrador",
-  norm_bulk: "Importação NBR",
+  norm_bulk: "Importação NBR/NR",
+  knowledge_import: "Importação conhecimento",
   knowledge: "Indexação FAISS",
   maintenance: "Manutenção / Backup",
 };
@@ -261,7 +262,7 @@ function OpsLiveLog({ logs }: { logs: OpsLogItem[] }) {
   if (logs.length === 0) {
     return (
       <p className="text-sm text-slate-500">
-        Aguardando atividade — inicie chat, visão, orçamento, importação NBR ou orquestração.
+        Aguardando atividade — inicie chat, visão, orçamento, importação de conhecimento ou orquestração.
       </p>
     );
   }
@@ -638,6 +639,14 @@ export default function ConsolePage() {
                           </p>
                         </div>
                         <div className="flex gap-2">
+                          {(job.kind === "knowledge_import" || job.kind === "norm_bulk") && (
+                            <Link
+                              href="/settings/imports"
+                              className="text-xs text-cyan-500 hover:text-cyan-400"
+                            >
+                              Importações
+                            </Link>
+                          )}
                           {job.project_id && (
                             <Link
                               href={`/projects/${job.project_id}/vision`}

@@ -28,9 +28,17 @@ from core.knowledge.norm_bulk.title_extract import extract_norm_display_name
 logger = logging.getLogger(__name__)
 
 _NORM_TITLE_HINT = re.compile(
-    r"(?:NBR[\s\-_]?\d{4,5}|NR[\s\-_]?\d{1,2}|norma[\s\-_]?regulamentadora)",
+    r"(?:NBR[\s\-_]?\d{4,5}|NR[\s\-_]?\d{1,2}|norma[\s\-_]?regulamentadora|"
+    r"instruc[aã]o\s+normativa|IN[\s\-_]?\d{1,3})",
     re.IGNORECASE,
 )
+
+_IN_SICRO_HINT = re.compile(
+    r"(?:instruc[aã]o\s+normativa.*sicro|sicro.*instruc[aã]o\s+normativa|"
+    r"IN[\s\-_]\d{1,3}.*sicro|sicro.*IN[\s\-_]\d{1,3})",
+    re.IGNORECASE,
+)
+_IN_CODE_RE = re.compile(r"\bIN[\s\-_]?(\d{1,3})\b", re.IGNORECASE)
 
 _VALID_DISCIPLINES = (
     "ARQUITETURA",
@@ -130,6 +138,49 @@ def _result_from_nr(
     return _apply_display_name(path, result, norm_kind="NR", norm_code=nr, snippet=snippet)
 
 
+def _parse_in_sicro_code(name: str, snippet: str = "") -> str | None:
+    for text in (name, snippet):
+        match = _IN_CODE_RE.search(text)
+        if match:
+            return match.group(1).lstrip("0") or "0"
+    return None
+
+
+def _is_in_sicro(name: str, snippet: str = "") -> bool:
+    hay = f"{name}\n{snippet}"
+    if _IN_SICRO_HINT.search(hay):
+        return True
+    lower = hay.lower()
+    return "sicro" in lower and ("instruc" in lower or _IN_CODE_RE.search(hay) is not None)
+
+
+def _result_from_in_sicro(
+    path: Path,
+    in_code: str | None,
+    *,
+    source: str,
+    confidence: float,
+    snippet: str = "",
+) -> ClassificationResult:
+    code_label = f"IN-{in_code}" if in_code else "IN-SICRO"
+    result = ClassificationResult(
+        discipline_slug=slug_for_discipline("ORÇAMENTO"),
+        content_type="nbrs",
+        confidence=confidence,
+        source=source,
+        mapped_discipline="ORÇAMENTO",
+        metadata={
+            "norm_kind": "IN_SICRO",
+            "norm_code": code_label,
+            "norm_label": f"Instrução Normativa SICRO {code_label}",
+            "filename": path.name,
+        },
+    )
+    return _apply_display_name(
+        path, result, norm_kind="IN_SICRO", norm_code=code_label, snippet=snippet
+    )
+
+
 def _extract_first_page_text(path: Path, max_chars: int = 4000) -> str:
     if path.suffix.lower() != ".pdf":
         return ""
@@ -199,52 +250,69 @@ def classify_norm_pdf(
     path = path.resolve()
     name = path.name
 
-    nbr = parse_nbr_code(name)
-    snippet = ""
-    if nbr:
-        result = _result_from_nbr(path, nbr, source="nbr_filename", confidence=0.94)
+    if _is_in_sicro(name):
+        result = _result_from_in_sicro(
+            path,
+            _parse_in_sicro_code(name),
+            source="in_sicro_filename",
+            confidence=0.91,
+        )
     else:
         nr = parse_nr_code(name)
-        if nr:
+        if nr and re.search(r"\bNR[\s\-_]", name, re.IGNORECASE):
             result = _result_from_nr(path, nr, source="nr_filename", confidence=0.92)
         else:
-            snippet = _extract_first_page_text(path)
-            nbr = parse_nbr_code(snippet) if snippet else None
-            if nbr:
-                result = _result_from_nbr(
-                    path, nbr, source="nbr_pdf_text", confidence=0.86, snippet=snippet
-                )
+            nbr = parse_nbr_code(name)
+            snippet = ""
+            if nbr and not str(nbr).upper().startswith("NR-"):
+                result = _result_from_nbr(path, nbr, source="nbr_filename", confidence=0.94)
             else:
-                nr = parse_nr_code(snippet) if snippet else None
-                if nr:
-                    result = _result_from_nr(
-                        path, nr, source="nr_pdf_text", confidence=0.84, snippet=snippet
+                snippet = _extract_first_page_text(path)
+                if _is_in_sicro(name, snippet):
+                    result = _result_from_in_sicro(
+                        path,
+                        _parse_in_sicro_code(name, snippet),
+                        source="in_sicro_pdf_text",
+                        confidence=0.88,
+                        snippet=snippet,
                     )
-                elif use_ai_fallback and snippet and _NORM_TITLE_HINT.search(snippet):
-                    llm_result = _classify_with_llm(path, snippet)
-                    if llm_result:
-                        result = llm_result
-                    else:
-                        result = ClassificationResult(
-                            discipline_slug="geral",
-                            content_type="nbrs",
-                            confidence=0.45,
-                            source="unknown_norm",
-                            mapped_discipline="GERAL",
-                            metadata={"filename": name},
-                        )
                 else:
-                    result = ClassificationResult(
-                        discipline_slug="geral",
-                        content_type="nbrs",
-                        confidence=0.50 if _NORM_TITLE_HINT.search(name) else 0.40,
-                        source="filename_heuristic",
-                        mapped_discipline="GERAL",
-                        metadata={"filename": name},
-                    )
-                    result = _apply_display_name(
-                        path, result, norm_kind="UNKNOWN", norm_code=None, snippet=snippet
-                    )
+                    nbr = parse_nbr_code(snippet) if snippet else None
+                    if nbr and not str(nbr).upper().startswith("NR-"):
+                        result = _result_from_nbr(
+                            path, nbr, source="nbr_pdf_text", confidence=0.86, snippet=snippet
+                        )
+                    else:
+                        nr = parse_nr_code(snippet) if snippet else None
+                        if nr:
+                            result = _result_from_nr(
+                                path, nr, source="nr_pdf_text", confidence=0.84, snippet=snippet
+                            )
+                        elif use_ai_fallback and snippet and _NORM_TITLE_HINT.search(snippet):
+                            llm_result = _classify_with_llm(path, snippet)
+                            if llm_result:
+                                result = llm_result
+                            else:
+                                result = ClassificationResult(
+                                    discipline_slug="geral",
+                                    content_type="nbrs",
+                                    confidence=0.45,
+                                    source="unknown_norm",
+                                    mapped_discipline="GERAL",
+                                    metadata={"filename": name},
+                                )
+                        else:
+                            result = ClassificationResult(
+                                discipline_slug="geral",
+                                content_type="nbrs",
+                                confidence=0.50 if _NORM_TITLE_HINT.search(name) else 0.40,
+                                source="filename_heuristic",
+                                mapped_discipline="GERAL",
+                                metadata={"filename": name},
+                            )
+                            result = _apply_display_name(
+                                path, result, norm_kind="UNKNOWN", norm_code=None, snippet=snippet
+                            )
 
     if mark_edition_outdated:
         result.metadata["edition_outdated"] = True

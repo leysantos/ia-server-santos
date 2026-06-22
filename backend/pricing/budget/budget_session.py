@@ -245,6 +245,16 @@ class BudgetSessionStore:
             if key in fields and fields[key] is not None:
                 setattr(session.project, attr, str(fields[key]).strip())
 
+        if "price_bases" in fields and fields["price_bases"] is not None:
+            from pricing.budget.price_base_session import apply_price_bases_selection
+
+            selections = list(fields["price_bases"])
+            session.project.price_bases = selections
+            if selections:
+                applied = apply_price_bases_selection(selections)
+                session.project.base_preco = str(applied.get("base_preco") or session.project.base_preco)
+                session.source_priority = list(applied.get("source_priority") or session.source_priority)
+
         if fields.get("projeto") or fields.get("nome_obra"):
             session.title = str(fields.get("projeto") or fields.get("nome_obra")).strip()
         session.updated_at = datetime.now(timezone.utc).isoformat()

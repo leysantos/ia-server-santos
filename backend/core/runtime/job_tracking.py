@@ -35,7 +35,7 @@ def resolve_runtime_model(kind: str) -> str | None:
         return None
     if kind == "review":
         return OLLAMA_LLM_MODEL
-    if kind in ("knowledge", "norm_bulk"):
+    if kind in ("knowledge", "norm_bulk", "knowledge_import"):
         return OLLAMA_EMBED_MODEL
     return OLLAMA_LLM_MODEL
 

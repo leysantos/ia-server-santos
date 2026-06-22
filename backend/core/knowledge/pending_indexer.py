@@ -7,6 +7,7 @@ Usado pelo script knowledge_maintenance e API /knowledge/maintenance.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -97,6 +98,7 @@ def index_pending_nbr_pdfs(
     indexer = KnowledgeIndexer()
     store = indexer.multi_store.get_store("nbr")
     pdf_indexer = PDFIndexer(store=store, embedder=indexer.embedder)
+    indexer.embedder.warmup()
 
     for current, pdf_path in enumerate(pending, start=1):
         if on_progress:
@@ -128,6 +130,7 @@ def index_pending_nbr_pdfs(
                 pdf_path=pdf_path,
                 doc_type="nbr",
                 force=force,
+                pages=pages,
             )
             if count > 0:
                 summary["indexed_files"] += 1
@@ -135,6 +138,7 @@ def index_pending_nbr_pdfs(
                 summary["files"].append(
                     {"file": pdf_path.name, "status": "indexed", "chunks": count}
                 )
+                store.save()
             else:
                 summary["files"].append(
                     {"file": pdf_path.name, "status": "skipped", "chunks": 0}
@@ -142,6 +146,8 @@ def index_pending_nbr_pdfs(
         except Exception as exc:
             summary["errors"].append({"file": str(pdf_path), "error": str(exc)})
             logger.warning("Falha ao indexar %s: %s", pdf_path.name, exc)
+
+        time.sleep(0.25)
 
     store.save()
     get_multi_index_store().reload_from_disk()

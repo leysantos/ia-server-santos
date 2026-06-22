@@ -135,11 +135,33 @@ def delete_document(document_id: str) -> dict[str, Any]:
     was_active_price = get_active_price_document_id() == document_id
 
     faiss_removed = 0
-    if doc_path.name:
+    if doc_path.name and doc_path.is_file():
         faiss_removed = _remove_from_faiss_indices(doc_path)
+
+    content_type = str(entry.get("content_type") or "").lower()
+    if content_type in ("sinapi", "tcpo", "bases_precos", "orse", "cicro"):
+        try:
+            from pricing.budget.price_bank_purge import (
+                infer_reference_from_catalog_entry,
+                purge_sinapi_faiss_chunks,
+            )
+
+            ref = infer_reference_from_catalog_entry(entry)
+            purge = purge_sinapi_faiss_chunks(reference=ref)
+            faiss_removed += int(purge.get("chunks_removed") or 0)
+        except Exception:
+            pass
 
     files_removed = _delete_sidecars_and_file(doc_path) if doc_path.name else []
     catalog_removed = remove_catalog_entries_by_id(document_id)
+
+    price_bank_purge: dict[str, Any] | None = None
+    try:
+        from pricing.budget.price_bank_purge import purge_price_bank_for_catalog_entry
+
+        price_bank_purge = purge_price_bank_for_catalog_entry(entry)
+    except Exception:
+        pass
 
     if was_active_price:
         clear_active_price_document()
@@ -153,6 +175,7 @@ def delete_document(document_id: str) -> dict[str, Any]:
         "catalog_entries_removed": catalog_removed,
         "faiss_chunks_removed": faiss_removed,
         "files_removed": files_removed,
+        "price_bank_purge": price_bank_purge,
     }
 
 

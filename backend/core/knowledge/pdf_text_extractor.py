@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import warnings
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,13 @@ def _extract_pypdf(pdf_path: Path) -> list[tuple[int, str]]:
         return []
 
     try:
-        reader = PdfReader(str(pdf_path))
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Multiple definitions in dictionary",
+                category=UserWarning,
+            )
+            reader = PdfReader(str(pdf_path))
     except Exception as exc:
         logger.debug("pypdf open falhou %s: %s", pdf_path.name, exc)
         return []

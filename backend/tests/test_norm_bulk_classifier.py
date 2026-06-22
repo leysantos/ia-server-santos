@@ -40,6 +40,16 @@ def test_classify_nr_from_filename(tmp_path: Path):
     assert result.mapped_discipline == "ELÉTRICA"
 
 
+def test_classify_in_sicro_from_filename(tmp_path: Path):
+    pdf = tmp_path / "IN-002-2020 SICRO - Composicoes de Custos.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    result = classify_norm_pdf(pdf)
+    assert result.metadata.get("norm_kind") == "IN_SICRO"
+    assert result.mapped_discipline == "ORÇAMENTO"
+    assert result.content_type == "nbrs"
+    assert result.confidence >= 0.9
+
+
 def test_mark_edition_outdated_flag(tmp_path: Path):
     pdf = tmp_path / "NBR-9050.pdf"
     pdf.write_bytes(b"%PDF-1.4\n")

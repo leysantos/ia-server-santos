@@ -1,4 +1,8 @@
 import json
+import logging
+import os
+import shutil
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -15,6 +19,8 @@ from config.settings import (
 from memory.models import DocumentChunk
 from memory.nbr_catalog import nbr_codes_match, normalize_nbr_code
 
+logger = logging.getLogger(__name__)
+
 
 class FaissVectorStore:
     """
@@ -24,36 +30,115 @@ class FaissVectorStore:
 
     META_FILE = "chunks.json"
     INDEX_FILE = "index.faiss"
+    META_BACKUP_SUFFIX = ".json.bak"
+    META_TEMP_SUFFIX = ".json.tmp"
+    INDEX_TEMP_SUFFIX = ".faiss.tmp"
 
     def __init__(self, index_dir: Path = FAISS_INDEX_DIR):
         self.index_dir = Path(index_dir)
         self.index_dir.mkdir(parents=True, exist_ok=True)
         self.meta_path = self.index_dir / self.META_FILE
         self.index_path = self.index_dir / self.INDEX_FILE
+        self._meta_backup_path = self.meta_path.with_suffix(self.META_BACKUP_SUFFIX)
+        self._meta_temp_path = self.meta_path.with_suffix(self.META_TEMP_SUFFIX)
+        self._index_temp_path = self.index_path.with_suffix(self.INDEX_TEMP_SUFFIX)
         self.chunks: list[DocumentChunk] = []
         self.index: Optional[faiss.IndexFlatIP] = None
         self._dim: Optional[int] = None
+        self._io_lock = threading.RLock()
+        self._loaded_mtime: float = 0.0
         self._load()
 
+    def _read_meta_payload(self) -> dict:
+        candidates = (self.meta_path, self._meta_backup_path)
+        last_error: Exception | None = None
+
+        for path in candidates:
+            if not path.exists():
+                continue
+            try:
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+                if path != self.meta_path:
+                    logger.warning(
+                        "Recuperado %s a partir do backup %s",
+                        self.meta_path.name,
+                        path.name,
+                    )
+                return data if isinstance(data, dict) else {"chunks": []}
+            except json.JSONDecodeError as exc:
+                last_error = exc
+                logger.warning("JSON inválido em %s: %s", path, exc)
+            except OSError as exc:
+                last_error = exc
+                logger.warning("Falha ao ler %s: %s", path, exc)
+
+        if last_error is not None:
+            logger.error(
+                "Não foi possível carregar metadados FAISS em %s (%s)",
+                self.index_dir,
+                last_error,
+            )
+        return {"chunks": []}
+
     def _load(self):
-        if not self.meta_path.exists():
-            return
+        with self._io_lock:
+            if not self.meta_path.exists() and not self._meta_backup_path.exists():
+                self.chunks = []
+                self.index = None
+                self._dim = None
+                self._loaded_mtime = 0.0
+                return
 
-        with open(self.meta_path, encoding="utf-8") as f:
-            data = json.load(f)
+            data = self._read_meta_payload()
+            self.chunks = [DocumentChunk.from_dict(item) for item in data.get("chunks", [])]
 
-        self.chunks = [DocumentChunk.from_dict(item) for item in data.get("chunks", [])]
+            if self.index_path.exists() and self.chunks:
+                try:
+                    self.index = faiss.read_index(str(self.index_path))
+                    self._dim = self.index.d
+                except Exception as exc:
+                    logger.warning(
+                        "Falha ao carregar %s — reconstruindo a partir dos embeddings (%s)",
+                        self.index_path.name,
+                        exc,
+                    )
+                    self._rebuild_index()
+            else:
+                self.index = None
+                self._dim = None
 
-        if self.index_path.exists() and self.chunks:
-            self.index = faiss.read_index(str(self.index_path))
-            self._dim = self.index.d
+            if self.meta_path.exists():
+                self._loaded_mtime = self.meta_path.stat().st_mtime
+            elif self._meta_backup_path.exists():
+                self._loaded_mtime = self._meta_backup_path.stat().st_mtime
 
     def reload(self) -> None:
         """Recarrega chunks e índice do disco (após indexação externa ou em background)."""
-        self.chunks = []
-        self.index = None
-        self._dim = None
-        self._load()
+        with self._io_lock:
+            previous_chunks = list(self.chunks)
+            self.chunks = []
+            self.index = None
+            self._dim = None
+            self._load()
+            if not self.chunks and previous_chunks:
+                logger.warning(
+                    "Reload em %s retornou vazio — mantendo estado em memória (%d chunks)",
+                    self.index_dir.name,
+                    len(previous_chunks),
+                )
+                self.chunks = previous_chunks
+                self._rebuild_index()
+
+    def reload_if_changed(self) -> bool:
+        """Recarrega somente se chunks.json mudou no disco."""
+        if not self.meta_path.exists():
+            return False
+        mtime = self.meta_path.stat().st_mtime
+        if mtime <= self._loaded_mtime:
+            return False
+        self.reload()
+        return True
 
     def _rebuild_index(self):
         embeddings = [chunk.embedding for chunk in self.chunks if chunk.embedding]
@@ -68,21 +153,41 @@ class FaissVectorStore:
         self.index = faiss.IndexFlatIP(self._dim)
         self.index.add(matrix)
 
-    def save(self):
+    def _atomic_write_meta(self, payload: dict) -> None:
         self.index_dir.mkdir(parents=True, exist_ok=True)
+        with open(self._meta_temp_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+            f.flush()
+            os.fsync(f.fileno())
 
-        payload = {
-            "version": 2,
-            "engine": "faiss",
-            "count": len(self.chunks),
-            "chunks": [chunk.to_dict() for chunk in self.chunks],
-        }
+        if self.meta_path.exists():
+            try:
+                shutil.copy2(self.meta_path, self._meta_backup_path)
+            except OSError as exc:
+                logger.debug("Backup chunks.json ignorado: %s", exc)
 
-        with open(self.meta_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(self._meta_temp_path, self.meta_path)
+        self._loaded_mtime = self.meta_path.stat().st_mtime
 
-        if self.index is not None:
-            faiss.write_index(self.index, str(self.index_path))
+    def _atomic_write_index(self) -> None:
+        if self.index is None:
+            if self.index_path.exists():
+                self.index_path.unlink(missing_ok=True)
+            return
+
+        faiss.write_index(self.index, str(self._index_temp_path))
+        os.replace(self._index_temp_path, self.index_path)
+
+    def save(self):
+        with self._io_lock:
+            payload = {
+                "version": 2,
+                "engine": "faiss",
+                "count": len(self.chunks),
+                "chunks": [chunk.to_dict() for chunk in self.chunks],
+            }
+            self._atomic_write_meta(payload)
+            self._atomic_write_index()
 
     def add(self, chunk: DocumentChunk) -> str:
         if chunk.embedding:
@@ -206,9 +311,24 @@ class FaissVectorStore:
         removed = before - len(self.chunks)
         if removed:
             self._rebuild_index()
+            self.save()
+        return removed
+
+    def remove_where(self, predicate) -> int:
+        """Remove chunks cujo metadata satisfaz predicate(metadata) -> bool."""
+        before = len(self.chunks)
+        self.chunks = [
+            chunk for chunk in self.chunks
+            if not predicate(chunk.metadata or {})
+        ]
+        removed = before - len(self.chunks)
+        if removed:
+            self._rebuild_index()
+            self.save()
         return removed
 
     def clear(self):
         self.chunks = []
         self.index = None
         self._dim = None
+        self.save()

@@ -26,7 +26,11 @@ def test_index_pdf_sets_nbr_code_in_metadata(tmp_path: Path, mock_store):
 
     indexer = PDFIndexer(store=mock_store)
     with patch.object(indexer, "extract_text", return_value=[(1, "texto norma estrutural " * 20)]):
-        with patch.object(indexer.embedder, "embed_document", return_value=[0.1] * 8):
+        with patch.object(
+            indexer.embedder,
+            "embed_batch_optional",
+            return_value=[[0.1] * 8],
+        ):
             count = indexer.index_pdf(pdf, doc_type="nbr", force=True)
 
     assert count > 0
