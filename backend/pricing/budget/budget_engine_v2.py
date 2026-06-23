@@ -231,5 +231,11 @@ class BudgetEngineV2:
     def update_tech_spec(self, session_id: str, payload: dict[str, Any]) -> BudgetSession:
         return SESSION_STORE.update_tech_spec(session_id, payload)
 
+    def clear_tech_spec(self, session_id: str) -> BudgetSession:
+        return SESSION_STORE.clear_tech_spec(session_id)
+
     def export_tech_spec_docx(self, session_id: str) -> bytes:
         return SESSION_STORE.export_tech_spec_docx(session_id)
+
+    def export_tech_spec_pdf(self, session_id: str) -> bytes:
+        return SESSION_STORE.export_tech_spec_pdf(session_id)

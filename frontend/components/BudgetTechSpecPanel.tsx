@@ -10,20 +10,29 @@ import ModelSelector from "@/components/ModelSelector";
 import { useLlmModelSelection } from "@/hooks/useLlmModel";
 
 const DEFAULT_FORMATTING: TechSpecFormatting = {
-  font_family: "Calibri",
+  font_family: "Arial",
   font_size: 11,
-  line_spacing: 1.15,
+  line_spacing: 1.5,
   margin_cm: 2.5,
-  page_numbers: false,
+  margin_top_cm: 3,
+  margin_bottom_cm: 2,
+  margin_left_cm: 3,
+  margin_right_cm: 2,
+  page_numbers: true,
+  page_number_position: "left",
+  text_align: "justify",
   logo_text: null,
   document_title: null,
 };
 
+const FORMAT_PROMPT_HELP =
+  "Formatação no prompt: número da página inferior esquerdo/direito/centralizado; fonte Arial ou Times 12pt; entrelinha 1,5; texto justificado; margens 3cm; título centralizado; logo (Empresa).";
+
 const PROMPT_EXAMPLES = [
-  'Adicione o título "Especificação Técnica — Obra XYZ"',
-  "Adicione numeração de páginas no rodapé",
-  "Adicione a logo (Construtora Santos)",
+  "Detalhe cada serviço por etapa. Fonte Times 12pt, entrelinha 1,5, texto justificado, página no canto inferior direito",
+  "Fonte Arial 11pt, margens 3cm, numeração inferior esquerda, título centralizado",
   "Detalhe materiais e métodos da etapa de fundações",
+  "Logo (Construtora Santos)",
 ];
 
 interface BudgetTechSpecPanelProps {
@@ -44,6 +53,7 @@ export default function BudgetTechSpecPanel({
   const [prompt, setPrompt] = useState("");
   const [composing, setComposing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [streamPreview, setStreamPreview] = useState("");
   const [bodyHtml, setBodyHtml] = useState("");
@@ -55,6 +65,9 @@ export default function BudgetTechSpecPanel({
   const abortRef = useRef<AbortController | null>(null);
   const logIdRef = useRef(0);
   const streamMdRef = useRef("");
+  const streamingLiveRef = useRef(false);
+  const previewScrollRef = useRef<HTMLDivElement>(null);
+  const lastProgressRef = useRef("");
   const { model: llmModel, setModel: setLlmModel } = useLlmModelSelection();
 
   const spec = session.tech_spec;
@@ -68,6 +81,15 @@ export default function BudgetTechSpecPanel({
       setFormatting({ ...DEFAULT_FORMATTING, ...(spec.formatting || {}) });
     }
   }, [session.session_id, spec?.updated_at]);
+
+  useEffect(() => {
+    if (composing) {
+      previewScrollRef.current?.scrollTo({
+        top: previewScrollRef.current.scrollHeight,
+        behavior: "smooth",
+      });
+    }
+  }, [streamPreview, tokenCount, composing]);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -129,6 +151,8 @@ export default function BudgetTechSpecPanel({
     setLogs([]);
     setStreamPreview("");
     setTokenCount(0);
+    streamingLiveRef.current = false;
+    lastProgressRef.current = "";
     if (mode === "generate") streamMdRef.current = "";
     abortRef.current?.abort();
     abortRef.current = new AbortController();
@@ -162,19 +186,36 @@ export default function BudgetTechSpecPanel({
           case "token": {
             const t = String(data.token || "");
             setTokenCount((n) => n + 1);
-            streamMdRef.current += t;
-            applyStreamPayload(
-              {
-                markdown: streamMdRef.current,
-                html_content: undefined,
-                formatting,
-              },
-              true
-            );
-            syncBodyHtml(markdownToHtml(streamMdRef.current));
+            if (!streamingLiveRef.current) {
+              streamMdRef.current += t;
+              applyStreamPayload(
+                {
+                  markdown: streamMdRef.current,
+                  html_content: undefined,
+                  formatting,
+                },
+                true
+              );
+              syncBodyHtml(markdownToHtml(streamMdRef.current));
+            }
             break;
           }
           case "preview":
+            if (data.streaming_live === true) {
+              streamingLiveRef.current = true;
+            } else if (data.streaming_live === false) {
+              streamingLiveRef.current = false;
+            }
+            if (typeof data.progress === "object" && data.progress !== null) {
+              const p = data.progress as { current?: number; total?: number };
+              if (p.current != null && p.total != null) {
+                const key = `${p.current}/${p.total}`;
+                if (key !== lastProgressRef.current) {
+                  lastProgressRef.current = key;
+                  pushLog(`Progresso: etapa ${p.current} de ${p.total}`, "progress");
+                }
+              }
+            }
             applyStreamPayload(data, true);
             break;
           case "done": {
@@ -205,6 +246,34 @@ export default function BudgetTechSpecPanel({
       }
     } finally {
       setComposing(false);
+    }
+  };
+
+  const handleClear = async () => {
+    if (!hasDocument || composing || clearing) return;
+    if (!window.confirm("Remover a especificação técnica desta sessão?")) return;
+
+    setClearing(true);
+    abortRef.current?.abort();
+    try {
+      const result = await api.pricingClearTechSpec(session.session_id);
+      setMarkdown("");
+      setBodyHtml("");
+      setStreamPreview("");
+      setLogs([]);
+      setTokenCount(0);
+      setPrompt("");
+      streamMdRef.current = "";
+      streamingLiveRef.current = false;
+      lastProgressRef.current = "";
+      setFormatting(DEFAULT_FORMATTING);
+      syncBodyHtml("");
+      onUpdate(result.session);
+      pushLog("Especificação técnica limpa.", "done");
+    } catch (err) {
+      onError?.(err, "Erro ao limpar especificação");
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -276,8 +345,8 @@ export default function BudgetTechSpecPanel({
               rows={4}
               placeholder={
                 hasDocument
-                  ? 'Ex.: "Adicione o título ESPECIFICAÇÃO TÉCNICA", "Adicione numeração de páginas", "Adicione a logo (Empresa X)", "Detalhe a etapa 2…"'
-                  : "Ex.: detalhar materiais da etapa fundações, citar NBR 6118…"
+                  ? `Ex.: detalhar etapa 2… · ${FORMAT_PROMPT_HELP}`
+                  : `Ex.: detalhar cada serviço por etapa e sub-etapa · ${FORMAT_PROMPT_HELP}`
               }
               className={cn(budgetTextarea, "min-h-[88px] resize-none text-sm")}
               disabled={composing}
@@ -297,6 +366,8 @@ export default function BudgetTechSpecPanel({
               </button>
             ))}
           </div>
+
+          <FormattingSummary formatting={formatting} />
 
           <div className="flex flex-wrap gap-2">
             <button
@@ -324,11 +395,23 @@ export default function BudgetTechSpecPanel({
             </button>
             <button
               type="button"
-              disabled={loading || saving || composing || !hasDocument}
+              disabled={loading || saving || composing || clearing || !hasDocument}
               onClick={handleSave}
               className={cn(budgetBtn, "bg-cyan-600/20 text-cyan-200 ring-cyan-500/30")}
             >
               {saving ? "Salvando…" : "Salvar"}
+            </button>
+            <button
+              type="button"
+              disabled={loading || composing || clearing || !hasDocument}
+              onClick={handleClear}
+              className={cn(
+                budgetBtn,
+                "bg-slate-700/40 text-slate-300 ring-slate-600/50 hover:bg-red-900/30 hover:text-red-200"
+              )}
+              title="Remove o documento da sessão para gerar novamente do zero"
+            >
+              {clearing ? "Limpando…" : "Limpar"}
             </button>
           </div>
 
@@ -337,34 +420,31 @@ export default function BudgetTechSpecPanel({
               Execução em tempo real
               {composing && <span className="ml-2 text-violet-400">{tokenCount} tokens</span>}
             </div>
-            <div className="max-h-48 overflow-y-auto p-2 font-mono text-[11px] leading-relaxed lg:max-h-none lg:flex-1">
+            <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-2 font-mono text-[11px] leading-relaxed lg:max-h-none">
               {logs.length === 0 && !composing && (
-                <p className="text-slate-600">
-                  Gere o documento a partir do orçamento ou use <strong>Editar com IA</strong> para
-                  título, logo, numeração de páginas e alterações de conteúdo — tudo visível no
-                  preview ao vivo.
+                <p className="break-words text-slate-600">
+                  Combine conteúdo e formatação no mesmo prompt. A formatação (fonte, margens,
+                  numeração, alinhamento) é aplicada automaticamente no preview e na exportação Word/PDF.
                 </p>
               )}
               {logs.map((entry) => (
                 <p
                   key={entry.id}
+                  title={entry.message}
                   className={cn(
-                    "mb-1",
+                    "mb-1 break-words [overflow-wrap:anywhere]",
                     entry.phase === "error" && "text-red-400",
                     entry.phase === "done" && "text-emerald-400",
                     entry.phase === "format" && "text-amber-300",
                     entry.phase === "llm" && "text-violet-300",
-                    !entry.phase?.match(/error|done|format|llm/) && "text-slate-400"
+                    entry.phase === "coverage" && "text-amber-200",
+                    entry.phase === "progress" && "text-cyan-300",
+                    !entry.phase?.match(/error|done|format|llm|coverage|progress/) && "text-slate-400"
                   )}
                 >
                   › {entry.message}
                 </p>
               ))}
-              {composing && streamPreview && (
-                <p className="mt-2 whitespace-pre-wrap border-t border-slate-800 pt-2 text-slate-500">
-                  {streamPreview.slice(-500)}
-                </p>
-              )}
               <div ref={logEndRef} />
             </div>
           </div>
@@ -394,30 +474,54 @@ export default function BudgetTechSpecPanel({
             onClick={async () => {
               try {
                 await handleSave();
+                window.open(api.pricingExportTechSpecPdfUrl(session.session_id), "_blank");
+              } catch (err) {
+                onError?.(err, "Erro ao exportar PDF");
+              }
+            }}
+            className={cn(budgetBtn, "ml-auto bg-rose-600/25 text-rose-100 ring-rose-500/35")}
+          >
+            Exportar PDF
+          </button>
+          <button
+            type="button"
+            disabled={!hasDocument}
+            onClick={async () => {
+              try {
+                await handleSave();
                 window.open(api.pricingExportTechSpecUrl(session.session_id), "_blank");
               } catch (err) {
                 onError?.(err, "Erro ao exportar Word");
               }
             }}
-            className={cn(budgetBtn, "ml-auto bg-emerald-600/25 text-emerald-200 ring-emerald-500/35")}
+            className={cn(budgetBtn, "bg-emerald-600/25 text-emerald-200 ring-emerald-500/35")}
           >
             Exportar Word
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto bg-slate-800/40 p-4">
+        <div ref={previewScrollRef} className="min-h-0 flex-1 overflow-auto bg-slate-800/40 p-4">
           <div
             className={cn(
               "relative mx-auto min-h-[70vh] max-w-[210mm] bg-white shadow-lg ring-1 ring-slate-300/80",
               composing && "ring-2 ring-violet-400/50"
             )}
             style={{
-              padding: `${formatting.margin_cm}cm`,
+              paddingTop: `${formatting.margin_top_cm ?? formatting.margin_cm}cm`,
+              paddingBottom: `${formatting.margin_bottom_cm ?? formatting.margin_cm}cm`,
+              paddingLeft: `${formatting.margin_left_cm ?? formatting.margin_cm}cm`,
+              paddingRight: `${formatting.margin_right_cm ?? formatting.margin_cm}cm`,
               fontFamily: formatting.font_family,
               fontSize: `${formatting.font_size}pt`,
               lineHeight: formatting.line_spacing,
+              textAlign: formatting.text_align === "center" ? "center" : formatting.text_align === "left" ? "left" : "justify",
             }}
           >
+            {composing && (
+              <div className="pointer-events-none absolute right-3 top-3 rounded bg-violet-600/90 px-2 py-1 text-[10px] font-medium text-white shadow">
+                Redigindo… {tokenCount > 0 ? `${tokenCount} tokens` : ""}
+              </div>
+            )}
             {formatting.logo_text && (
               <div className="mb-4 border border-dashed border-slate-400 bg-slate-50 py-3 text-center text-sm font-semibold text-slate-600">
                 [LOGO: {formatting.logo_text}]
@@ -438,13 +542,40 @@ export default function BudgetTechSpecPanel({
               }}
             />
             {formatting.page_numbers && (
-              <div className="mt-6 border-t border-slate-300 pt-2 text-center text-[9pt] text-slate-500">
+              <div
+                className={cn(
+                  "mt-6 border-t border-slate-300 pt-2 text-[9pt] text-slate-500",
+                  formatting.page_number_position === "right"
+                    ? "text-right"
+                    : formatting.page_number_position === "center"
+                      ? "text-center"
+                      : "text-left"
+                )}
+              >
                 Página 1
               </div>
             )}
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function FormattingSummary({ formatting }: { formatting: TechSpecFormatting }) {
+  const pagePos =
+    formatting.page_number_position === "right"
+      ? "inf. direito"
+      : formatting.page_number_position === "center"
+        ? "inf. centralizado"
+        : "inf. esquerdo";
+  return (
+    <div className="rounded-lg bg-slate-950/60 px-2.5 py-2 text-[10px] text-slate-500 ring-1 ring-slate-800">
+      <span className="font-medium text-slate-400">Formatação ativa: </span>
+      {formatting.font_family} {formatting.font_size}pt · entrelinha {formatting.line_spacing} ·{" "}
+      {formatting.text_align === "justify" ? "justificado" : formatting.text_align === "center" ? "centralizado" : "esquerda"}
+      {formatting.page_numbers ? ` · pág. ${pagePos}` : " · sem numeração"}
+      {formatting.document_title ? ` · título: ${formatting.document_title}` : ""}
     </div>
   );
 }

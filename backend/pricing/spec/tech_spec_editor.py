@@ -8,7 +8,9 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from pricing.spec.tech_spec_models import TechSpecDocument, markdown_to_html, render_document_html
+from pricing.spec.tech_spec_models import TechSpecDocument, default_formatting, markdown_to_html, render_document_html
+from pricing.spec.tech_spec_format_parser import format_prompt_help, has_format_directives, parse_format_directives
+from pricing.spec.tech_spec_stream_utils import generate_stream_guarded
 
 logger = logging.getLogger(__name__)
 
@@ -34,16 +36,14 @@ def apply_format_edits_from_prompt(
     doc: TechSpecDocument,
     prompt: str,
 ) -> FormatEditResult:
-    """Interpreta pedidos de formatação (título, logo, numeração) no prompt."""
-    lower = prompt.lower()
+    """Interpreta pedidos de formatação (título, logo, fonte, margens, numeração…) no prompt."""
     fmt = dict(doc.formatting or {})
     logs: list[str] = []
     body_changed = False
     new_markdown = doc.markdown
 
-    if _wants_page_numbers(lower):
-        fmt["page_numbers"] = True
-        logs.append("Numeração de páginas ativada no rodapé do preview e export Word.")
+    fmt, parse_logs = parse_format_directives(prompt, fmt)
+    logs.extend(parse_logs)
 
     logo_label = _extract_logo_label(prompt)
     if logo_label is not None:
@@ -69,13 +69,37 @@ def apply_format_edits_from_prompt(
     )
 
 
-def _wants_page_numbers(text: str) -> bool:
-    return bool(
-        re.search(r"numera(c|ç)[aã]o", text)
-        and re.search(r"p[aá]gina", text)
-        or re.search(r"n[uú]mero\s+d[aeo]\s+p[aá]gina", text)
-        or "page number" in text
+def resolve_spec_formatting(
+    session: Any,
+    user_prompt: str = "",
+    *,
+    existing: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """Formatação padrão + sessão + pedidos no prompt do usuário."""
+    proj = session.project
+    base = dict(default_formatting())
+    base["document_title"] = (
+        session.title or proj.projeto or proj.objeto or "Especificação Técnica"
     )
+    base["page_numbers"] = True
+    base["page_number_position"] = "left"
+    base["text_align"] = "justify"
+    if existing:
+        base.update({k: v for k, v in existing.items() if v is not None})
+
+    logs: list[str] = []
+    if user_prompt.strip():
+        stub = TechSpecDocument(formatting=base)
+        result = apply_format_edits_from_prompt(stub, user_prompt)
+        base = result.formatting
+        logs = result.logs
+        title_from_prompt = _extract_title_request(user_prompt)
+        if title_from_prompt:
+            base["document_title"] = title_from_prompt
+        elif re.search(r"t[ií]tulo.*centraliz", user_prompt, re.I):
+            base["document_title"] = session.title or proj.projeto or base["document_title"]
+
+    return base, logs
 
 
 def _extract_logo_label(prompt: str) -> str | None:
@@ -112,7 +136,7 @@ def _is_format_only_prompt(prompt: str) -> bool:
     """Heurística: pedido só de layout (sem reescrita de conteúdo)."""
     lower = prompt.lower()
     has_format = (
-        _wants_page_numbers(lower)
+        has_format_directives(prompt)
         or "logo" in lower
         or bool(_extract_title_request(prompt))
     )
@@ -201,24 +225,36 @@ def edit_tech_spec_stream(
             full_prompt += "Retorne o documento COMPLETO atualizado em Markdown:"
 
             accumulated = ""
-            for token, used in client.generate_stream(
+            for event_type, payload in generate_stream_guarded(
+                client,
                 full_prompt,
                 model=model,
                 fallback_models=[settings.ollama_llm_fallback_model],
+                options={
+                    "num_predict": 8192,
+                    "temperature": 0.3,
+                    "repeat_penalty": 1.18,
+                    "repeat_last_n": 128,
+                },
+                max_chars=24_000,
             ):
-                model_used = used
-                accumulated += token
-                yield "token", {"token": token}
-                if len(accumulated) % 60 < len(token):
-                    body_html = markdown_to_html(accumulated)
-                    working.markdown = accumulated
-                    working.html_content = body_html
-                    yield "preview", {
-                        "markdown": accumulated,
-                        "html_content": render_document_html(working),
-                        "formatting": working.formatting,
-                        "partial": True,
-                    }
+                if event_type == "token":
+                    accumulated += payload["token"]
+                    yield "token", {"token": payload["token"]}
+                    if len(accumulated) % 60 < len(payload["token"]):
+                        working.markdown = accumulated
+                        working.html_content = markdown_to_html(accumulated)
+                        yield "preview", {
+                            "markdown": accumulated,
+                            "html_content": render_document_html(working),
+                            "formatting": working.formatting,
+                            "partial": True,
+                        }
+                elif event_type == "guard":
+                    yield "log", payload
+                elif event_type == "complete":
+                    accumulated = payload.get("text") or accumulated
+                    model_used = payload.get("model") or model_used
 
             if not accumulated.strip():
                 raise ValueError("Modelo retornou resposta vazia na edição")

@@ -1421,6 +1421,8 @@ export const api = {
       index_faiss?: boolean;
       reload_providers?: boolean;
       set_active?: boolean;
+      download_all_regions?: boolean;
+      skip_existing_ufs?: boolean;
     } | undefined,
     onProgress: (progress: WebIngestProgress) => void,
     signal?: AbortSignal
@@ -1460,6 +1462,8 @@ export const api = {
       index_faiss?: boolean;
       reload_providers?: boolean;
       set_active?: boolean;
+      download_all_regions?: boolean;
+      skip_existing_ufs?: boolean;
     } | undefined,
     onProgress: (progress: WebIngestProgress) => void,
     signal?: AbortSignal
@@ -1663,7 +1667,8 @@ export const api = {
 
   pricingSearchPrices(
     query: string,
-    limit = 15
+    limit = 15,
+    options?: { sessionId?: string; sourcePriority?: string[] }
   ): Promise<{
     query: string;
     parsed_query?: string;
@@ -1675,7 +1680,12 @@ export const api = {
   }> {
     return request("/pricing/budget/search", {
       method: "POST",
-      body: JSON.stringify({ query, limit }),
+      body: JSON.stringify({
+        query,
+        limit,
+        ...(options?.sessionId ? { session_id: options.sessionId } : {}),
+        ...(options?.sourcePriority?.length ? { source_priority: options.sourcePriority } : {}),
+      }),
     });
   },
 
@@ -1941,8 +1951,22 @@ export const api = {
     );
   },
 
+  pricingClearTechSpec(
+    sessionId: string
+  ): Promise<{ tech_spec: null; session: BudgetSessionResponse }> {
+    return withBudgetSessionRecovery(sessionId, (sid) =>
+      request(`/pricing/budget/${sid}/tech-spec`, {
+        method: "DELETE",
+      })
+    );
+  },
+
   pricingExportTechSpecUrl(sessionId: string): string {
     return `${API_BASE_URL}/pricing/budget/${sessionId}/tech-spec/export`;
+  },
+
+  pricingExportTechSpecPdfUrl(sessionId: string): string {
+    return `${API_BASE_URL}/pricing/budget/${sessionId}/tech-spec/export/pdf`;
   },
 
   async pricingImportModelTemplate(file: File, sessionId?: string): Promise<BudgetSessionResponse & { imported_etapas?: number }> {

@@ -258,6 +258,7 @@ class ReplaceServiceRequest(BaseModel):
     price: Optional[float] = None
     source: Optional[str] = "sinapi"
     query: Optional[str] = None
+    source_priority: Optional[list[str]] = None
 
 
 class ApplyGroupQuantityRequest(BaseModel):
@@ -277,12 +278,14 @@ class AddServiceRequest(BaseModel):
     source: Optional[str] = "sinapi"
     quantity: float = Field(default=1.0, ge=0)
     query: Optional[str] = None
+    source_priority: Optional[list[str]] = None
 
 
 class SearchPriceRequest(BaseModel):
     query: str = Field(..., min_length=1)
     limit: int = Field(default=15, ge=1, le=50)
     source_priority: Optional[list[str]] = None
+    session_id: Optional[str] = None
 
 
 PPD_EXAMPLE = Path(__file__).resolve().parents[3] / "planilhas-exemplos" / "19_PPD_MC_OR_R01-Nivel-1-2-Marco2026-14-05-2026.xlsm"
@@ -382,6 +385,56 @@ def _ensure_price_base_loaded() -> dict[str, Any]:
         "item_count": 0,
         "hint": "Importe uma base de preços em Configurações → Biblioteca de documentos",
     }
+
+
+def _loaded_provider_names() -> list[str]:
+    from pricing.registry.provider_registry import ProviderRegistry
+
+    return [
+        p.name
+        for p in ProviderRegistry.all()
+        if p.is_loaded and len(getattr(p, "_data", []) or []) > 0
+    ]
+
+
+def _ensure_budget_pricing_context(
+    session_id: str | None = None,
+    source_priority: list[str] | None = None,
+) -> list[str]:
+    """Carrega bases da sessão de orçamento (SINAPI + SICRO…) ou fallback global."""
+    ensure_providers_registered()
+
+    if session_id:
+        engine = _get_budget_engine()
+        session = engine.get_session(session_id)
+        if session:
+            selections = [s for s in (session.project.price_bases or []) if s.get("enabled")]
+            if selections:
+                from pricing.budget.price_base_session import apply_price_bases_selection
+
+                applied = apply_price_bases_selection(selections)
+                priority = list(applied.get("source_priority") or [])
+                if priority:
+                    return priority
+            if session.source_priority:
+                loaded = _loaded_provider_names()
+                filtered = [s for s in session.source_priority if s in loaded]
+                if filtered:
+                    return filtered
+
+    loaded = _loaded_provider_names()
+    if source_priority:
+        filtered = [s for s in source_priority if s in loaded]
+        if filtered:
+            return filtered
+
+    _ensure_price_base_loaded()
+    loaded = _loaded_provider_names()
+    if source_priority:
+        filtered = [s for s in source_priority if s in loaded]
+        if filtered:
+            return filtered
+    return loaded or list(source_priority or ["sinapi"])
 
 
 @router.get("/bases")
@@ -586,6 +639,14 @@ class PriceSyncRequest(BaseModel):
         description="Importar composições fechadas (sintéticas)",
     )
     include_insumos: bool = Field(default=True, description="Importar catálogo de insumos")
+    download_all_regions: bool = Field(
+        default=False,
+        description="SICRO: baixar todas as UFs publicadas no portal DNIT",
+    )
+    skip_existing_ufs: bool = Field(
+        default=False,
+        description="SICRO (lote): pular UFs já importadas para o mesmo ano/mês",
+    )
 
 
 @router.get("/sync/bank")
@@ -819,6 +880,8 @@ async def price_sync_stream(source: str, body: PriceSyncRequest | None = None):
         "index_faiss": body.index_faiss,
         "reload_providers": body.reload_providers,
         "set_active": body.set_active,
+        "download_all_regions": body.download_all_regions,
+        "skip_existing_ufs": body.skip_existing_ufs,
     }
     if body.local_file:
         options["local_file"] = Path(body.local_file)
@@ -933,6 +996,8 @@ async def price_sync_source(source: str, body: PriceSyncRequest | None = None):
         "index_faiss": body.index_faiss,
         "reload_providers": body.reload_providers,
         "set_active": body.set_active,
+        "download_all_regions": body.download_all_regions,
+        "skip_existing_ufs": body.skip_existing_ufs,
     }
     if body.local_file:
         options["local_file"] = Path(body.local_file)
@@ -1308,6 +1373,16 @@ def update_budget_tech_spec(session_id: str, body: TechSpecUpdateRequest):
     return {"tech_spec": session.tech_spec, "session": session.to_dict()}
 
 
+@router.delete("/budget/{session_id}/tech-spec")
+def clear_budget_tech_spec(session_id: str):
+    engine = _get_budget_engine()
+    try:
+        session = engine.clear_tech_spec(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
+    return {"tech_spec": None, "session": session.to_dict()}
+
+
 @router.post("/budget/{session_id}/tech-spec/compose/stream")
 def compose_budget_tech_spec_stream(session_id: str, body: TechSpecComposeRequest):
     service = TechSpecStreamService()
@@ -1343,6 +1418,24 @@ def export_budget_tech_spec(session_id: str):
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
             "Content-Disposition": f'attachment; filename="especificacao_tecnica_{session_id[:8]}.docx"'
+        },
+    )
+
+
+@router.get("/budget/{session_id}/tech-spec/export/pdf")
+def export_budget_tech_spec_pdf(session_id: str):
+    engine = _get_budget_engine()
+    try:
+        content = engine.export_tech_spec_pdf(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="especificacao_tecnica_{session_id[:8]}.pdf"'
         },
     )
 
@@ -1417,14 +1510,14 @@ def get_group_compose_prompt(session_id: str, group_code: str):
 
 @router.post("/budget/{session_id}/etapas/{etapa_code}/compose")
 def compose_budget_etapa(session_id: str, etapa_code: str, body: ComposeEtapaRequest):
-    _ensure_price_base_loaded()
+    priority = _ensure_budget_pricing_context(session_id, body.source_priority)
     engine = _get_budget_engine()
     try:
         session, log, removed = engine.compose_etapa(
             session_id,
             etapa_code,
             body.prompt,
-            source_priority=body.source_priority or ["sinapi"],
+            source_priority=priority or body.source_priority or ["sinapi"],
             default_quantity=body.default_quantity,
             replace_existing=body.replace_existing,
         )
@@ -1437,12 +1530,10 @@ def compose_budget_etapa(session_id: str, etapa_code: str, body: ComposeEtapaReq
 
 @router.post("/budget/{session_id}/services/{row_id}/replace")
 def replace_budget_service(session_id: str, row_id: str, body: ReplaceServiceRequest):
-    _ensure_price_base_loaded()
+    has_pick = bool(body.code or body.description)
     engine = _get_budget_engine()
-    pricing = _get_engine()
 
-    price_data: dict[str, Any]
-    if body.code or body.description:
+    if has_pick:
         price_data = {
             "code": body.code or "",
             "description": body.description or "",
@@ -1451,10 +1542,12 @@ def replace_budget_service(session_id: str, row_id: str, body: ReplaceServiceReq
             "source": body.source or "sinapi",
         }
     elif body.query:
+        priority = _ensure_budget_pricing_context(session_id, body.source_priority)
+        pricing = _get_engine()
         from pricing.budget.budget_structure import parse_term_hints
 
         q, unit_hint, _ = parse_term_hints(body.query)
-        request = build_price_request(q, unit=unit_hint, limit=1)
+        request = build_price_request(q, unit=unit_hint, source_priority=priority, limit=1)
         item = pricing.resolve(request)
         if not item:
             raise HTTPException(status_code=404, detail="Serviço não encontrado na base de preços")
@@ -1493,13 +1586,9 @@ def apply_group_quantity(session_id: str, group_code: str, body: ApplyGroupQuant
 
 @router.post("/budget/{session_id}/services")
 def add_budget_service(session_id: str, body: AddServiceRequest):
-    _ensure_price_base_loaded()
-    engine = _get_budget_engine()
-    pricing = _get_engine()
-
-    price_data: dict[str, Any]
-    quantity = body.quantity
-    if body.code or body.description:
+    has_pick = bool(body.code or body.description)
+    if has_pick:
+        engine = _get_budget_engine()
         price_data = {
             "code": body.code or "",
             "description": body.description or "",
@@ -1507,27 +1596,33 @@ def add_budget_service(session_id: str, body: AddServiceRequest):
             "price": body.price or 0,
             "source": body.source or "sinapi",
         }
-    elif body.query:
-        from pricing.budget.budget_structure import parse_term_hints
-
-        q, unit_hint, term_qty = parse_term_hints(body.query)
-        request = build_price_request(q, unit=unit_hint, source_priority=body.source_priority, limit=1)
-        item = pricing.resolve(request)
-        if not item:
-            raise HTTPException(status_code=404, detail="Serviço não encontrado na base de preços")
-        price_data = price_item_to_dict(item) or {}
-        if unit_hint:
-            price_data["unit_hint"] = unit_hint
-        quantity = term_qty if term_qty is not None else body.quantity
+        quantity = body.quantity
     else:
-        raise HTTPException(status_code=400, detail="Informe code/description ou query")
+        priority = _ensure_budget_pricing_context(session_id, body.source_priority)
+        engine = _get_budget_engine()
+        pricing = _get_engine()
+        quantity = body.quantity
+        if body.query:
+            from pricing.budget.budget_structure import parse_term_hints
+
+            q, unit_hint, term_qty = parse_term_hints(body.query)
+            request = build_price_request(q, unit=unit_hint, source_priority=priority, limit=1)
+            item = pricing.resolve(request)
+            if not item:
+                raise HTTPException(status_code=404, detail="Serviço não encontrado na base de preços")
+            price_data = price_item_to_dict(item) or {}
+            if unit_hint:
+                price_data["unit_hint"] = unit_hint
+            quantity = term_qty if term_qty is not None else body.quantity
+        else:
+            raise HTTPException(status_code=400, detail="Informe code/description ou query")
 
     try:
         session = engine.add_service(
             session_id,
             body.etapa_code,
             price_data,
-            quantity=quantity if body.query else body.quantity,
+            quantity=quantity,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
@@ -1540,13 +1635,13 @@ def add_budget_service(session_id: str, body: AddServiceRequest):
 def search_price_items(body: SearchPriceRequest):
     from pricing.budget.budget_structure import parse_term_hints
 
-    _ensure_price_base_loaded()
+    priority = _ensure_budget_pricing_context(body.session_id, body.source_priority)
     engine = _get_engine()
     query, unit_hint, parsed_qty = parse_term_hints(body.query)
     request = build_price_request(
         query or body.query,
         unit=unit_hint,
-        source_priority=body.source_priority,
+        source_priority=priority,
         limit=body.limit,
     )
     results = engine.resolve_many(request, best_only=False)

@@ -18,7 +18,6 @@ export function markdownToHtml(markdown: string): string {
     const line = raw.trimEnd();
     if (!line.trim()) {
       closeUl();
-      parts.push("<p><br></p>");
       continue;
     }
 

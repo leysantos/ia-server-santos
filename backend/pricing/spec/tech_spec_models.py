@@ -10,15 +10,9 @@ from typing import Any
 
 
 def default_formatting() -> dict[str, Any]:
-    return {
-        "font_family": "Calibri",
-        "font_size": 11,
-        "line_spacing": 1.15,
-        "margin_cm": 2.5,
-        "page_numbers": False,
-        "logo_text": None,
-        "document_title": None,
-    }
+    from pricing.spec.tech_spec_layout import technical_formatting_defaults
+
+    return technical_formatting_defaults()
 
 
 @dataclass
@@ -86,9 +80,11 @@ def render_document_html(doc: TechSpecDocument) -> str:
     parts.append(f'<div class="tech-spec-body">{body}</div>')
 
     if fmt.get("page_numbers"):
+        pos = str(fmt.get("page_number_position") or "left").lower()
+        align = "right" if pos == "right" else "center" if pos == "center" else "left"
         parts.append(
-            '<div class="tech-spec-page-footer" style="margin-top:28px;padding-top:10px;'
-            'border-top:1px solid #ccc;text-align:center;font-size:9pt;color:#555;">'
+            f'<div class="tech-spec-page-footer" style="margin-top:28px;padding-top:10px;'
+            f'border-top:1px solid #ccc;text-align:{align};font-size:9pt;color:#555;">'
             "Página <span>1</span></div>"
         )
 
@@ -128,7 +124,6 @@ def markdown_to_html(markdown_text: str) -> str:
         line = raw.rstrip()
         if not line.strip():
             close_ul()
-            parts.append("<p><br></p>")
             continue
 
         heading = re.match(r"^(#{1,4})\s+(.+)$", line)

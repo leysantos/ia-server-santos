@@ -395,7 +395,7 @@ class BudgetSessionStore:
         if not group:
             raise ValueError(f"Grupo não encontrado: {group_code}")
         services = [c for c in group.children if c.row_type == ROW_TYPE_SERVICO]
-        return group_services_to_prompt(group), len(services)
+        return group_services_to_prompt(group, session.project), len(services)
 
     def replace_service(
         self,
@@ -702,6 +702,14 @@ class BudgetSessionStore:
         session.updated_at = datetime.now(timezone.utc).isoformat()
         return session
 
+    def clear_tech_spec(self, session_id: str) -> BudgetSession:
+        session = self._sessions.get(session_id)
+        if not session:
+            raise KeyError(f"Sessão não encontrada: {session_id}")
+        session.tech_spec = None
+        session.updated_at = datetime.now(timezone.utc).isoformat()
+        return session
+
     def export_tech_spec_docx(self, session_id: str) -> bytes:
         from pricing.spec.tech_spec_docx import export_tech_spec_docx
         from pricing.spec.tech_spec_models import TechSpecDocument
@@ -713,6 +721,18 @@ class BudgetSessionStore:
         if not doc or not (doc.markdown.strip() or doc.html_content.strip()):
             raise ValueError("Especificação técnica vazia — gere o documento primeiro.")
         return export_tech_spec_docx(doc)
+
+    def export_tech_spec_pdf(self, session_id: str) -> bytes:
+        from pricing.spec.tech_spec_models import TechSpecDocument
+        from pricing.spec.tech_spec_pdf import export_tech_spec_pdf
+
+        session = self._sessions.get(session_id)
+        if not session:
+            raise KeyError(f"Sessão não encontrada: {session_id}")
+        doc = TechSpecDocument.from_dict(session.tech_spec)
+        if not doc or not (doc.markdown.strip() or doc.html_content.strip()):
+            raise ValueError("Especificação técnica vazia — gere o documento primeiro.")
+        return export_tech_spec_pdf(doc)
 
     @classmethod
     def roots_from_dict(cls, items: list[dict[str, Any]]) -> list[BudgetItem]:
