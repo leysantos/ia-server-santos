@@ -8,7 +8,7 @@ from typing import Any
 
 from pricing.spec.tech_spec_layout import (
     HEADING_PT_SIZES,
-    document_blocks,
+    document_blocks_for_export,
     docx_font_name,
     merge_formatting,
 )
@@ -228,7 +228,7 @@ def export_tech_spec_docx(doc: TechSpecDocument) -> bytes:
         run.font.size = Pt(14)
         run.bold = True
 
-    blocks = document_blocks(doc.html_content, doc.markdown)
+    blocks = document_blocks_for_export(doc.html_content, doc.markdown)
 
     for block in blocks:
         btype = block.get("type")

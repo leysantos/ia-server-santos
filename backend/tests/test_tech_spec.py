@@ -459,7 +459,50 @@ def test_export_pdf():
     assert blob[:4] == b"%PDF"
 
 
-def test_compose_heuristic_stream():
+def test_export_pdf_list_items_and_bold_labels():
+    try:
+        from pricing.spec.tech_spec_pdf import export_tech_spec_pdf
+    except ImportError:
+        return
+    from pricing.spec.tech_spec_layout import parse_html_blocks
+
+    md = (
+        "## 3. DADOS DA OBRA\n\n"
+        "- **Obra / Projeto:** Teste\n"
+        "- **Local:** SP\n\n"
+        "**Código WBS:** 1.1\n"
+    )
+    html = markdown_to_html(md)
+    blocks = parse_html_blocks(html)
+    list_blocks = [b for b in blocks if b.get("type") == "list_item"]
+    assert len(list_blocks) == 2
+    assert "**Obra / Projeto:**" in list_blocks[0]["text"]
+
+    doc = TechSpecDocument(
+        title="Especificação Teste",
+        markdown=md,
+        html_content=html,
+        formatting={"document_title": "Especificação Técnica — Teste", "margin_left_cm": 3},
+    )
+    blob = export_tech_spec_pdf(doc)
+    assert blob[:4] == b"%PDF"
+    assert len(blob) > 500
+
+
+def test_document_blocks_for_export_skips_preview_chrome():
+    from pricing.spec.tech_spec_layout import document_blocks_for_export
+    from pricing.spec.tech_spec_models import render_document_html
+
+    md = "# CORPO\n\n- item um\n"
+    doc = TechSpecDocument(markdown=md, html_content=markdown_to_html(md))
+    full = render_document_html(doc)
+    blocks = document_blocks_for_export(full, md)
+    types = [b["type"] for b in blocks]
+    assert types.count("heading") == 1
+    assert types[0] == "heading"
+    assert blocks[0]["text"] == "CORPO"
+    assert "list_item" in types
+
     session = _sample_session()
     events = list(compose_tech_spec_stream(session, use_llm=False))
     types = [e[0] for e in events]

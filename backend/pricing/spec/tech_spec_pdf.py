@@ -12,16 +12,18 @@ from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
-from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import Paragraph, SimpleDocTemplate
 
 from pricing.spec.tech_spec_layout import (
     HEADING_PT_SIZES,
-    document_blocks,
+    document_blocks_for_export,
     merge_formatting,
     reportlab_font_bold,
     reportlab_font_name,
 )
 from pricing.spec.tech_spec_models import TechSpecDocument
+
+_BULLET = "•"
 
 
 def _escape_for_paragraph(text: str) -> str:
@@ -86,11 +88,11 @@ def _build_styles(fmt: dict[str, Any]) -> dict[str, ParagraphStyle]:
             spaceBefore=10 if level <= 2 else 6,
             spaceAfter=4,
         )
-    result["bullet"] = ParagraphStyle(
-        "TechSpecBullet",
+    # Recuo alinhado ao preview (ul com padding-left); marcador dentro da margem.
+    result["list_item"] = ParagraphStyle(
+        "TechSpecListItem",
         parent=result["body"],
-        leftIndent=12,
-        bulletIndent=0,
+        leftIndent=14,
         spaceAfter=2,
     )
     return result
@@ -122,21 +124,7 @@ def export_tech_spec_pdf(doc: TechSpecDocument) -> bytes:
     if display_title:
         story.append(Paragraph(_escape_for_paragraph(display_title), styles["title"]))
 
-    list_items: list[ListItem] = []
-    blocks = document_blocks(doc.html_content, doc.markdown)
-
-    def flush_list() -> None:
-        nonlocal list_items
-        if list_items:
-            story.append(
-                ListFlowable(
-                    list_items,
-                    bulletType="bullet",
-                    start="•",
-                    leftIndent=14,
-                )
-            )
-            list_items = []
+    blocks = document_blocks_for_export(doc.html_content, doc.markdown)
 
     for block in blocks:
         btype = block.get("type")
@@ -144,18 +132,17 @@ def export_tech_spec_pdf(doc: TechSpecDocument) -> bytes:
         if not text:
             continue
         if btype == "heading":
-            flush_list()
             level = min(max(int(block.get("level") or 1), 1), 4)
             story.append(Paragraph(_escape_for_paragraph(text), styles[f"h{level}"]))
         elif btype == "list_item":
-            list_items.append(
-                ListItem(Paragraph(_escape_for_paragraph(text), styles["bullet"]), leftIndent=0)
+            story.append(
+                Paragraph(
+                    f"{_BULLET}&nbsp;{_escape_for_paragraph(text)}",
+                    styles["list_item"],
+                )
             )
         else:
-            flush_list()
             story.append(Paragraph(_escape_for_paragraph(text), styles["body"]))
-
-    flush_list()
 
     if not story:
         story.append(Paragraph("<i>Documento vazio.</i>", styles["body"]))

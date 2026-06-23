@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { api, techSpecComposeStream } from "@/services/api";
 import type { BudgetSessionResponse, TechSpecDocument, TechSpecFormatting } from "@/types/api";
 import { cn } from "@/lib/utils";
@@ -60,14 +61,19 @@ export default function BudgetTechSpecPanel({
   const [markdown, setMarkdown] = useState("");
   const [formatting, setFormatting] = useState<TechSpecFormatting>(DEFAULT_FORMATTING);
   const [tokenCount, setTokenCount] = useState(0);
-  const logEndRef = useRef<HTMLDivElement>(null);
+  const [liveTyping, setLiveTyping] = useState("");
+  const [activeModel, setActiveModel] = useState<string | null>(null);
+  const [committedBodyHtml, setCommittedBodyHtml] = useState("");
+  const logScrollRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const logIdRef = useRef(0);
   const streamMdRef = useRef("");
-  const streamingLiveRef = useRef(false);
+  const committedBodyHtmlRef = useRef("");
+  const liveTypingRef = useRef("");
+  const typingRafRef = useRef<number | null>(null);
+  const currentServiceRef = useRef<string | null>(null);
   const previewScrollRef = useRef<HTMLDivElement>(null);
-  const lastProgressRef = useRef("");
   const { model: llmModel, setModel: setLlmModel } = useLlmModelSelection();
 
   const spec = session.tech_spec;
@@ -89,11 +95,13 @@ export default function BudgetTechSpecPanel({
         behavior: "smooth",
       });
     }
-  }, [streamPreview, tokenCount, composing]);
+  }, [streamPreview, tokenCount, composing, liveTyping, committedBodyHtml]);
 
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs, streamPreview, tokenCount]);
+    const el = logScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [logs, composing, tokenCount, liveTyping]);
 
   const syncBodyHtml = useCallback((html: string) => {
     if (previewRef.current) {
@@ -113,32 +121,71 @@ export default function BudgetTechSpecPanel({
     setLogs((prev) => [...prev.slice(-120), { id: logIdRef.current, message, phase }]);
   }, []);
 
-  const applyStreamPayload = useCallback(
-    (data: Record<string, unknown>, fromToken = false) => {
-      if (data.formatting && typeof data.formatting === "object") {
-        setFormatting((f) => ({ ...f, ...(data.formatting as TechSpecFormatting) }));
-      }
-      const md = typeof data.markdown === "string" ? data.markdown : null;
-      const fullHtml = typeof data.html_content === "string" ? data.html_content : null;
+  const applyFormatting = useCallback((data: Record<string, unknown>) => {
+    if (data.formatting && typeof data.formatting === "object") {
+      setFormatting((f) => ({ ...f, ...(data.formatting as TechSpecFormatting) }));
+    }
+  }, []);
 
+  const previewBodyFromPayload = useCallback((data: Record<string, unknown>) => {
+    const md = typeof data.markdown === "string" ? data.markdown : null;
+    const fullHtml = typeof data.html_content === "string" ? data.html_content : null;
+    if (fullHtml) return extractBodyHtml(fullHtml);
+    if (md !== null) return markdownToHtml(md);
+    return null;
+  }, []);
+
+  const shouldCommitPreview = useCallback((data: Record<string, unknown>) => {
+    if (data.streaming_live === false || data.partial === false) return true;
+    if (data.streaming_live === true && data.partial !== true && !committedBodyHtmlRef.current) {
+      return true;
+    }
+    return false;
+  }, []);
+
+  const commitPreview = useCallback(
+    (data: Record<string, unknown>) => {
+      applyFormatting(data);
+      const md = typeof data.markdown === "string" ? data.markdown : null;
+      const body = previewBodyFromPayload(data);
       if (md !== null) {
         streamMdRef.current = md;
         setStreamPreview(md);
         setMarkdown(md);
       }
-
-      if (fullHtml) {
-        const body = extractBodyHtml(fullHtml);
+      if (body !== null) {
+        committedBodyHtmlRef.current = body;
+        setCommittedBodyHtml(body);
         setBodyHtml(body);
-        if (fromToken || composing) syncBodyHtml(body);
-      } else if (md !== null) {
-        const body = markdownToHtml(md);
-        setBodyHtml(body);
-        if (fromToken || composing) syncBodyHtml(body);
       }
     },
-    [composing, syncBodyHtml]
+    [applyFormatting, previewBodyFromPayload]
   );
+
+  const flushPendingTyping = useCallback(() => {
+    typingRafRef.current = null;
+    const text = liveTypingRef.current;
+    flushSync(() => setLiveTyping(text));
+  }, []);
+
+  const scheduleTypingUpdate = useCallback(
+    (token: string, reset = false) => {
+      if (reset) liveTypingRef.current = "";
+      liveTypingRef.current += token;
+      if (typingRafRef.current != null) return;
+      typingRafRef.current = requestAnimationFrame(flushPendingTyping);
+    },
+    [flushPendingTyping]
+  );
+
+  const resetLiveTyping = useCallback(() => {
+    liveTypingRef.current = "";
+    if (typingRafRef.current != null) {
+      cancelAnimationFrame(typingRafRef.current);
+      typingRafRef.current = null;
+    }
+    setLiveTyping("");
+  }, []);
 
   const runStream = async (mode: "generate" | "edit") => {
     if (composing) return;
@@ -151,8 +198,11 @@ export default function BudgetTechSpecPanel({
     setLogs([]);
     setStreamPreview("");
     setTokenCount(0);
-    streamingLiveRef.current = false;
-    lastProgressRef.current = "";
+    setActiveModel(null);
+    resetLiveTyping();
+    committedBodyHtmlRef.current = "";
+    setCommittedBodyHtml("");
+    currentServiceRef.current = null;
     if (mode === "generate") streamMdRef.current = "";
     abortRef.current?.abort();
     abortRef.current = new AbortController();
@@ -180,43 +230,37 @@ export default function BudgetTechSpecPanel({
           case "status":
             pushLog(String(data.message || "Processando…"), String(data.phase || "status"));
             break;
-          case "log":
-            pushLog(String(data.message || ""), String(data.phase || "log"));
+          case "log": {
+            const msg = String(data.message || "");
+            if (/^\[\d+\/\d+\]/.test(msg)) {
+              resetLiveTyping();
+              currentServiceRef.current = null;
+            }
+            pushLog(msg, String(data.phase || "log"));
             break;
+          }
           case "token": {
             const t = String(data.token || "");
-            setTokenCount((n) => n + 1);
-            if (!streamingLiveRef.current) {
-              streamMdRef.current += t;
-              applyStreamPayload(
-                {
-                  markdown: streamMdRef.current,
-                  html_content: undefined,
-                  formatting,
-                },
-                true
-              );
-              syncBodyHtml(markdownToHtml(streamMdRef.current));
+            const serviceCode = typeof data.service_code === "string" ? data.service_code : null;
+            if (serviceCode && serviceCode !== currentServiceRef.current) {
+              currentServiceRef.current = serviceCode;
+              resetLiveTyping();
             }
+            if (typeof data.model === "string" && data.model) {
+              setActiveModel(data.model);
+            }
+            setTokenCount((n) => n + 1);
+            if (t) scheduleTypingUpdate(t);
             break;
           }
           case "preview":
-            if (data.streaming_live === true) {
-              streamingLiveRef.current = true;
-            } else if (data.streaming_live === false) {
-              streamingLiveRef.current = false;
-            }
-            if (typeof data.progress === "object" && data.progress !== null) {
-              const p = data.progress as { current?: number; total?: number };
-              if (p.current != null && p.total != null) {
-                const key = `${p.current}/${p.total}`;
-                if (key !== lastProgressRef.current) {
-                  lastProgressRef.current = key;
-                  pushLog(`Progresso: etapa ${p.current} de ${p.total}`, "progress");
-                }
+            applyFormatting(data);
+            if (shouldCommitPreview(data)) {
+              commitPreview(data);
+              if (data.streaming_live === false || data.partial === false) {
+                resetLiveTyping();
               }
             }
-            applyStreamPayload(data, true);
             break;
           case "done": {
             const updated = data.session as BudgetSessionResponse | undefined;
@@ -245,6 +289,11 @@ export default function BudgetTechSpecPanel({
         pushLog(err instanceof Error ? err.message : String(err), "error");
       }
     } finally {
+      if (typingRafRef.current != null) {
+        cancelAnimationFrame(typingRafRef.current);
+        typingRafRef.current = null;
+      }
+      resetLiveTyping();
       setComposing(false);
     }
   };
@@ -263,9 +312,12 @@ export default function BudgetTechSpecPanel({
       setLogs([]);
       setTokenCount(0);
       setPrompt("");
+      setActiveModel(null);
       streamMdRef.current = "";
-      streamingLiveRef.current = false;
-      lastProgressRef.current = "";
+      committedBodyHtmlRef.current = "";
+      setCommittedBodyHtml("");
+      resetLiveTyping();
+      currentServiceRef.current = null;
       setFormatting(DEFAULT_FORMATTING);
       syncBodyHtml("");
       onUpdate(result.session);
@@ -326,7 +378,7 @@ export default function BudgetTechSpecPanel({
           </h3>
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
+        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-3">
           <label className={budgetField}>
             <div className="mb-1 flex items-center justify-between gap-2">
               <span className={budgetFieldLabel}>
@@ -415,12 +467,17 @@ export default function BudgetTechSpecPanel({
             </button>
           </div>
 
-          <div className="min-h-0 flex-1 rounded-lg bg-slate-950/80 ring-1 ring-slate-800">
-            <div className="border-b border-slate-800 px-2 py-1 text-[10px] font-medium uppercase text-slate-500">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg bg-slate-950/80 ring-1 ring-slate-800">
+            <div className="shrink-0 border-b border-slate-800 px-2 py-1 text-[10px] font-medium uppercase text-slate-500">
               Execução em tempo real
-              {composing && <span className="ml-2 text-violet-400">{tokenCount} tokens</span>}
+              {composing && activeModel && (
+                <span className="ml-2 normal-case text-violet-400">{activeModel}</span>
+              )}
             </div>
-            <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-2 font-mono text-[11px] leading-relaxed lg:max-h-none">
+            <div
+              ref={logScrollRef}
+              className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-2 font-mono text-[11px] leading-relaxed"
+            >
               {logs.length === 0 && !composing && (
                 <p className="break-words text-slate-600">
                   Combine conteúdo e formatação no mesmo prompt. A formatação (fonte, margens,
@@ -445,7 +502,14 @@ export default function BudgetTechSpecPanel({
                   › {entry.message}
                 </p>
               ))}
-              <div ref={logEndRef} />
+              {composing && (
+                <div className="mt-2 border-t border-slate-800/80 pt-2">
+                  <p className="whitespace-pre-wrap break-words text-[11px] leading-relaxed text-violet-100 [overflow-wrap:anywhere]">
+                    {liveTyping}
+                    <span className="streaming-cursor ml-0.5 inline-block text-cyan-400">▍</span>
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -519,7 +583,8 @@ export default function BudgetTechSpecPanel({
           >
             {composing && (
               <div className="pointer-events-none absolute right-3 top-3 rounded bg-violet-600/90 px-2 py-1 text-[10px] font-medium text-white shadow">
-                Redigindo… {tokenCount > 0 ? `${tokenCount} tokens` : ""}
+                Redigindo…
+                {activeModel ? ` ${activeModel}` : ""}
               </div>
             )}
             {formatting.logo_text && (
@@ -532,15 +597,29 @@ export default function BudgetTechSpecPanel({
                 {formatting.document_title}
               </h1>
             )}
-            <div
-              ref={previewRef}
-              contentEditable={!composing}
-              suppressContentEditableWarning
-              className="tech-spec-preview min-h-[50vh] text-slate-900 outline-none [&_h1]:mb-3 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-3 [&_h3]:text-lg [&_h3]:font-semibold [&_li]:ml-4 [&_p]:mb-2 [&_ul]:list-disc [&_ul]:pl-5"
-              onInput={() => {
-                if (previewRef.current) setBodyHtml(previewRef.current.innerHTML);
-              }}
-            />
+            {composing ? (
+              <div className="tech-spec-preview min-h-[50vh] text-slate-900 outline-none [&_h1]:mb-3 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-3 [&_h3]:text-lg [&_h3]:font-semibold [&_li]:ml-4 [&_p]:mb-2 [&_ul]:list-disc [&_ul]:pl-5">
+                {committedBodyHtml ? (
+                  <div dangerouslySetInnerHTML={{ __html: committedBodyHtml }} />
+                ) : (
+                  !liveTyping && <p><em>Corpo do documento…</em></p>
+                )}
+                <p className="mt-2 whitespace-pre-wrap break-words font-mono text-[11pt] leading-relaxed text-slate-800 [overflow-wrap:anywhere]">
+                  {liveTyping}
+                  <span className="streaming-cursor ml-0.5 inline-block text-violet-500">▍</span>
+                </p>
+              </div>
+            ) : (
+              <div
+                ref={previewRef}
+                contentEditable
+                suppressContentEditableWarning
+                className="tech-spec-preview min-h-[50vh] text-slate-900 outline-none [&_h1]:mb-3 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-3 [&_h3]:text-lg [&_h3]:font-semibold [&_li]:ml-4 [&_p]:mb-2 [&_ul]:list-disc [&_ul]:pl-5"
+                onInput={() => {
+                  if (previewRef.current) setBodyHtml(previewRef.current.innerHTML);
+                }}
+              />
+            )}
             {formatting.page_numbers && (
               <div
                 className={cn(

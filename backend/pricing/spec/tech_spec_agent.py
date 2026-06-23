@@ -43,7 +43,7 @@ _DEFAULT_USER_PROMPT = (
     "organizado por etapa e sub-etapa."
 )
 
-_PREVIEW_EVERY_TOKENS = 4
+_PREVIEW_EVERY_TOKENS = 1
 _MAX_SERVICE_ATTEMPTS = 3
 
 
@@ -337,7 +337,14 @@ def _generate_service_with_retry(
                 if event_type == "token":
                     partial_text += payload["token"]
                     token_count += 1
-                    yield "token", {"token": payload["token"]}
+                    yield "token", {
+                        "token": payload["token"],
+                        "service_code": svc.code,
+                        "service_name": svc.name[:70],
+                        "part_index": part_index,
+                        "part_total": part_total,
+                        "model": use_model,
+                    }
                     if token_count % _PREVIEW_EVERY_TOKENS == 0:
                         yield from _emit_service_preview(
                             session,

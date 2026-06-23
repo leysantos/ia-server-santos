@@ -295,6 +295,7 @@ def stream_service_content(
         options=_LLM_OPTIONS,
         max_chars=6_000,
         max_token_events=3_000,
+        yield_all_tokens=True,
     ):
         if event_type == "token":
             accumulated += payload["token"]

@@ -237,19 +237,20 @@ def edit_tech_spec_stream(
                     "repeat_last_n": 128,
                 },
                 max_chars=24_000,
+                yield_all_tokens=True,
             ):
                 if event_type == "token":
                     accumulated += payload["token"]
-                    yield "token", {"token": payload["token"]}
-                    if len(accumulated) % 60 < len(payload["token"]):
-                        working.markdown = accumulated
-                        working.html_content = markdown_to_html(accumulated)
-                        yield "preview", {
-                            "markdown": accumulated,
-                            "html_content": render_document_html(working),
-                            "formatting": working.formatting,
-                            "partial": True,
-                        }
+                    yield "token", {"token": payload["token"], "model": model}
+                    working.markdown = accumulated
+                    working.html_content = markdown_to_html(accumulated)
+                    yield "preview", {
+                        "markdown": accumulated,
+                        "html_content": render_document_html(working),
+                        "formatting": working.formatting,
+                        "partial": True,
+                        "streaming_live": True,
+                    }
                 elif event_type == "guard":
                     yield "log", payload
                 elif event_type == "complete":

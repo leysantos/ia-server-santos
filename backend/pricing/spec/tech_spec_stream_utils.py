@@ -64,6 +64,7 @@ def generate_stream_guarded(
     options: dict[str, Any],
     max_chars: int = 24_000,
     max_token_events: int = 8_000,
+    yield_all_tokens: bool = False,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
     """
     Stream com parada em loop ou tamanho máximo.
@@ -105,7 +106,7 @@ def generate_stream_guarded(
             break
 
         accumulated = candidate
-        if token_events % 8 == 0 or len(token) > 40:
+        if yield_all_tokens or token_events % 8 == 0 or len(token) > 40:
             yield "token", {"token": token}
 
     yield "complete", {

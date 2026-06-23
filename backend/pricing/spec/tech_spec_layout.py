@@ -57,12 +57,24 @@ class _HtmlToParagraphs(HTMLParser):
         elif tag == "li":
             self._flush()
             self._current = {"type": "list_item", "runs": []}
+        elif tag in ("strong", "b"):
+            if self._current is not None:
+                self._current.setdefault("runs", []).append("**")
+        elif tag in ("em", "i"):
+            if self._current is not None:
+                self._current.setdefault("runs", []).append("*")
         elif tag in ("br",):
             if self._current is not None:
                 self._current.setdefault("runs", []).append("\n")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in ("h1", "h2", "h3", "h4", "p", "li"):
+        if tag in ("strong", "b"):
+            if self._current is not None:
+                self._current.setdefault("runs", []).append("**")
+        elif tag in ("em", "i"):
+            if self._current is not None:
+                self._current.setdefault("runs", []).append("*")
+        elif tag in ("h1", "h2", "h3", "h4", "p", "li"):
             self._flush()
 
     def handle_data(self, data: str) -> None:
@@ -117,6 +129,14 @@ def document_blocks(doc_html: str, doc_markdown: str) -> list[dict[str, Any]]:
         if blocks:
             return blocks
     return parse_markdown_blocks(doc_markdown)
+
+
+def document_blocks_for_export(doc_html: str, doc_markdown: str) -> list[dict[str, Any]]:
+    """Extrai só o corpo editável antes de montar blocos (evita título/logo duplicados)."""
+    from pricing.spec.tech_spec_models import extract_body_html
+
+    body_html = extract_body_html(doc_html) if doc_html else ""
+    return document_blocks(body_html, doc_markdown)
 
 
 def docx_font_name(font_family: str) -> str:

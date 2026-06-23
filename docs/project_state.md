@@ -6,7 +6,7 @@
 | Campo | Valor |
 |-------|-------|
 | **Versão do sistema** | 1.0.0 |
-| **Última atualização** | 2026-06-23 |
+| **Última atualização** | 2026-06-20 |
 | **Marco atual** | Orçamento `/budget` reorganizado em abas · SINAPI + SICRO multi-base |
 | **Próximo foco** | Reimport PPD/modelos · ODA/LibreDWG · ICP-Brasil |
 | **Repositório** | [github.com/leysantos/ia-server-santos](https://github.com/leysantos/ia-server-santos) |
@@ -1251,6 +1251,7 @@ Settings completas: `backend/config/settings.py`
 | 2026-06-20 | **SICRO sync incremental** | `skip_existing_ufs` no lote — pula `BR-SICRO-{UF}-YYYY-MM` já no banco · UI **Sincronizar UFs faltantes (N)** + **Reimportar todas** · CLI `--skip-existing` |
 | 2026-06-20 | **Download SICRO resiliente** | `download_archive`: streaming 256KB, timeout leitura 600s, 5 retries com backoff, verificação Content-Length · sync lote continua após falha por UF (`synced_ufs` / `failed_ufs`) |
 | 2026-06-20 | **UI SICRO** | `/settings/price-bases`: filtro região/UF, meses trimestrais, botão sync todas UFs · `BudgetPriceBasesPanel`: região + versão por UF · `frontend/lib/sicro-links.ts` |
+| 2026-06-20 | **Fix PDF especificação técnica — listas** | Marcadores fora da margem: substituído `ListFlowable` (bulletDedent auto) por parágrafos com `•` + recuo; export usa só corpo (`extract_body_html`); negrito preservado em `<strong>` |
 | 2026-06-23 | **Retry automático especificação técnica** | Até 3 tentativas/serviço se resposta IA incompleta; modelo fallback na 3ª tentativa |
 | 2026-06-23 | **Botão Limpar especificação técnica** | `DELETE /tech-spec` · limpa sessão e preview para regerar do zero |
 | 2026-06-20 | **Especificação técnica v2 — serviço a serviço** | Refatoração completa: `tech_spec_generator.py` (IA só no conteúdo) + estrutura Markdown no código; 1 chamada/serviço; preview incremental; fallback por serviço (não documento inteiro) |
