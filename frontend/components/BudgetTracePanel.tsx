@@ -8,12 +8,14 @@ interface BudgetTracePanelProps {
   projectId?: string | null;
   savedItems: BudgetSummary[];
   className?: string;
+  layout?: "sidebar" | "full";
 }
 
 export default function BudgetTracePanel({
   projectId,
   savedItems,
   className,
+  layout = "sidebar",
 }: BudgetTracePanelProps) {
   const linked = projectId
     ? savedItems.filter((b) => b.project_id === projectId)
@@ -46,7 +48,12 @@ export default function BudgetTracePanel({
       {linked.length === 0 ? (
         <p className="text-sm text-slate-500">Nenhum orçamento salvo ainda.</p>
       ) : (
-        <ul className="space-y-2">
+        <ul
+          className={cn(
+            "space-y-2 overflow-y-auto",
+            layout === "full" ? "max-h-[min(520px,60vh)]" : undefined
+          )}
+        >
           {linked.map((item) => (
             <li
               key={item.id}

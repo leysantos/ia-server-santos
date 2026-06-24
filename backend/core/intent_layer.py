@@ -178,7 +178,24 @@ def analyze_intent(text: str) -> IntentAnalysis:
             ],
         )
 
-    mixed = try_split_mixed(text)
+    from core.conversation_context import extract_latest_user_message
+    from core.platform_knowledge import resolve_platform_evaluation_intent
+
+    if resolve_platform_evaluation_intent(text):
+        chat_intent = ChatIntent("platform_evaluation", 0.98)
+        return IntentAnalysis(
+            mode="chat_only",
+            confidence=0.98,
+            input=text,
+            chat_intent=chat_intent,
+            execution_plan=[
+                ExecutionStep(1, "chat", "CHAT", CHAT_AGENT_NAME, text),
+            ],
+        )
+
+    routing_text = extract_latest_user_message(text)
+
+    mixed = try_split_mixed(routing_text)
     if mixed:
         chat_segment, technical_segment = mixed
         discipline = route_by_rules(technical_segment)
@@ -196,7 +213,7 @@ def analyze_intent(text: str) -> IntentAnalysis:
             ),
         )
 
-    discipline = route_by_rules(text)
+    discipline = route_by_rules(routing_text)
     if discipline:
         return IntentAnalysis(
             mode="engineering_only",
@@ -214,7 +231,7 @@ def analyze_intent(text: str) -> IntentAnalysis:
             ],
         )
 
-    if route_by_chat(text):
+    if route_by_chat(routing_text):
         chat_intent = detect_chat_intent(text)
         return IntentAnalysis(
             mode="chat_only",
@@ -226,7 +243,7 @@ def analyze_intent(text: str) -> IntentAnalysis:
             ],
         )
 
-    route_result = route_engineering_only(text)
+    route_result = route_engineering_only(routing_text)
     discipline = route_result.get("discipline", "GERAL")
 
     if discipline not in ("GERAL", "CHAT"):
@@ -352,6 +369,7 @@ def _stream_step_events(
     persist: bool,
     conversation_id: Optional[str],
     project_id: Optional[str] = None,
+    llm_model: Optional[str] = None,
 ):
     """Gera eventos token + segment_done para um passo do plano."""
     from agents.chat import ChatAgent, detect_intent
@@ -423,12 +441,19 @@ def _stream_step_events(
                 },
             )
             if isinstance(agent, ChatAgent):
-                for token in agent.iter_tokens(step.input):
+                intent = detect_intent(step.input)
+                for token in agent.iter_tokens(step.input, llm_model=llm_model):
                     tokens.append(token)
                     yield ("token", _token_payload(step, token, agent=agent))
-                full_text = post_format_chat_stream("".join(tokens))
-                intent = detect_intent(step.input)
-                source = "llm_stream" if agent._last_model else "template"
+                full_text = post_format_chat_stream("".join(tokens), intent=intent)
+                if intent.name == "platform_evaluation":
+                    source = (
+                        "platform_knowledge_stream"
+                        if agent._last_model
+                        else "platform_knowledge_fallback"
+                    )
+                else:
+                    source = "llm_stream" if agent._last_model else "template"
                 response = agent.build_stream_response(
                     step.input, full_text, intent, source, agent._last_model
                 )
@@ -438,6 +463,7 @@ def _stream_step_events(
                     step.input,
                     context=context,
                     use_rag=use_rag_step,
+                    llm_model=llm_model,
                 ):
                     tokens.append(token)
                     yield ("token", _token_payload(step, token, agent=agent))
@@ -478,6 +504,26 @@ def _stream_step_events(
         yield ("segment_done", response)
 
     except Exception as exc:
+        if isinstance(agent, ChatAgent) and tokens:
+            chat_intent = detect_intent(step.input)
+            if chat_intent.name == "platform_evaluation":
+                from core.platform_knowledge import format_platform_evaluation_fallback
+
+                partial = post_format_chat_stream("".join(tokens), intent=chat_intent)
+                if len(partial.strip()) < 300:
+                    partial = partial.strip() + "\n\n" + format_platform_evaluation_fallback()
+                response = agent.build_stream_response(
+                    step.input,
+                    partial,
+                    chat_intent,
+                    "platform_knowledge_partial",
+                    getattr(agent, "_last_model", None),
+                )
+                if persist:
+                    save_agent_run(route_result=route_result, response=response)
+                yield ("segment_done", response)
+                return
+
         response = _agent_error_response(step.discipline, step.input, exc)
         yield (
             "token",
@@ -488,9 +534,16 @@ def _stream_step_events(
         yield ("segment_done", response)
 
 
-def post_format_chat_stream(text: str) -> str:
+def post_format_chat_stream(text: str, intent: ChatIntent | None = None) -> str:
     from agents.chat import post_format_response
-    return post_format_response(text)
+    from core.platform_knowledge import PLATFORM_EVAL_RESPONSE_MAX_CHARS
+
+    limit = (
+        PLATFORM_EVAL_RESPONSE_MAX_CHARS
+        if intent and intent.name == "platform_evaluation"
+        else 1200
+    )
+    return post_format_response(text, max_chars=limit)
 
 
 def iter_intent_events(
@@ -499,6 +552,7 @@ def iter_intent_events(
     persist: bool = True,
     conversation_id: Optional[str] = None,
     project_id: Optional[str] = None,
+    llm_model: Optional[str] = None,
 ):
     """
     Generator de eventos para SSE: status | intent | token | segment_done | done.
@@ -542,7 +596,9 @@ def iter_intent_events(
                 },
             )
 
-        for event in _stream_step_events(step, use_rag, persist, conversation_id, project_id):
+        for event in _stream_step_events(
+            step, use_rag, persist, conversation_id, project_id, llm_model=llm_model
+        ):
             if event[0] == "segment_done":
                 segment_responses.append(event[1])
             yield event

@@ -389,6 +389,7 @@ class SinapiConnector(BasePriceConnector):
             insumos=bank["insumos"],
             uf=uf.upper(),
             desonerado=True,
+            labor_charges=bank.get("labor_charges"),
             metadata={
                 "xlsx_path": str(xlsx_path),
                 "zip_path": str(dest_dir),
@@ -520,44 +521,256 @@ class CicroConnector(BasePriceConnector):
     label = "CICRO/SICRO"
 
     def supports_auto_download(self) -> bool:
-        return False
+        return True
 
     def download(
         self,
         *,
         dest_dir: Path,
+        uf: str = "AM",
+        year: int | None = None,
+        month: int | None = None,
+        desonerado: bool = True,
         local_file: Path | None = None,
+        on_progress: Any | None = None,
+        set_active: bool = False,
+        download_all_regions: bool = False,
+        skip_existing_ufs: bool = False,
         **_: Any,
     ) -> DownloadResult:
-        import os
+        from datetime import date
 
-        path = local_file or Path(os.environ.get("CICRO_EXPORT_PATH", ""))
-        if not path.is_file():
-            raise FileNotFoundError(
-                "Informe local_file ou CICRO_EXPORT_PATH com planilha SICRO/CICRO."
-            )
-
-        from pricing.providers._tabular import parse_tabular_file
+        from pricing.budget.price_bank_store import PriceBankStore
         from pricing.sync.sinapi_parser import export_sinapi_csv
+        from pricing.sync.sicro_parser import infer_sicro_reference, parse_sicro_package
+        from pricing.sync.sicro_portal_resolver import (
+            SICRO_PORTAL_URL,
+            _session,
+            download_archive,
+            iter_all_state_archives,
+            list_imported_sicro_ufs,
+            resolve_archive_by_uf,
+            sicro_reference_key,
+        )
+
+        def emit(pct: int, phase: str, msg: str) -> None:
+            if on_progress:
+                on_progress({"percent": pct, "phase": phase, "message": msg})
 
         dest_dir.mkdir(parents=True, exist_ok=True)
-        rows = parse_tabular_file(path)
-        csv_path = dest_dir / f"cicro_{path.stem}.csv"
-        export_sinapi_csv(rows, csv_path)
+
+        if year is None or month is None:
+            today = date.today()
+            month = month or max(m for m in (1, 4, 7, 10) if m <= today.month) if today.month >= 1 else 1
+            year = year or today.year
+
+        if local_file and Path(local_file).exists():
+            emit(10, "download", "Lendo pacote SICRO local…")
+            package_path = Path(local_file)
+        elif download_all_regions:
+            emit(8, "download", "Listando bases SICRO no portal DNIT…")
+            links = iter_all_state_archives(year=year, month=month)
+            if not links:
+                raise FileNotFoundError(
+                    f"Nenhum arquivo SICRO {year}-{month:02d} encontrado em {SICRO_PORTAL_URL}"
+                )
+            imported = list_imported_sicro_ufs(year=year, month=month) if skip_existing_ufs else set()
+            skipped_ufs = sorted(link.uf for link in links if link.uf in imported)
+            pending = [link for link in links if link.uf not in imported]
+            if skip_existing_ufs and skipped_ufs:
+                emit(
+                    9,
+                    "download",
+                    f"{len(skipped_ufs)} UF(s) já importada(s) — pulando: {', '.join(skipped_ufs[:8])}"
+                    f"{'…' if len(skipped_ufs) > 8 else ''}",
+                )
+            if not pending:
+                ref = sicro_reference_key(skipped_ufs[0] if skipped_ufs else links[0].uf, year, month)
+                return DownloadResult(
+                    source=self.name,
+                    local_path=dest_dir,
+                    reference=ref,
+                    item_count=0,
+                    metadata={
+                        "synced_ufs": [],
+                        "skipped_ufs": skipped_ufs,
+                        "failed_ufs": [],
+                        "sync_total": len(links),
+                        "pending_total": 0,
+                        "message": (
+                            f"Todas as {len(skipped_ufs)} UF(s) já estão importadas para {year}-{month:02d}"
+                            if skipped_ufs
+                            else "Nenhuma UF pendente"
+                        ),
+                    },
+                )
+            http = _session()
+            last_result: DownloadResult | None = None
+            synced_ufs: list[str] = []
+            failed_ufs: list[dict[str, str]] = []
+            for idx, link in enumerate(pending):
+                emit(
+                    10 + int(70 * idx / max(len(pending), 1)),
+                    "download",
+                    f"Baixando SICRO {link.uf} ({idx + 1}/{len(pending)} pendente"
+                    f"{f', {len(skipped_ufs)} pulada(s)' if skipped_ufs else ''})…",
+                )
+                try:
+                    archive = download_archive(link, dest_dir, session=http)
+                    last_result = self._import_sicro_package(
+                        archive,
+                        dest_dir=dest_dir,
+                        uf=link.uf,
+                        year=year,
+                        month=month,
+                        desonerado=desonerado,
+                        set_active=set_active and idx == len(pending) - 1,
+                        on_progress=on_progress,
+                    )
+                    synced_ufs.append(link.uf)
+                except Exception as exc:
+                    logger.exception("SICRO importação %s falhou", link.uf)
+                    failed_ufs.append({"uf": link.uf, "error": str(exc)})
+                    emit(
+                        10 + int(70 * (idx + 1) / max(len(pending), 1)),
+                        "download",
+                        f"Falha em {link.uf} — continuando ({idx + 1}/{len(pending)})…",
+                    )
+                    continue
+                if idx < len(pending) - 1:
+                    time.sleep(2.0)
+            if not last_result:
+                detail = "; ".join(f"{f['uf']}: {f['error']}" for f in failed_ufs[:5])
+                if skipped_ufs and not synced_ufs:
+                    raise RuntimeError(
+                        f"Nenhuma UF SICRO importada em {year}-{month:02d} "
+                        f"({len(skipped_ufs)} já existiam). Falhas: {detail}"
+                    )
+                raise RuntimeError(
+                    f"Nenhuma UF SICRO importada em {year}-{month:02d}. Falhas: {detail}"
+                )
+            last_result.metadata["synced_ufs"] = synced_ufs
+            last_result.metadata["skipped_ufs"] = skipped_ufs
+            last_result.metadata["failed_ufs"] = failed_ufs
+            last_result.metadata["sync_total"] = len(links)
+            last_result.metadata["pending_total"] = len(pending)
+            return last_result
+        else:
+            emit(8, "download", f"Resolvendo SICRO {uf.upper()} {year}-{month:02d} no DNIT…")
+            link = resolve_archive_by_uf(uf, year=year, month=month)
+            if not link:
+                raise FileNotFoundError(
+                    f"SICRO {uf.upper()} {year}-{month:02d} não publicado — "
+                    f"informe local_file ou verifique {SICRO_PORTAL_URL}"
+                )
+            emit(15, "download", f"Baixando {link.filename}…")
+            package_path = download_archive(link, dest_dir)
+
+        return self._import_sicro_package(
+            package_path,
+            dest_dir=dest_dir,
+            uf=uf,
+            year=year,
+            month=month,
+            desonerado=desonerado,
+            set_active=set_active,
+            on_progress=on_progress,
+        )
+
+    def _import_sicro_package(
+        self,
+        package_path: Path,
+        *,
+        dest_dir: Path,
+        uf: str,
+        year: int | None,
+        month: int | None,
+        desonerado: bool,
+        set_active: bool,
+        on_progress: Any | None,
+    ) -> DownloadResult:
+        from pricing.budget.price_bank_store import PriceBankStore
+        from pricing.sync.sinapi_parser import export_sinapi_csv
+        from pricing.sync.sicro_parser import infer_sicro_reference, parse_sicro_package
+
+        def emit(pct: int, phase: str, msg: str) -> None:
+            if on_progress:
+                on_progress({"percent": pct, "phase": phase, "message": msg})
+
+        inferred_uf, ref_key, y_inf, m_inf = infer_sicro_reference(package_path)
+        uf_code = (uf or inferred_uf or "BR").upper()
+        year = year or y_inf
+        month = month or m_inf
+        if not ref_key.startswith("BR-SICRO"):
+            ref_key = f"BR-SICRO-{uf_code}-{year}-{month:02d}"
+
+        emit(28, "parse", "Extraindo composições, CPUs e insumos SICRO…")
+        bank = parse_sicro_package(package_path, uf=uf_code, desonerado=desonerado)
+        closed = bank["closed"]
+        open_map = bank["open"]
+        insumos = bank["insumos"]
+        emit(
+            52,
+            "parse",
+            f"SICRO {uf_code}: {len(closed):,} composições · {len(insumos):,} insumos".replace(",", "."),
+        )
+
+        closed_rows = [c.to_dict() for c in closed]
+        csv_path = dest_dir / f"sicro_{ref_key.replace('/', '-')}_fechadas.csv"
+        export_sinapi_csv(closed_rows, csv_path)
+
+        emit(58, "bank", "Gravando banco de preços SICRO…")
+        manifest = PriceBankStore.for_reference(ref_key).save_bank(
+            source=self.name,
+            reference=ref_key,
+            closed=closed,
+            open_compositions=open_map,
+            insumos=insumos,
+            uf=uf_code,
+            desonerado=desonerado,
+            metadata={
+                "package_path": str(package_path.resolve()),
+                "format": bank.get("format", "sicro_dnit"),
+                "dual_desoneracao": True,
+                "region_label": bank.get("region_label"),
+                "period_label": bank.get("period_label"),
+                "year": year,
+                "month": month,
+                "portal_url": (
+                    "https://www.gov.br/dnit/pt-br/assuntos/planejamento-e-pesquisa/"
+                    "custos-referenciais/sistemas-de-custos/sicro/relatorios/relatorios-sicro"
+                ),
+            },
+            set_active=set_active,
+        )
+        emit(65, "bank", "Banco SICRO salvo")
+
+        open_items = sum(len(c.items) for c in open_map.values())
         return DownloadResult(
             source=self.name,
             local_path=csv_path,
-            reference=path.stem,
-            item_count=len(rows),
-            metadata={"source_file": str(path.resolve())},
+            reference=ref_key,
+            item_count=len(closed_rows),
+            metadata={
+                "uf": uf_code,
+                "reference": ref_key,
+                "bank": manifest.to_dict(),
+                "compositions_closed": manifest.counts.get("compositions_closed", 0),
+                "compositions_open": manifest.counts.get("compositions_open", 0),
+                "insumos": manifest.counts.get("insumos", 0),
+                "open_items_total": open_items,
+                "format": "sicro_dnit",
+            },
         )
 
 
 class PpdSeminfConnector(BasePriceConnector):
-    """PPD/SEMINF Manaus — planilha regional (.xlsm) com códigos SINAPI e preços locais."""
+    """DP/SEMINF — Tabela de Preço (fechadas) + Composicao-Seminf ComD/SemD (abertas)."""
 
     name = "ppd_seminf"
     label = "PPD / SEMINF (Manaus-AM)"
+    _source_slug = "SEMINF"
+    _default_uf = "AM"
 
     def supports_auto_download(self) -> bool:
         return False
@@ -567,8 +780,11 @@ class PpdSeminfConnector(BasePriceConnector):
         *,
         dest_dir: Path,
         local_file: Path | None = None,
+        open_comd_file: Path | None = None,
+        open_semd_file: Path | None = None,
         year: int | None = None,
         month: int | None = None,
+        uf: str | None = None,
         on_progress: Any | None = None,
         set_active: bool = False,
         **_: Any,
@@ -577,74 +793,189 @@ class PpdSeminfConnector(BasePriceConnector):
             if on_progress:
                 on_progress({"percent": pct, "phase": phase, "message": msg})
 
-        path = Path(local_file) if local_file else None
-        if not path or not path.is_file():
+        closed_path = Path(local_file) if local_file and Path(local_file).is_file() else None
+        comd_path = Path(open_comd_file) if open_comd_file and Path(open_comd_file).is_file() else None
+        semd_path = Path(open_semd_file) if open_semd_file and Path(open_semd_file).is_file() else None
+
+        if not closed_path and not (comd_path and semd_path):
             raise FileNotFoundError(
-                "PPD/SEMINF requer arquivo local — exporte a planilha MC_OR (.xlsm/.xlsx)."
+                "DP/SEMINF requer Tabela_Preco (.xlsm) e/ou as duas planilhas "
+                "Composicao-Seminf ComD + SemD (.xlsx)."
             )
-        if path.suffix.lower() not in (".xlsm", ".xlsx", ".xls"):
-            raise ValueError(f"Formato não suportado para PPD/SEMINF: {path.suffix}")
-
-        from core.knowledge.regional_budget_indexer import extract_regional_budget_model
-        from pricing.budget.price_bank_store import CompositionClosed, PriceBankStore
-
-        emit(12, "parse", "Lendo planilha PPD/SEMINF…")
-        model = extract_regional_budget_model(path)
-        if model.get("error"):
+        if (comd_path and not semd_path) or (semd_path and not comd_path):
             raise ValueError(
-                f"Falha ao interpretar planilha: {model.get('error')} "
-                f"({model.get('service_count', 0)} serviços)"
+                "Informe as duas planilhas de composição aberta: ComD e SemD."
             )
 
-        closed: list[CompositionClosed] = []
-        for etapa in model.get("etapas") or []:
-            for svc in etapa.get("services") or []:
-                code = str(svc.get("sinapi_code") or svc.get("code") or "").strip()
-                if not code:
-                    continue
-                price = float(svc.get("unit_price") or 0)
-                closed.append(
-                    CompositionClosed(
-                        code=code,
-                        description=str(svc.get("description") or ""),
-                        unit=str(svc.get("unit") or "un"),
-                        price=price,
-                        price_sem_desoneracao=price,
-                        regional={"AM": {"comd": price, "semd": price}},
-                    )
-                )
-        if not closed:
-            raise ValueError("Nenhum serviço com código detectado na planilha PPD/SEMINF")
+        if closed_path and not (comd_path and semd_path):
+            from pricing.budget.seminf_bundle_detect import resolve_seminf_open_siblings
 
-        if year and month:
-            ref_key = f"BR-SEMINF-{year}-{month:02d}"
-        else:
-            ref_key = f"BR-SEMINF-{path.stem}"
+            auto_comd, auto_semd = resolve_seminf_open_siblings(
+                closed_path, year=year, month=month
+            )
+            comd_path = comd_path or auto_comd
+            semd_path = semd_path or auto_semd
+            if comd_path and semd_path:
+                emit(8, "parse", "ComD e SemD detectados na pasta da Tabela de Preço…")
 
-        emit(45, "bank", f"Gravando {len(closed):,} composições…".replace(",", "."))
-        dest_dir.mkdir(parents=True, exist_ok=True)
+        from pricing.budget.seminf_base_parser import validate_seminf_bundle_period
+
+        bundle_paths = [p for p in (closed_path, comd_path, semd_path) if p]
+        if year and month and len(bundle_paths) >= 3:
+            validate_seminf_bundle_period(bundle_paths, year=year, month=month)
+
+        from pricing.budget.price_bank_store import CompositionClosed, PriceBankStore
+        from pricing.budget.seminf_base_parser import (
+            build_tp2_index_from_workbook,
+            extract_seminf_base_compositions,
+            infer_seminf_reference,
+        )
+        from pricing.budget.seminf_open_parser import (
+            detect_seminf_open_desoneracao,
+            merge_seminf_open_compositions,
+            parse_seminf_open_workbook,
+        )
         from pricing.sync.sinapi_parser import export_sinapi_csv
 
+        region_uf = (uf or self._default_uf).upper()
+        closed: list[CompositionClosed] = []
+        meta: dict[str, Any] = {}
+        tp2_index: dict[str, str] = {}
+        ref_path = closed_path or comd_path or semd_path
+        assert ref_path is not None
+
+        if closed_path:
+            if closed_path.suffix.lower() not in (".xlsm", ".xlsx", ".xls"):
+                raise ValueError(f"Formato não suportado para Tabela de Preço: {closed_path.suffix}")
+            emit(10, "parse", "Lendo Tabela de Preço SEMINF (fechadas, códigos regionais)…")
+            row_dicts, meta = extract_seminf_base_compositions(closed_path, uf=region_uf)
+            if not row_dicts:
+                raise ValueError(
+                    "Nenhuma composição regional SEMINF na aba Base — verifique códigos "
+                    "terminados em .SEMINF (ex.: 107071.1.9.SEMINF)."
+                )
+            closed = [CompositionClosed(**row) for row in row_dicts]
+            tp2_index = build_tp2_index_from_workbook(
+                closed_path, sheet_name=str(meta.get("base_sheet") or "") or None
+            )
+
+        open_map: dict[str, Any] = {}
+        open_meta: dict[str, Any] = {}
+        if comd_path and semd_path:
+            for path in (comd_path, semd_path):
+                if path.suffix.lower() not in (".xlsx", ".xlsm", ".xls"):
+                    raise ValueError(f"Formato não suportado para composição aberta: {path.suffix}")
+
+            comd_role = detect_seminf_open_desoneracao(comd_path)
+            semd_role = detect_seminf_open_desoneracao(semd_path)
+            if comd_role == "semd" and semd_role == "comd":
+                comd_path, semd_path = semd_path, comd_path
+                comd_role, semd_role = semd_role, comd_role
+            elif comd_role == "semd" or semd_role == "comd":
+                raise ValueError(
+                    "Arquivos ComD/SemD parecem invertidos — verifique os nomes "
+                    "(Composicao-Seminf-*-ComD e *-SemD)."
+                )
+
+            emit(28, "parse", "Lendo composições abertas SEMINF (ComD)…")
+            comd_map = parse_seminf_open_workbook(comd_path)
+            emit(38, "parse", "Lendo composições abertas SEMINF (SemD)…")
+            semd_map = parse_seminf_open_workbook(semd_path)
+            if not comd_map and not semd_map:
+                raise ValueError(
+                    "Nenhuma composição aberta SEMINF (Banco Próprio) nas planilhas CPUs."
+                )
+            emit(48, "parse", "Mesclando CPUs ComD + SemD…")
+            from pricing.budget.sinapi_as_index import load_sinapi_as_index_for_period
+
+            sinapi_as_index = load_sinapi_as_index_for_period(
+                year=year or meta.get("sheet_year"),
+                month=month or meta.get("sheet_month"),
+                uf=region_uf,
+            )
+            open_map = merge_seminf_open_compositions(
+                comd_map,
+                semd_map,
+                tp2_index=tp2_index,
+                sinapi_as_index=sinapi_as_index,
+            )
+            open_meta = {
+                "open_comd_file": str(comd_path.resolve()),
+                "open_semd_file": str(semd_path.resolve()),
+                "open_comd_codes": len(comd_map),
+                "open_semd_codes": len(semd_map),
+                "open_merged_codes": len(open_map),
+                "tp2_index_size": len(tp2_index),
+                "sinapi_as_index_size": len(sinapi_as_index),
+            }
+
+        if not closed and not open_map:
+            raise ValueError("Nenhuma composição SEMINF importada (fechada ou aberta).")
+
+        ref_key = infer_seminf_reference(
+            ref_path,
+            base_sheet=str(meta.get("base_sheet") or ""),
+            year=year or meta.get("sheet_year"),
+            month=month or meta.get("sheet_month"),
+            source_slug=self._source_slug,
+        )
+
+        if closed and not open_map:
+            existing_open = PriceBankStore.for_reference(ref_key).load_open()
+            if existing_open:
+                raise ValueError(
+                    f"A base {ref_key} já possui {len(existing_open)} composições abertas. "
+                    "Esta importação só inclui a Tabela de Preço (fechadas) e apagaria as CPUs. "
+                    "Use 'Selecionar pasta' com Tabela_Preco + ComD + SemD."
+                )
+            raise ValueError(
+                "DP/SEMINF incompleto: composições abertas (ComD + SemD) não encontradas. "
+                "Selecione a pasta com Tabela_Preco + Composicao-Seminf-ComD + SemD."
+            )
+
+        total_items = len(closed) + len(open_map)
+        emit(55, "bank", f"Gravando {total_items:,} composições…".replace(",", "."))
+        dest_dir.mkdir(parents=True, exist_ok=True)
         closed_rows = [c.to_dict() for c in closed]
-        csv_path = dest_dir / f"ppd_seminf_{ref_key.replace('/', '-')}.csv"
-        export_sinapi_csv(closed_rows, csv_path)
+        csv_path = dest_dir / f"{self.name}_{ref_key.replace('/', '-')}.csv"
+        if closed_rows:
+            export_sinapi_csv(closed_rows, csv_path)
+        else:
+            csv_path.write_text("code,description,unit,price\n", encoding="utf-8")
+
+        bank_metadata = {
+            "publisher": meta.get("publisher", "SEMINF-AM"),
+            "region": meta.get("region", "Manaus/Amazonas"),
+            "base_sheet": meta.get("base_sheet"),
+            "base_items": meta.get("base_items"),
+            "seminf_regional_codes": meta.get("seminf_regional_codes", len(closed)),
+            "sinapi_codes_skipped": meta.get("sinapi_codes_skipped"),
+            "import_filter": meta.get("import_filter", "seminf_only"),
+            "workbook_format": meta.get("workbook_format"),
+            "source_file": str(closed_path.resolve()) if closed_path else None,
+            "year": year or meta.get("sheet_year"),
+            "month": month or meta.get("sheet_month"),
+            "import_mode": "bundle" if open_map else "base_sheet_closed",
+            **open_meta,
+        }
+
+        labor_charges: dict[str, Any] = {}
+        try:
+            sinapi_ref = f"BR-{int(year or meta.get('sheet_year'))}-{int(month or meta.get('sheet_month')):02d}"
+            labor_charges = PriceBankStore.for_reference(sinapi_ref).load_labor_charges()
+        except (TypeError, ValueError, OSError):
+            labor_charges = {}
 
         manifest = PriceBankStore.for_reference(ref_key).save_bank(
             source=self.name,
             reference=ref_key,
             closed=closed,
-            open_compositions={},
+            open_compositions=open_map,
             insumos=[],
-            uf="AM",
+            uf=region_uf,
             desonerado=True,
-            metadata={
-                "publisher": model.get("publisher", "SEMINF-AM"),
-                "region": model.get("region", "Manaus/Amazonas"),
-                "projeto": model.get("projeto", path.stem),
-                "source_file": str(path.resolve()),
-                "year": year,
-                "month": month,
-            },
+            labor_charges=labor_charges or None,
+            metadata=bank_metadata,
             set_active=set_active,
         )
         emit(65, "bank", "Banco de preços salvo")
@@ -653,17 +984,27 @@ class PpdSeminfConnector(BasePriceConnector):
             source=self.name,
             local_path=csv_path,
             reference=ref_key,
-            item_count=len(closed),
+            item_count=len(closed) or len(open_map),
             metadata={
                 "reference": ref_key,
-                "uf": "AM",
+                "uf": region_uf,
                 "bank": manifest.to_dict(),
                 "compositions_closed": manifest.counts.get("compositions_closed", 0),
-                "compositions_open": 0,
+                "compositions_open": manifest.counts.get("compositions_open", 0),
                 "insumos": 0,
-                "open_items_total": 0,
+                "open_items_total": manifest.counts.get("open_items_total", 0),
+                "base_sheet": meta.get("base_sheet"),
+                "import_mode": bank_metadata.get("import_mode"),
             },
         )
+
+
+class DpSeminfConnector(PpdSeminfConnector):
+    """Alias custom registry — mesma planilha DP/SEMINF, fonte dp_seminf."""
+
+    name = "dp_seminf"
+    label = "DP/SEMINF"
+    _source_slug = "DP-SEMINF"
 
 
 class CustomUploadConnector(BasePriceConnector):
@@ -760,6 +1101,7 @@ CONNECTORS: dict[str, BasePriceConnector] = {
     TcpoConnector.name: TcpoConnector(),
     CicroConnector.name: CicroConnector(),
     PpdSeminfConnector.name: PpdSeminfConnector(),
+    DpSeminfConnector.name: DpSeminfConnector(),
 }
 
 

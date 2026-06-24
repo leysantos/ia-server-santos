@@ -128,7 +128,17 @@ def _normalize(text: str) -> str:
 
 def detect_intent(text: str) -> ChatIntent:
     """Classifica intenção conversacional (determinístico, sem LLM)."""
-    normalized = _normalize(text)
+    from core.conversation_context import extract_latest_user_message
+    from core.platform_knowledge import is_platform_follow_up, resolve_platform_evaluation_intent
+
+    if resolve_platform_evaluation_intent(text):
+        return ChatIntent("platform_evaluation", 0.98)
+
+    user_text = extract_latest_user_message(text)
+    if user_text != text and is_platform_follow_up(text, user_text):
+        return ChatIntent("platform_evaluation", 0.95)
+
+    normalized = _normalize(user_text)
 
     if normalized in _INSTANT_GREETINGS:
         return ChatIntent("greeting", 1.0)
@@ -164,12 +174,40 @@ def post_format_response(text: str, max_chars: int = 1200) -> str:
         r"<" + r"think" + r">.*?</" + r"think" + r">",
         re.DOTALL | re.IGNORECASE,
     )
+    think_open = re.compile(
+        r"<" + r"think" + r">.*\Z",
+        re.DOTALL | re.IGNORECASE,
+    )
     cleaned = text.strip()
     cleaned = think_block.sub("", cleaned)
+    cleaned = think_open.sub("", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     if len(cleaned) > max_chars:
         cleaned = cleaned[: max_chars - 3].rsplit(" ", 1)[0] + "..."
     return cleaned
+
+
+def iter_visible_llm_tokens(
+    stream,
+    *,
+    max_chars: int,
+    on_model=None,
+):
+    """
+    Filtra blocos  (DeepSeek-R1 etc.) e emite só o delta visível.
+
+    Garante que o texto streamado == texto final pós post_format (sem encolher no done).
+    """
+    accumulated = ""
+    visible_prev = ""
+    for token, model_used in stream:
+        if on_model:
+            on_model(model_used)
+        accumulated += token
+        visible = post_format_response(accumulated, max_chars=max_chars)
+        if len(visible) > len(visible_prev):
+            yield visible[len(visible_prev) :]
+            visible_prev = visible
 
 
 def build_chat_extra(
@@ -188,6 +226,9 @@ def build_chat_extra(
     if model:
         extra["model"] = model
         extra["llm_model"] = model  # compatibilidade
+    if intent.name == "platform_evaluation":
+        extra["platform_knowledge"] = True
+        extra["mode"] = "platform_evaluation"
     return extra
 
 
@@ -208,9 +249,11 @@ def is_conversational_short(text: str) -> bool:
 
 def should_answer_with_template(text: str, intent: ChatIntent | None = None) -> bool:
     """Perguntas conversacionais conhecidas — sem LLM (funciona com GPU ocupada)."""
+    resolved = intent or detect_intent(text)
+    if resolved.name == "platform_evaluation":
+        return False
     if is_conversational_short(text):
         return True
-    resolved = intent or detect_intent(text)
     if resolved.name == "greeting" and resolved.confidence == 1.0:
         return True
     if resolved.name in ("identity", "capabilities", "how_it_works", "help"):
@@ -251,18 +294,107 @@ class ChatAgent(BaseAgent):
         )
         return client, plan
 
-    def call_llm(self, text: str, intent: ChatIntent) -> str:
-        prompt = build_prompt(text, intent)
+    def _platform_llm_config(
+        self,
+        text: str,
+        llm_model: str | None = None,
+    ) -> tuple[str, list[str], int, dict]:
         from config import settings
+        from core.llm_override import resolve_llm_model
+        from core.models.model_router import get_model_router
+        from core.runtime.ollama_concurrency import resolve_llm_stream_config
 
-        client, plan = self._client_for_runtime()
-        ollama_options = plan.ollama_options or None
+        override = resolve_llm_model(llm_model)
+        task_type = "platform_evaluation"
+        fallbacks: list[str] = []
+        primary = override or OLLAMA_CHAT_MODEL
 
         if settings.USE_MODEL_ROUTER or settings.USE_MODEL_EVALUATION:
-            from core.models.model_router import get_model_router, routed_generate
+            router = get_model_router()
+            if not override:
+                primary = router.get_model(task_type, {"text": text, "module": "chat"})
+            fallbacks = router.get_fallback_models(task_type, {"text": text})
+
+        timeout, ollama_options, fallbacks = resolve_llm_stream_config(
+            primary_model=primary,
+            fallback_models=fallbacks,
+            llm_model=llm_model,
+        )
+        opts = dict(ollama_options or {})
+        opts.setdefault("num_predict", 8192)
+        opts.setdefault("num_ctx", 12288)
+        return primary, fallbacks, timeout, opts
+
+    def _call_platform_evaluation(self, text: str, llm_model: str | None = None) -> str:
+        from core.platform_knowledge import (
+            build_platform_evaluation_prompt,
+            format_platform_evaluation_fallback,
+        )
+
+        prompt = build_platform_evaluation_prompt(text)
+        primary, fallbacks, timeout, ollama_options = self._platform_llm_config(
+            text, llm_model
+        )
+        client = OllamaClient(
+            primary_model=OLLAMA_CHAT_MODEL,
+            fallback_model=None,
+            timeout=timeout,
+        )
+        result, model_used = client.generate(
+            prompt,
+            model=primary,
+            fallback_models=fallbacks or None,
+            options=ollama_options or None,
+        )
+        self._last_model = model_used
+        from core.platform_knowledge import PLATFORM_EVAL_RESPONSE_MAX_CHARS
+
+        return post_format_response(result, max_chars=PLATFORM_EVAL_RESPONSE_MAX_CHARS)
+
+    def call_llm(self, text: str, intent: ChatIntent) -> str:
+        if intent.name == "platform_evaluation":
+            try:
+                return self._call_platform_evaluation(text)
+            except Exception as exc:
+                logger.warning("Platform evaluation LLM falhou, usando fallback: %s", exc)
+                from core.platform_knowledge import format_platform_evaluation_fallback
+
+                self._last_model = None
+                return format_platform_evaluation_fallback()
+
+        prompt = build_prompt(text, intent)
+        from config import settings
+        from core.llm_override import get_llm_model_override
+        from core.runtime.ollama_concurrency import resolve_llm_stream_config
+
+        override = get_llm_model_override()
+        _, plan = self._client_for_runtime()
+        primary = override or plan.model_override or OLLAMA_CHAT_MODEL
+        fallbacks: list[str] = []
+        task_type = "chat_natural"
+
+        if settings.USE_MODEL_ROUTER or settings.USE_MODEL_EVALUATION:
+            from core.models.model_router import get_model_router
 
             router = get_model_router()
             task_type = router.resolve_chat_task(text)
+            if not override:
+                primary = plan.model_override or router.get_model(task_type, {"text": text})
+            fallbacks = router.get_fallback_models(task_type, {"text": text})
+
+        timeout, ollama_options, fallbacks = resolve_llm_stream_config(
+            primary_model=primary,
+            fallback_models=fallbacks,
+        )
+        client = OllamaClient(
+            primary_model=OLLAMA_CHAT_MODEL,
+            fallback_model=None,
+            timeout=timeout,
+        )
+
+        if settings.USE_MODEL_EVALUATION and not override:
+            from core.models.model_router import routed_generate
+
             result, model_used = routed_generate(
                 prompt,
                 task_type,
@@ -270,15 +402,14 @@ class ChatAgent(BaseAgent):
                 module="chat",
                 discipline="CHAT",
                 client=client,
-                timeout=plan.timeout_sec,
+                timeout=timeout,
             )
         else:
-            from core.llm_override import get_llm_model_override
-
-            override = get_llm_model_override()
-            model = plan.model_override or override or OLLAMA_CHAT_MODEL
             result, model_used = client.generate(
-                prompt, model=model, options=ollama_options
+                prompt,
+                model=primary,
+                fallback_models=fallbacks or None,
+                options=ollama_options or None,
             )
 
         self._last_model = model_used
@@ -291,6 +422,21 @@ class ChatAgent(BaseAgent):
         if should_answer_with_template(text, intent):
             result = pick_template_response(intent)
             source = "template"
+        elif intent.name == "platform_evaluation":
+            from core.platform_knowledge import format_platform_evaluation_fallback
+
+            if self.use_llm:
+                try:
+                    result = self.call_llm(text, intent)
+                    source = "platform_knowledge"
+                    model = self._last_model
+                except Exception as exc:
+                    logger.warning("Platform evaluation LLM falhou: %s", exc)
+                    result = format_platform_evaluation_fallback()
+                    source = "platform_knowledge_fallback"
+            else:
+                result = format_platform_evaluation_fallback()
+                source = "platform_knowledge"
         elif self.use_llm:
             try:
                 result = self.call_llm(text, intent)
@@ -313,7 +459,7 @@ class ChatAgent(BaseAgent):
             extra["response_source"] = "llm_stream"
         return self.build_response(input_text=text, result=result, extra=extra)
 
-    def iter_tokens(self, text: str):
+    def iter_tokens(self, text: str, *, llm_model: str | None = None):
         """Stream de resposta conversacional (template ou LLM 8B)."""
         intent = detect_intent(text)
 
@@ -321,38 +467,50 @@ class ChatAgent(BaseAgent):
             yield pick_template_response(intent)
             return
 
+        if intent.name == "platform_evaluation":
+            yield from self._iter_platform_evaluation(text, llm_model=llm_model)
+            return
+
         if self.use_llm:
             try:
                 prompt = build_prompt(text, intent)
                 from config import settings
 
-                from core.llm_override import get_llm_model_override
+                from core.llm_override import resolve_llm_model
+                from core.runtime.ollama_concurrency import resolve_llm_stream_config
 
                 client, plan = self._client_for_runtime()
-                ollama_options = plan.ollama_options or None
-                override = get_llm_model_override()
-                if override:
-                    stream = client.generate_stream(
-                        prompt, model=override, options=ollama_options
-                    )
-                elif settings.USE_MODEL_ROUTER or settings.USE_MODEL_EVALUATION:
+                override = resolve_llm_model(llm_model)
+                primary = override or plan.model_override or OLLAMA_CHAT_MODEL
+                fallbacks: list[str] = []
+
+                if settings.USE_MODEL_ROUTER or settings.USE_MODEL_EVALUATION:
                     from core.models.model_router import get_model_router
 
                     router = get_model_router()
                     task_type = router.resolve_chat_task(text)
-                    model = plan.model_override or router.get_model(task_type, {"text": text})
-                    fallbacks = router.get_fallback_models(task_type)
-                    stream = client.generate_stream(
-                        prompt,
-                        model=model,
-                        fallback_models=fallbacks,
-                        options=ollama_options,
-                    )
-                else:
-                    model = plan.model_override or OLLAMA_CHAT_MODEL
-                    stream = client.generate_stream(
-                        prompt, model=model, options=ollama_options
-                    )
+                    if not override:
+                        primary = plan.model_override or router.get_model(
+                            task_type, {"text": text}
+                        )
+                    fallbacks = router.get_fallback_models(task_type, {"text": text})
+
+                timeout, ollama_options, fallbacks = resolve_llm_stream_config(
+                    primary_model=primary,
+                    fallback_models=fallbacks,
+                    llm_model=llm_model,
+                )
+                client = OllamaClient(
+                    primary_model=OLLAMA_CHAT_MODEL,
+                    fallback_model=None,
+                    timeout=timeout,
+                )
+                stream = client.generate_stream(
+                    prompt,
+                    model=primary,
+                    fallback_models=fallbacks or None,
+                    options=ollama_options or None,
+                )
 
                 for token, model_used in stream:
                     self._last_model = model_used
@@ -362,3 +520,55 @@ class ChatAgent(BaseAgent):
                 logger.warning("ChatAgent stream falhou, usando template: %s", exc)
 
         yield pick_template_response(intent)
+
+    def _iter_platform_evaluation(self, text: str, *, llm_model: str | None = None):
+        from core.conversation_context import extract_latest_user_message
+        from core.platform_knowledge import (
+            PLATFORM_EVAL_RESPONSE_MAX_CHARS,
+            build_platform_evaluation_prompt,
+            format_platform_evaluation_fallback,
+            platform_evaluation_stream_recovery,
+        )
+
+        if not self.use_llm:
+            yield format_platform_evaluation_fallback()
+            return
+
+        user_text = extract_latest_user_message(text)
+        visible_prev = ""
+        try:
+            prompt = build_platform_evaluation_prompt(user_text)
+            primary, fallbacks, timeout, ollama_options = self._platform_llm_config(
+                text, llm_model
+            )
+            client = OllamaClient(
+                primary_model=OLLAMA_CHAT_MODEL,
+                fallback_model=None,
+                timeout=timeout,
+            )
+            stream = client.generate_stream(
+                prompt,
+                model=primary,
+                fallback_models=fallbacks or None,
+                options=ollama_options or None,
+            )
+            gen = iter_visible_llm_tokens(
+                stream,
+                max_chars=PLATFORM_EVAL_RESPONSE_MAX_CHARS,
+                on_model=lambda m: setattr(self, "_last_model", m),
+            )
+            for delta in gen:
+                visible_prev += delta
+                yield delta
+        except Exception as exc:
+            logger.warning(
+                "Platform evaluation stream falhou após %d chars visíveis: %s",
+                len(visible_prev),
+                exc,
+            )
+            if len(visible_prev.strip()) >= 300:
+                recovery = platform_evaluation_stream_recovery(visible_prev)
+                if recovery:
+                    yield recovery
+            else:
+                yield format_platform_evaluation_fallback()

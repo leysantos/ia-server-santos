@@ -117,17 +117,27 @@ export default function ActionDialog({
 
   if (!open) return null;
 
+  const isConfirm = variant === "confirm";
+
   const confirmButtonClass = destructive
     ? "bg-red-600 text-white hover:bg-red-500"
     : variant === "error"
       ? styles.confirm
       : styles.confirm;
 
+  const handlePrimaryClick = () => {
+    if (isConfirm && onConfirm) {
+      void Promise.resolve(onConfirm()).then(() => onCancel());
+      return;
+    }
+    onCancel();
+  };
+
   return (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm"
       role="presentation"
-      onClick={variant === "confirm" ? onCancel : undefined}
+      onClick={onCancel}
     >
       <div
         role="dialog"
@@ -167,14 +177,10 @@ export default function ActionDialog({
           <button
             ref={confirmRef}
             type="button"
-            disabled={!onConfirm}
-            onClick={() => {
-              void Promise.resolve(onConfirm?.()).then(() => {
-                if (variant === "confirm") onCancel();
-              });
-            }}
+            disabled={isConfirm && !onConfirm}
+            onClick={handlePrimaryClick}
             className={cn(
-              "rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-50",
+              "rounded-lg px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50",
               confirmButtonClass
             )}
           >

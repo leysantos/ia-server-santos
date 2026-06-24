@@ -5,6 +5,7 @@ from pathlib import Path
 
 from pricing.providers._tabular import parse_tabular_file
 from pricing.providers.cicro_provider import CicroProvider
+from pricing.providers.dp_seminf_provider import DpSeminfProvider
 from pricing.providers.excel_provider import ExcelPriceProvider
 from pricing.providers.orse_provider import OrseProvider
 from pricing.providers.sinapi_provider import SinapiProvider
@@ -23,6 +24,7 @@ def _provider_classes():
         OrseProvider,
         TcpoProvider,
         CicroProvider,
+        DpSeminfProvider,
         ExcelPriceProvider,
     )
 

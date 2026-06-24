@@ -17,9 +17,35 @@ from core.knowledge.norm_packs.legal import (
 from core.knowledge.norm_packs.presets import NormPack, get_norm_pack, list_norm_packs
 from core.knowledge.resolver import get_documents_dir
 from memory.nbr_catalog import infer_discipline, parse_nbr_code
+from memory.nbr_edition import chunk_edition_year, parse_edition_year
 from memory.pdf_indexer import PDFIndexer
 
 logger = logging.getLogger(__name__)
+
+
+def _row_edition_year(row: dict, nbr_code: str) -> int:
+    meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    raw = row.get("edition_year") or meta.get("edition_year")
+    if raw is not None:
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            pass
+    filename = row.get("filename") or Path(row.get("path", "")).name
+    return parse_edition_year(filename, nbr_code) or 0
+
+
+def _path_edition_year(path: Path, nbr_code: str) -> int:
+    return parse_edition_year(path.name, nbr_code) or 0
+
+
+def _latest_edition_year(chunks: list[Any], nbr_code: str) -> int | None:
+    years = [
+        y
+        for y in (chunk_edition_year(c) for c in chunks)
+        if y is not None
+    ]
+    return max(years) if years else None
 
 
 def _chunk_nbr_codes(base_key: str = "nbr") -> dict[str, int]:
@@ -56,22 +82,37 @@ def _chunks_for_nbr(
     max_chunks: int = 12,
     max_chars: int = 1200,
 ) -> list[dict[str, Any]]:
-    """Trechos indexados no FAISS para uma NBR (preview somente leitura)."""
+    """Trechos indexados no FAISS para uma NBR — somente edição mais recente."""
     store = get_multi_index_store().get_store(base_key)
     matched: list[tuple[int, Any]] = []
     for idx, chunk in enumerate(store.chunks):
         if _nbr_code_from_chunk(chunk) == nbr_code:
             matched.append((idx, chunk))
 
+    if not matched:
+        return []
+
+    latest_year = _latest_edition_year([c for _, c in matched], nbr_code)
+    if latest_year is not None:
+        matched = [
+            (idx, chunk)
+            for idx, chunk in matched
+            if chunk_edition_year(chunk) == latest_year
+        ]
+
+    matched.sort(key=lambda pair: (pair[1].page or 0, pair[0]))
+
     previews: list[dict[str, Any]] = []
     for chunk_index, chunk in matched[:max_chunks]:
         meta = chunk.metadata or {}
         text = (chunk.text or "").strip()
+        edition_year = chunk_edition_year(chunk)
         previews.append(
             {
                 "chunk_index": chunk_index,
                 "page": chunk.page,
                 "filename": meta.get("filename") or chunk.source,
+                "edition_year": edition_year,
                 "text": text[:max_chars] + ("…" if len(text) > max_chars else ""),
                 "char_count": len(text),
             }
@@ -87,19 +128,33 @@ def _catalog_by_nbr(catalog_rows: list[dict]) -> dict[str, dict]:
         if not code:
             continue
         existing = by_code.get(code)
-        if not existing or (row.get("catalog_ts") or "") >= (existing.get("catalog_ts") or ""):
+        if not existing:
+            by_code[code] = row
+            continue
+        row_year = _row_edition_year(row, code)
+        existing_year = _row_edition_year(existing, code)
+        if row_year > existing_year:
+            by_code[code] = row
+        elif row_year == existing_year and (row.get("catalog_ts") or "") >= (
+            existing.get("catalog_ts") or ""
+        ):
             by_code[code] = row
     return by_code
 
 
 def _disk_by_nbr(documents_dir: Path) -> dict[str, Path]:
     by_code: dict[str, Path] = {}
+    best_year: dict[str, int] = {}
     if not documents_dir.is_dir():
         return by_code
-    for pdf in sorted(documents_dir.glob("*.pdf")):
+    for pdf in documents_dir.glob("*.pdf"):
         code = parse_nbr_code(pdf.name)
-        if code and code not in by_code:
+        if not code:
+            continue
+        year = _path_edition_year(pdf, code)
+        if code not in by_code or year >= best_year.get(code, 0):
             by_code[code] = pdf
+            best_year[code] = year
     return by_code
 
 
@@ -297,11 +352,13 @@ class NormPackService:
                 item["nbr_code"],
                 max_chunks=max_chunks_per_nbr,
             )
+            edition_year = chunks[0]["edition_year"] if chunks else None
             previews.append(
                 {
                     "nbr_code": item["nbr_code"],
                     "title": item["title"],
-                    "filename": item.get("filename"),
+                    "filename": chunks[0]["filename"] if chunks else item.get("filename"),
+                    "edition_year": edition_year,
                     "legal_source": item.get("legal_source"),
                     "chunk_count": item.get("chunk_count", 0),
                     "chunks": chunks,

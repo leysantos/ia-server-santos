@@ -2,22 +2,27 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { api } from "@/services/api";
-import { formatInstalledModelsLabel } from "@/lib/models-status";
+import {
+  formatInstalledModelsLabel,
+  getInstalledModelsDisplay,
+  type ModelsStatusDisplay,
+} from "@/lib/models-status";
+import { cn } from "@/lib/utils";
 
-const ModelsStatusContext = createContext<string | null>(null);
+const ModelsStatusContext = createContext<ModelsStatusDisplay | null>(null);
 
 export function ModelsStatusProvider({ children }: { children: ReactNode }) {
-  const [label, setLabel] = useState<string | null>(null);
+  const [display, setDisplay] = useState<ModelsStatusDisplay | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     api
       .health()
       .then((health) => {
-        if (!cancelled) setLabel(formatInstalledModelsLabel(health));
+        if (!cancelled) setDisplay(getInstalledModelsDisplay(health));
       })
       .catch(() => {
-        if (!cancelled) setLabel(null);
+        if (!cancelled) setDisplay(null);
       });
     return () => {
       cancelled = true;
@@ -25,21 +30,34 @@ export function ModelsStatusProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <ModelsStatusContext.Provider value={label}>{children}</ModelsStatusContext.Provider>
+    <ModelsStatusContext.Provider value={display}>{children}</ModelsStatusContext.Provider>
   );
 }
 
 /** Rótulo WSL — canto direito do cabeçalho da tela. */
-export default function ModelsStatusBadge() {
-  const label = useContext(ModelsStatusContext);
-  if (!label) return null;
+export default function ModelsStatusBadge({ className }: { className?: string }) {
+  const display = useContext(ModelsStatusContext);
+  if (!display) return null;
+
+  const ariaLabel = `Modelos de IA instalados: ${display.modelsText}`;
 
   return (
     <p
-      className="inline-flex max-w-[min(100vw-2rem,42rem)] items-center rounded-xl bg-slate-800/80 px-3 py-2 text-right text-[11px] leading-snug text-slate-500 ring-1 ring-slate-700/80"
-      aria-label="Modelos de IA instalados"
+      className={cn(
+        "models-status-badge shrink-0 rounded-xl bg-slate-800/80 px-3 py-1.5 text-left text-[10px] leading-tight text-slate-500 ring-1 ring-slate-700/80 sm:py-2 sm:text-[11px] lg:whitespace-nowrap max-lg:whitespace-normal",
+        className
+      )}
+      aria-label={ariaLabel}
+      title={ariaLabel}
     >
-      {label}
+      <span className="font-medium text-slate-400">WSL:</span> {display.modelsText}
     </p>
   );
+}
+
+/** Para testes e fallback textual. */
+export function modelsStatusLabelFromHealth(
+  health: Parameters<typeof getInstalledModelsDisplay>[0]
+): string | null {
+  return formatInstalledModelsLabel(health);
 }

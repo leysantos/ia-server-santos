@@ -1,16 +1,40 @@
 import type { HealthResponse } from "@/types/api";
 
-export function formatInstalledModelsLabel(health: HealthResponse): string | null {
+export interface ModelsStatusDisplay {
+  /** Texto após o prefixo WSL (modelos separados por ·). */
+  modelsText: string;
+}
+
+function llmModelNames(health: HealthResponse): string[] {
   if (health.models?.installed_llm) {
-    return `WSL: ${health.models.installed_llm}`;
+    return health.models.installed_llm
+      .split("·")
+      .map((s) => s.trim())
+      .filter(Boolean);
   }
   if (health.installed_models?.length) {
-    const llms = health.installed_models.filter((m) => !m.toLowerCase().includes("embed"));
-    if (llms.length === 0) return null;
-    return `WSL: ${llms.map((m) => m.replace(/:latest$/, "")).join(" · ")}`;
+    return health.installed_models
+      .filter((m) => !m.toLowerCase().includes("embed"))
+      .map((m) => m.replace(/:latest$/, ""));
+  }
+  return [];
+}
+
+export function getInstalledModelsDisplay(health: HealthResponse): ModelsStatusDisplay | null {
+  const names = llmModelNames(health);
+  if (names.length > 0) {
+    return { modelsText: names.join(" · ") };
   }
   if (health.models) {
-    return `chat: ${health.models.chat} · eng: ${health.models.engineering}`;
+    return {
+      modelsText: `chat: ${health.models.chat} · eng: ${health.models.engineering}`,
+    };
   }
   return null;
+}
+
+export function formatInstalledModelsLabel(health: HealthResponse): string | null {
+  const display = getInstalledModelsDisplay(health);
+  if (!display) return null;
+  return `WSL: ${display.modelsText}`;
 }

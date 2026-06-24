@@ -7,7 +7,7 @@
 |-------|-------|
 | **Versão do sistema** | 1.0.0 |
 | **Última atualização** | 2026-06-20 |
-| **Marco atual** | Orçamento `/budget` reorganizado em abas · SINAPI + SICRO multi-base |
+| **Marco atual** | Orçamento `/budget` — Orç. Sintético + Analítico + Busca CPU |
 | **Próximo foco** | Reimport PPD/modelos · ODA/LibreDWG · ICP-Brasil |
 | **Repositório** | [github.com/leysantos/ia-server-santos](https://github.com/leysantos/ia-server-santos) |
 | **Branch principal** | `main` |
@@ -68,7 +68,7 @@ ia-server-santos/
 | **Vision Analysis** | 🟢 Vision Engine — OCR → RAG CBMAM (modo PCI) → `gemma3:12b` → JSON → `qwen3:14b` → DOCX · checklist IT-11/NT-03 · SSE · `/projects/{id}/vision` |
 | **Workflow Projetos** | 🟡 Fase 3 — Wizard de Entrega (`/workflow/wizard`) · seleção manual arquivos · templates A4–A0 · nomenclatura `DISC-FLnn-TIPO-DESC-REV` · análise CAD/IA · GRD PDF · ZIP estruturado · Fase 2.1 (classificador, skip, presigned) mantida |
 | **Operational Transparency** | 🟢 ActivityPanel global · Operations Console `/console` (SSE live + fila Ollama + log `norm_bulk`/`knowledge`) · timeline `/projects/{id}/activity` · `project_decisions` + auto-capture |
-| **Orçamento `/budget`** | 🟢 Abre em Histórico · busca na listagem · código ORC auto · abas flat · bases Adicionar/Editar · ComD/SemD |
+| **Orçamento `/budget`** | 🟢 Abas: Dados · Etapas · **Orç. Sintético** · **Orç. Analítico** (etapas/sub-etapas + CPU aberta + totais BDI) · **Busca CPU** (prévia por código + busca ao vivo por descrição) · Memória · Cronograma · Especificação · Histórico |
 | Chat streaming UX | 🟢 SSE instantâneo (`connected`) + tokens ~60fps (`flushSync` + rAF) |
 | Agente Geotecnia dedicado | 🟢 `GeotecniaIntelligentAgent` — NBR 6122/7185, classificação solo, A_min |
 | Frontend | 🟢 `/chat`, `/projects`, `/budget`, `/orchestrate`, `/console`, `/history`, `/settings`, `/projects/{id}/workflow` — falta `/copilot`, `/aed` |
@@ -120,7 +120,7 @@ curl -X POST http://localhost:8000/pricing/sync/bank/active \
 curl 'http://localhost:8000/pricing/sync/bank/composition/95995?uf=AM&reference=BR-2026-05'
 ```
 
-UI: `/settings/price-bases` → … · `/budget` → **Adicionar base** (tipo/UF/período) + listbox com **Editar**/**Remover** · **busca manual** e **composição por prompt** usam bases da sessão (`base sicro` no prompt restringe a busca à SICRO) · adicionar serviço da busca não recarrega o banco inteiro.
+UI: `/settings/price-bases` → inventário por fonte (clique no período = prévia; sem badge “ativo”) · `/budget` → **Adicionar base** (SINAPI / DP/SEMINF / SICRO — tipo, UF, período) + **Editar**/**Remover** · aditivos usam a mesma base do orçamento original · **busca manual** e **composição por prompt** usam bases da sessão.
 
 Dependências de indexação (knowledge): `pip install pypdf python-multipart openpyxl python-docx xlrd`  
 Dependências de indexação (project RAG): `ezdxf ifcopenshell` (opcional CAD/BIM)
@@ -1251,6 +1251,21 @@ Settings completas: `backend/config/settings.py`
 | 2026-06-20 | **SICRO sync incremental** | `skip_existing_ufs` no lote — pula `BR-SICRO-{UF}-YYYY-MM` já no banco · UI **Sincronizar UFs faltantes (N)** + **Reimportar todas** · CLI `--skip-existing` |
 | 2026-06-20 | **Download SICRO resiliente** | `download_archive`: streaming 256KB, timeout leitura 600s, 5 retries com backoff, verificação Content-Length · sync lote continua após falha por UF (`synced_ufs` / `failed_ufs`) |
 | 2026-06-20 | **UI SICRO** | `/settings/price-bases`: filtro região/UF, meses trimestrais, botão sync todas UFs · `BudgetPriceBasesPanel`: região + versão por UF · `frontend/lib/sicro-links.ts` |
+| 2026-06-20 | **Orçamento — Analítico totais BDI** | Rodapé com custo direto, BDI, total ComD/SemD e total adotado (menor valor) — mesmo cálculo do sintético |
+| 2026-06-20 | **Orçamento — Busca CPU ao vivo** | Busca por descrição com debounce 280ms + `AbortSignal`; backend retorna resumo leve (sem expandir CPU por item); clique na linha abre prévia com alerta de variação |
+| 2026-06-20 | **Orçamento — Busca CPU = prévia bases** | Painel igual Configurações → Bases de preços; `OpenCompositionPreview` com alerta de variação de preço; busca por descrição opcional |
+| 2026-06-20 | **Orçamento — Analítico SEMINF** | CPUs `*.SEMINF` resolvem base DP/SEMINF via `price_bases` ou períodos importados + `base_preco` do PPD |
+| 2026-06-20 | **Orçamento — Analítico por etapa/sub-etapa** | Hierarquia WBS (etapa → sub-etapa → serviço); card com itens da CPU aberta abaixo de cada composição; auto-load incremental |
+| 2026-06-20 | **Orçamento — Orç. Analítico espelho sintético** | Aba lista só serviços lançados no orçamento (sem filtros período/base/UF); clique abre CPU aberta com bases do projeto; **Busca CPU** mantém catálogo paginado |
+| 2026-06-20 | **Orçamento — Orç. Analítico + Busca CPU** | Aba tabela CPUs abertas (paginada) + busca por código/descrição com prévia ComD/SemD; API `GET /pricing/sync/bank/open-compositions`; PPD renomeado Orç. Sintético |
+| 2026-06-20 | **Prévia CPU SEMINF — totais por período** | Cabeçalho ComD/SemD usa CPU analítica quando fork SINAPI diverge do sintético regional |
+| 2026-06-20 | **DP/SEMINF — import parcial bloqueado** | `BR-DP-SEMINF-2026-04` ficava só fechadas (`import_mode: base_sheet_closed`) quando importava só Tabela_Preco; auto-detect ComD/SemD na pasta; bloqueio reimport destrutivo; teste isolado com `monkeypatch` no price_bank |
+| 2026-06-20 | **Bases de preço — sem “ativo”** | Badge removido da UI; import/fork SEMINF não marca `active_reference`; orçamento escolhe período explicitamente (incl. bases antigas para aditivos); `BudgetPriceBasesPanel` inclui DP/SEMINF |
+| 2026-06-23 | **CORS upload SEMINF** | `X-Tenant-Id` incluído em `allow_headers` — preflight do upload em lote falhava com erro CORS no browser |
+| 2026-06-20 | **DP/SEMINF — coluna tp2 (AS)** | Importa `tp2` da aba Base da Tabela de Preço; propaga para itens das CPUs abertas (SINAPI + SEMINF); exibido na prévia CPU |
+| 2026-06-23 | **DP/SEMINF — fork mês SINAPI** | **Gerar base atualizada** cria `BR-DP-SEMINF-YYYY-MM` do mês SINAPI selecionado (ex. 04→05 gera `…-2026-05`); fonte anterior preservada; SINAPI Caixa novo + fechadas/aux. SEMINF da base fonte |
+| 2026-06-23 | **DP/SEMINF — detecção pasta + refresh CPUs** | Normaliza acentos (composição/preços); ignora outros arquivos na pasta |
+| 2026-06-20 | **Import DP/SEMINF só `*.SEMINF`** | Pasta `DP-SEMINF` (3 arquivos auto-detectados) → `Tabela_Preco` + CPUs ComD/SemD; validação mês/ano; ~719 fechadas + ~725 abertas |
 | 2026-06-20 | **Fix PDF especificação técnica — listas** | Marcadores fora da margem: substituído `ListFlowable` (bulletDedent auto) por parágrafos com `•` + recuo; export usa só corpo (`extract_body_html`); negrito preservado em `<strong>` |
 | 2026-06-23 | **Retry automático especificação técnica** | Até 3 tentativas/serviço se resposta IA incompleta; modelo fallback na 3ª tentativa |
 | 2026-06-23 | **Botão Limpar especificação técnica** | `DELETE /tech-spec` · limpa sessão e preview para regerar do zero |
@@ -1319,6 +1334,8 @@ Settings completas: `backend/config/settings.py`
 | 2026-06-22 | Embed batch Ollama + indexação parcial na importação normas | HTTP 500 sob carga em lotes SICRO; `/api/embed` em batch de 4, throttle 150ms, backoff maior em 5xx, chunks falhos ignorados (não abortam PDF inteiro); classificador IN SICRO → ORÇAMENTO |
 | 2026-06-22 | Save atômico FAISS (`chunks.json`) | `JSONDecodeError` ao importar DNIT/SICRO: UI fazia `reload_from_disk` enquanto `save()` gravava 50MB; escrita temp+`os.replace`, backup `.bak`, reload só se mtime mudou e sem job `knowledge`/`norm_bulk` ativo |
 | 2026-06-22 | Importação web em background + Console | `KnowledgeWebImportContext` + banner global; job `knowledge_import` no Operations Console; fetch sem AbortSignal — navegar para `/console` não cancela importação DNIT/SICRO |
+| 2026-06-20 | SINAPI colunas Grupo/Classificação/Origem/%AS | Parser nacional 2025+ persiste `grupo`, `classificacao`, `origem_preco`, `pct_as_comd`/`pct_as_semd` por UF; prévia CPU em `/settings/price-bases` e markdown do agente de orçamento |
+| 2026-06-20 | tp2 unificado + encargos MO por UF | `tp2=AS` quando %AS>0 (SINAPI) ou coluna tp2 SEMINF; SEMINF cruza códigos SINAPI do mesmo mês; `labor_charges.json` com Horista/Mensalista ComD/SemD por UF |
 
 ---
 

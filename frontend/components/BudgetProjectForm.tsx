@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { BdiObraType, BudgetProjectInfo } from "@/types/api";
 import { cn } from "@/lib/utils";
 import {
+  budgetBtn,
   budgetBtnIcon,
   budgetField,
   budgetFieldActionBtnCol,
@@ -12,12 +13,14 @@ import {
   budgetInput,
   budgetSelect,
 } from "@/lib/budget-ui";
+import { buildBudgetCode } from "@/lib/budget-code";
 
 export interface ProjectFormValues {
   projeto: string;
   local: string;
   empresa: string;
   responsavel_tecnico: string;
+  orcamento: string;
   base_preco: string;
   obra_type: string;
 }
@@ -26,6 +29,7 @@ interface BudgetProjectFormProps {
   project?: BudgetProjectInfo;
   bdiTypes: BdiObraType[];
   disabled?: boolean;
+  existingOrcCodes?: string[];
   onChange: (values: ProjectFormValues) => void;
   onObraTypeChange: (type: string) => void;
 }
@@ -36,6 +40,7 @@ export function projectToForm(project?: BudgetProjectInfo, obraType = "RF"): Pro
     local: project?.local || project?.endereco || "",
     empresa: project?.empresa || project?.orgao || "",
     responsavel_tecnico: project?.responsavel_tecnico || "",
+    orcamento: project?.orcamento || "",
     base_preco: project?.base_preco || "",
     obra_type: project?.obra_type || obraType,
   };
@@ -49,6 +54,7 @@ export default function BudgetProjectForm({
   project,
   bdiTypes,
   disabled,
+  existingOrcCodes = [],
   onChange,
   onObraTypeChange,
 }: BudgetProjectFormProps) {
@@ -56,6 +62,11 @@ export default function BudgetProjectForm({
   const values = projectToForm(project, project?.obra_type);
   const set = (patch: Partial<ProjectFormValues>) => onChange({ ...values, ...patch });
   const selectedBdi = bdiTypes.find((t) => t.code === values.obra_type);
+
+  const handleGenerateCode = () => {
+    const code = buildBudgetCode(existingOrcCodes, values.empresa, values.orcamento);
+    set({ orcamento: code });
+  };
 
   return (
     <div className="overflow-hidden rounded-xl bg-slate-800/30 ring-1 ring-slate-700/50">
@@ -105,6 +116,35 @@ export default function BudgetProjectForm({
       >
         <div className="overflow-hidden">
           <div className="grid gap-4 px-4 pb-4 md:grid-cols-2">
+            <label className={cn(budgetField, "md:col-span-2")}>
+              <span className={budgetFieldLabel}>Código do orçamento</span>
+              <div className={budgetFieldActionRow}>
+                <input
+                  type="text"
+                  disabled={disabled}
+                  value={values.orcamento}
+                  onChange={(e) => set({ orcamento: e.target.value })}
+                  placeholder="ORC0001-06/2026-ABC"
+                  className={cn(budgetInput, "min-w-0 flex-1 font-mono text-xs")}
+                />
+                <div className={budgetFieldActionBtnCol}>
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={handleGenerateCode}
+                    className={cn(
+                      budgetBtn,
+                      "whitespace-nowrap bg-emerald-600/20 text-emerald-300 ring-emerald-500/40 hover:bg-emerald-600/30"
+                    )}
+                  >
+                    Gerar código
+                  </button>
+                </div>
+              </div>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Formato: ORC0001-mês/ano-iniciais da empresa
+              </p>
+            </label>
             <label className={budgetField}>
               <span className={budgetFieldLabel}>Endereço / local</span>
               <input

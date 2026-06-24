@@ -1,7 +1,9 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import type { BudgetSummary } from "@/types/api";
 import { cn } from "@/lib/utils";
+import { budgetInput } from "@/lib/budget-ui";
 
 interface BudgetSavedPanelProps {
   items: BudgetSummary[];
@@ -11,10 +13,28 @@ interface BudgetSavedPanelProps {
   onDelete: (id: string) => void;
   onNew: () => void;
   onClearProjectFilter?: () => void;
+  layout?: "sidebar" | "full";
 }
 
 function fmt(n: number) {
   return n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function matchesSearch(item: BudgetSummary, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const haystack = [
+    item.title,
+    item.orcamento,
+    item.obra_type,
+    item.input_text,
+    item.grand_total?.toString(),
+    item.updated_at ? new Date(item.updated_at).toLocaleDateString("pt-BR") : "",
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(q);
 }
 
 export default function BudgetSavedPanel({
@@ -25,7 +45,15 @@ export default function BudgetSavedPanel({
   onDelete,
   onNew,
   onClearProjectFilter,
+  layout = "sidebar",
 }: BudgetSavedPanelProps) {
+  const [search, setSearch] = useState("");
+
+  const filtered = useMemo(
+    () => items.filter((item) => matchesSearch(item, search)),
+    [items, search]
+  );
+
   return (
     <section className="rounded-xl bg-slate-800/30 ring-1 ring-slate-700/50">
       <div className="flex items-center justify-between border-b border-slate-700/50 px-4 py-2.5">
@@ -45,6 +73,23 @@ export default function BudgetSavedPanel({
           + Novo
         </button>
       </div>
+
+      <div className="border-b border-slate-800/60 px-4 py-2.5">
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Buscar por nome, código, tipo ou valor…"
+          className={cn(budgetInput, "text-xs")}
+          aria-label="Buscar orçamentos salvos"
+        />
+        {search.trim() && (
+          <p className="mt-1.5 text-[11px] text-slate-500">
+            {filtered.length} de {items.length} orçamento(s)
+          </p>
+        )}
+      </div>
+
       {projectFilterLabel && onClearProjectFilter && (
         <div className="border-b border-slate-800/60 px-4 py-2">
           <button
@@ -62,9 +107,18 @@ export default function BudgetSavedPanel({
             ? "Nenhum orçamento salvo neste projeto."
             : "Nenhum orçamento salvo. Gere e clique em Salvar."}
         </p>
+      ) : filtered.length === 0 ? (
+        <p className="px-4 py-6 text-center text-xs text-slate-500">
+          Nenhum orçamento corresponde à busca.
+        </p>
       ) : (
-        <ul className="max-h-48 divide-y divide-slate-800/60 overflow-y-auto">
-          {items.map((item) => (
+        <ul
+          className={cn(
+            "divide-y divide-slate-800/60 overflow-y-auto",
+            layout === "full" ? "max-h-[min(520px,60vh)]" : "max-h-48"
+          )}
+        >
+          {filtered.map((item) => (
             <li
               key={item.id}
               className={cn(
@@ -78,6 +132,9 @@ export default function BudgetSavedPanel({
                 className="min-w-0 flex-1 text-left"
               >
                 <p className="truncate text-sm text-slate-200">{item.title}</p>
+                {item.orcamento && (
+                  <p className="truncate font-mono text-[11px] text-cyan-400/80">{item.orcamento}</p>
+                )}
                 <p className="text-xs text-slate-500">
                   R$ {fmt(item.grand_total)} · {item.obra_type} ·{" "}
                   {item.updated_at ? new Date(item.updated_at).toLocaleDateString("pt-BR") : ""}

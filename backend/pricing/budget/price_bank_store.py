@@ -19,6 +19,7 @@ MANIFEST_NAME = "manifest.json"
 CLOSED_NAME = "compositions_closed.json"
 OPEN_NAME = "compositions_open.json"
 INSUMOS_NAME = "insumos.json"
+LABOR_CHARGES_NAME = "labor_charges.json"
 
 
 @dataclass
@@ -32,6 +33,10 @@ class CompositionItem:
     partial_cost: float
     unit_price_sem: float = 0.0
     partial_cost_sem: float = 0.0
+    tp2: str = ""  # marcação regional SEMINF (ex. AS = associado a São Paulo)
+    classificacao: str = ""  # SINAPI ISD: SERVIÇOS, MATERIAL, MAO DE OBRA…
+    origem_preco: str = ""  # SINAPI ISD: C, CR…
+    situacao: str = ""  # SINAPI Analítico: COM CUSTO, EM ESTUDO…
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -45,6 +50,8 @@ class CompositionOpen:
     total_price: float  # com desoneração (CCD) — sintético regional
     items: list[CompositionItem] = field(default_factory=list)
     total_price_sem: float = 0.0  # sem desoneração (CSD) — sintético regional
+    grupo: str = ""  # SINAPI: Alvenaria de Vedação, Acessibilidade…
+    tp2: str = ""  # AS quando %AS > 0 (SINAPI) ou marcação SEMINF
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -53,6 +60,8 @@ class CompositionOpen:
             "unit": self.unit,
             "total_price": self.total_price,
             "total_price_sem": self.total_price_sem or self.total_price,
+            "grupo": self.grupo,
+            "tp2": self.tp2,
             "items": [i.to_dict() for i in self.items],
         }
 
@@ -64,7 +73,11 @@ class CompositionClosed:
     unit: str
     price: float  # com desoneração (ComD) — UF padrão na importação
     price_sem_desoneracao: float = 0.0  # sem desoneração (SemD) — UF padrão
-    regional: dict[str, dict[str, float]] = field(default_factory=dict)  # UF -> {comd, semd}
+    regional: dict[str, dict[str, float]] = field(
+        default_factory=dict
+    )  # UF -> {comd, semd, pct_as_comd, pct_as_semd}
+    tp2: str = ""  # marcação regional da aba Base SEMINF (ex. AS = São Paulo)
+    grupo: str = ""  # SINAPI CSD/CCD: grupo da composição
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -83,9 +96,11 @@ class InsumoRecord:
     description: str
     unit: str
     price: float  # com desoneração (ComD)
-    origin: str = ""
+    origin: str = ""  # aba de origem: ISD | ICD
     price_sem_desoneracao: float = 0.0
     regional: dict[str, dict[str, float]] = field(default_factory=dict)
+    classificacao: str = ""  # SINAPI: SERVIÇOS, MATERIAL, MAO DE OBRA…
+    origem_preco: str = ""  # SINAPI: C, CR…
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -140,9 +155,13 @@ class PriceBankStore:
         uf: str = "",
         desonerado: bool = True,
         metadata: dict[str, Any] | None = None,
+        labor_charges: dict[str, Any] | None = None,
         set_active: bool = False,
     ) -> PriceBankManifest:
         open_items_total = sum(len(c.items) for c in open_compositions.values())
+        meta = dict(metadata or {})
+        if labor_charges:
+            meta["labor_charges"] = True
         manifest = PriceBankManifest(
             source=source,
             reference=reference,
@@ -155,8 +174,14 @@ class PriceBankStore:
                 "insumos": len(insumos),
                 "open_items_total": open_items_total,
             },
-            metadata=metadata or {},
+            metadata=meta,
         )
+
+        if labor_charges:
+            (self.root / LABOR_CHARGES_NAME).write_text(
+                json.dumps(labor_charges, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
 
         (self.root / CLOSED_NAME).write_text(
             json.dumps([c.to_dict() for c in closed], ensure_ascii=False, indent=2),
@@ -217,13 +242,25 @@ class PriceBankStore:
             return []
         return json.loads(path.read_text(encoding="utf-8"))
 
+    def load_labor_charges(self) -> dict[str, Any]:
+        path = self.root / LABOR_CHARGES_NAME
+        if path.is_file():
+            return json.loads(path.read_text(encoding="utf-8"))
+        manifest = self.load_manifest()
+        if manifest and isinstance(manifest.metadata.get("labor_charges_snapshot"), dict):
+            return manifest.metadata["labor_charges_snapshot"]
+        return {}
+
     def get_open_composition(
         self,
         code: str,
         *,
         uf: str = "SP",
     ) -> dict[str, Any] | None:
-        from pricing.budget.price_bank_regional import apply_uf_to_open_composition
+        from pricing.budget.price_bank_regional import (
+            _resolve_display_totals,
+            apply_uf_to_open_composition,
+        )
 
         key = str(code).strip()
         raw = self.load_open().get(key)
@@ -239,23 +276,42 @@ class PriceBankStore:
             result = dict(raw)
             if manifest:
                 result["price_uf"] = default_uf
+            closed_com = float(result.get("total_price") or 0)
+            closed_sem = float(result.get("total_price_sem") or closed_com)
             for row in closed:
                 if str(row.get("code", "")).strip() == key:
-                    result["total_price"] = float(row.get("price") or result.get("total_price") or 0)
-                    result["total_price_sem"] = float(
-                        row.get("price_sem_desoneracao") or result.get("total_price_sem") or 0
+                    closed_com = float(row.get("price") or closed_com)
+                    closed_sem = float(
+                        row.get("price_sem_desoneracao") or row.get("price") or closed_sem
                     )
                     break
             items = result.get("items") or []
-            result["analytical_total_com"] = round(
+            analytical_com = round(
                 sum(float(i.get("partial_cost") or 0) for i in items), 2
             )
-            result["analytical_total_sem"] = round(
-                sum(float(i.get("partial_cost_sem") or i.get("partial_cost") or 0) for i in items), 2
+            analytical_sem = round(
+                sum(float(i.get("partial_cost_sem") or i.get("partial_cost") or 0) for i in items),
+                2,
             )
+            display_com, display_sem = _resolve_display_totals(
+                raw=raw,
+                closed_com=closed_com,
+                closed_sem=closed_sem,
+                analytical_com=analytical_com,
+                analytical_sem=analytical_sem,
+            )
+            result["total_price"] = display_com
+            result["total_price_sem"] = display_sem
+            result["analytical_total_com"] = analytical_com
+            result["analytical_total_sem"] = analytical_sem
             return result
+
         return apply_uf_to_open_composition(
-            raw, uf=use_uf, closed_rows=closed, insumo_rows=insumos
+            raw,
+            uf=use_uf,
+            closed_rows=closed,
+            insumo_rows=insumos,
+            labor_charges=self.load_labor_charges(),
         )
 
     def closed_as_provider_rows(self, uf: str | None = None) -> list[dict[str, Any]]:

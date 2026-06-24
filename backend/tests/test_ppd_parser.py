@@ -55,6 +55,25 @@ def test_ppd_extract_price_base_includes_seminf_and_container():
     assert any("container" in r["description"].lower() for r in rows)
 
 
+def test_ppd_seminf_services_use_dp_seminf_source_base():
+    from pricing.budget.ppd_parser import parse_ppd_workbook
+
+    _, items, _ = parse_ppd_workbook(PPD_PATH)
+
+    def walk(nodes):
+        for node in nodes:
+            if node.row_type == "S":
+                yield node
+            yield from walk(node.children)
+
+    seminf_services = [
+        s for s in walk(items) if (s.source_code or "").upper().endswith(".SEMINF")
+    ]
+    assert len(seminf_services) >= 1
+    for svc in seminf_services:
+        assert svc.source_base.replace("-", "").upper() in ("DPSEMINF", "SEMINF", "PPDSEMINF")
+
+
 def test_ppd_export_roundtrip():
     from pricing.budget.ppd_exporter import export_ppd_xlsx
     from pricing.budget.ppd_parser import parse_ppd_workbook

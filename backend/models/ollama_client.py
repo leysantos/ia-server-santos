@@ -15,6 +15,8 @@ from config.settings import (
 logger = logging.getLogger(__name__)
 
 _PREFERRED_MODEL_SUBSTRINGS = (
+    "gemma4",
+    "deepseek-r1",
     "qwen2.5-coder",
     "qwen2.5",
     "mistral",
@@ -46,6 +48,11 @@ class OllamaClient:
 
     def _timeouts(self) -> tuple[int, int]:
         return (self.connect_timeout, self.read_timeout)
+
+    def _stream_timeouts(self) -> tuple[int, int]:
+        """Timeout entre chunks no SSE — modelos reasoning podem pausar longamente."""
+        idle = max(int(self.read_timeout), 600)
+        return (self.connect_timeout, idle)
 
     def ping(self) -> bool:
         """Verifica se o Ollama responde (timeout curto — não bloqueia minutos)."""
@@ -240,7 +247,7 @@ class OllamaClient:
                 with requests.post(
                     f"{self.base_url}/api/generate",
                     json=body,
-                    timeout=self._timeouts(),
+                    timeout=self._stream_timeouts(),
                     stream=True,
                 ) as response:
                     response.raise_for_status()

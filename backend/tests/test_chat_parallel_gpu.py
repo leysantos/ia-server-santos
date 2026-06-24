@@ -30,3 +30,18 @@ def test_resolve_chat_runtime_cpu_when_vision_active():
         assert plan.timeout_sec >= 180
     finally:
         registry.finish(job.id, status="completed")
+
+
+def test_heavy_model_override_keeps_gpu_and_extends_timeout():
+    from core.llm_override import llm_model_scope
+    from core.runtime.ollama_concurrency import is_heavy_llm_model, resolve_llm_stream_config
+
+    assert is_heavy_llm_model("gemma4:latest")
+    assert is_heavy_llm_model("deepseek-r1:14b")
+    assert not is_heavy_llm_model("phi3:mini")
+
+    with llm_model_scope("gemma4:latest"):
+        timeout, opts, fallbacks = resolve_llm_stream_config(primary_model="gemma4:latest")
+        assert timeout >= 300
+        assert "num_gpu" not in opts
+        assert len(fallbacks) >= 2

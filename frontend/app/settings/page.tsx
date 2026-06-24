@@ -1,15 +1,27 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { SETTINGS_MODULES } from "@/components/settings/settings-nav";
 import { useSettingsKnowledge } from "@/contexts/SettingsKnowledgeContext";
 import { cn } from "@/lib/utils";
+import { api } from "@/services/api";
+import type { PriceBankInventory } from "@/types/api";
 
 export default function SettingsOverviewPage() {
-  const { stats, catalog } = useSettingsKnowledge();
+  const { stats } = useSettingsKnowledge();
+  const [priceBank, setPriceBank] = useState<PriceBankInventory | null>(null);
+
+  useEffect(() => {
+    api
+      .pricingSyncBankInventory()
+      .then(setPriceBank)
+      .catch(() => setPriceBank(null));
+  }, []);
 
   const totalChunks = stats?.index?.total_multi_chunks ?? 0;
-  const priceBases = catalog?.items.filter((i) => i.has_price_items).length ?? 0;
+  const priceBaseSources = priceBank?.source_count ?? 0;
+  const priceBasePeriods = priceBank?.period_count ?? 0;
   const nbrCov = stats?.nbr_coverage;
   const nbrLow = nbrCov && nbrCov.catalog_codes > 0 && nbrCov.coverage_pct < 95;
 
@@ -56,8 +68,13 @@ export default function SettingsOverviewPage() {
           <p className="text-xs text-slate-500">Cobertura NBR no FAISS</p>
         </div>
         <div className="rounded-xl bg-slate-900/60 p-4 ring-1 ring-slate-800">
-          <p className="text-2xl font-bold text-emerald-400">{priceBases}</p>
+          <p className="text-2xl font-bold text-emerald-400">{priceBaseSources}</p>
           <p className="text-xs text-slate-500">Bases de preço</p>
+          {priceBasePeriods > 0 && (
+            <p className="mt-0.5 text-xs text-slate-600">
+              {priceBasePeriods.toLocaleString("pt-BR")} período(s) importado(s)
+            </p>
+          )}
         </div>
       </div>
 

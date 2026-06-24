@@ -36,11 +36,15 @@ function NbrPreviewPanel({
     <div className="flex h-full flex-col rounded-2xl bg-slate-950/80 ring-1 ring-slate-700">
       <div className="flex items-start justify-between gap-3 border-b border-slate-800 px-4 py-3">
         <div>
-          <p className="font-mono text-sm text-cyan-300">NBR {item.nbr_code}</p>
+          <p className="font-mono text-sm text-cyan-300">
+            NBR {item.nbr_code}
+            {item.edition_year ? ` (${item.edition_year})` : ""}
+          </p>
           <p className="text-sm text-slate-300">{item.title}</p>
           {item.filename && (
             <p className="mt-1 truncate text-xs text-slate-500" title={item.filename}>
               {item.filename}
+              {item.edition_year ? " · edição mais recente indexada" : ""}
             </p>
           )}
         </div>

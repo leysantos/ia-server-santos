@@ -12,6 +12,7 @@ from pricing.budget.budget_structure import (
     apply_quantity_to_group,
     delete_item,
     group_services_to_prompt,
+    parse_composition_prompt_with_bases,
     parse_term_hints,
     parse_term_with_unit,
     renumber_wbs,
@@ -67,6 +68,26 @@ def test_compose_prompt_split_with_units():
     assert u1 == "MES"
     q2, u2 = parse_term_with_unit(parts[1])
     assert u2 == "H"
+
+
+def test_parse_composition_prompt_with_base_line():
+    terms = parse_composition_prompt_with_bases(
+        "base sicro\npavimentação (500 m²), pintura de ligação (150 m²)",
+        default_priority=["sinapi"],
+    )
+    assert len(terms) == 2
+    assert terms[0][1] == ["cicro"]
+    assert terms[1][1] == ["cicro"]
+    assert "pavimentação" in terms[0][0]
+
+
+def test_parse_composition_prompt_base_inline():
+    terms = parse_composition_prompt_with_bases(
+        "base sicro, pavimentação (500 m²)",
+        default_priority=["sinapi"],
+    )
+    assert len(terms) == 1
+    assert terms[0][1] == ["cicro"]
 
 
 def test_parse_quantity_bracket():

@@ -299,14 +299,27 @@ RESPOSTA TÉCNICA ESTRUTURADA:"""
         text: str,
         context: Optional[str] = None,
         use_rag: Optional[bool] = None,
+        llm_model: str | None = None,
     ):
         """Stream de tokens LLM para resposta técnica (com roteamento por complexidade)."""
         from core.models.engineering_model_routing import engineering_stream_models
+        from core.runtime.ollama_concurrency import resolve_llm_stream_config
 
         prompt, _, _ = self.prepare_prompt(text, context, use_rag)
-        model, fallbacks, _task = engineering_stream_models(text, self.discipline)
-        for token, model_used in self.llm_client.generate_stream(
-            prompt, model=model, fallback_models=fallbacks
+        model, fallbacks, _task = engineering_stream_models(
+            text, self.discipline, llm_model=llm_model
+        )
+        timeout, ollama_options, fallbacks = resolve_llm_stream_config(
+            primary_model=model,
+            fallback_models=fallbacks,
+            llm_model=llm_model,
+        )
+        client = OllamaClient(timeout=timeout)
+        for token, model_used in client.generate_stream(
+            prompt,
+            model=model,
+            fallback_models=fallbacks or None,
+            options=ollama_options or None,
         ):
             self._last_model_used = model_used
             yield token

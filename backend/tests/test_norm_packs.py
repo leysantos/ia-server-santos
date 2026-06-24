@@ -137,3 +137,73 @@ def test_preview_pack_returns_indexed_chunks():
     assert result["indexed_count"] == 1
     assert result["items"][0]["chunks"][0]["text"].startswith("Texto da norma")
     assert result["items"][0]["chunks"][0]["page"] == 3
+
+
+def test_preview_pack_uses_latest_edition():
+    from memory.models import DocumentChunk
+
+    from core.knowledge.norm_packs.service import _chunks_for_nbr
+
+    old_chunk = DocumentChunk(
+        text="Texto da edição 1980.",
+        source="NBR 6118 - 1980",
+        doc_type="nbr",
+        page=1,
+        metadata={
+            "nbr_code": "6118",
+            "filename": "NBR 6118 - 1980 - Projeto.pdf",
+            "edition_year": 1980,
+        },
+    )
+    new_chunk = DocumentChunk(
+        text="Texto da edição 2014.",
+        source="NBR 6118 - 2014",
+        doc_type="nbr",
+        page=2,
+        metadata={
+            "nbr_code": "6118",
+            "filename": "NBR 6118 - 2014 - Projeto.pdf",
+            "edition_year": 2014,
+        },
+    )
+    mock_store = MagicMock()
+    mock_store.chunks = [old_chunk, new_chunk]
+
+    with patch("core.knowledge.norm_packs.service.get_multi_index_store") as mock_multi:
+        mock_multi.return_value.get_store.return_value = mock_store
+        previews = _chunks_for_nbr("6118")
+
+    assert len(previews) == 1
+    assert "2014" in previews[0]["text"]
+    assert previews[0]["edition_year"] == 2014
+    assert "1980" not in previews[0]["text"]
+
+
+def test_disk_by_nbr_picks_latest_edition(tmp_path: Path):
+    from core.knowledge.norm_packs.service import _disk_by_nbr
+
+    (tmp_path / "NBR 6118 - 1980 - Projeto.pdf").write_bytes(b"%PDF")
+    latest = tmp_path / "NBR 6118 - 2014 - Projeto.pdf"
+    latest.write_bytes(b"%PDF")
+
+    by_code = _disk_by_nbr(tmp_path)
+    assert by_code["6118"].name == latest.name
+
+
+def test_catalog_by_nbr_picks_latest_edition():
+    from core.knowledge.norm_packs.service import _catalog_by_nbr
+
+    rows = [
+        {
+            "filename": "NBR 6118 - 1980 - Projeto.pdf",
+            "path": "/knowledge/raw/documents/NBR 6118 - 1980 - Projeto.pdf",
+            "catalog_ts": "2026-06-22T20:00:00",
+        },
+        {
+            "filename": "NBR 6118 - 2014 - Projeto.pdf",
+            "path": "/knowledge/raw/documents/NBR 6118 - 2014 - Projeto.pdf",
+            "catalog_ts": "2026-06-20T10:00:00",
+        },
+    ]
+    by_code = _catalog_by_nbr(rows)
+    assert "2014" in by_code["6118"]["filename"]

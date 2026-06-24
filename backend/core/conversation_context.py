@@ -30,6 +30,14 @@ def compose_thread_input(
     )
 
 
+def extract_latest_user_message(text: str) -> str:
+    """Extrai só a última mensagem do usuário (ignora histórico injetado)."""
+    marker = "NOVA MENSAGEM DO USUÁRIO:\n"
+    if marker in text:
+        return text.split(marker, 1)[-1].strip()
+    return (text or "").strip()
+
+
 def build_assistant_meta(response: dict) -> dict:
     extra = response.get("extra") or {}
     return {

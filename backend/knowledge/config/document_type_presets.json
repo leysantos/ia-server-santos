@@ -23,6 +23,14 @@
       "discipline": "ORÇAMENTO",
       "register_price_base": false,
       "register_budget_model": false
+    },
+    {
+      "id": "cadernos_tecnicos_sicro",
+      "label": "Cadernos Técnicos - SICRO",
+      "content_type": "especificacoes",
+      "discipline": "GERAL",
+      "register_price_base": false,
+      "register_budget_model": false
     }
   ]
 }

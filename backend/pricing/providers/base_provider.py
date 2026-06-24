@@ -33,8 +33,22 @@ class BasePriceProvider(ABC):
     def search(self, request: PriceRequest) -> list[PriceItem]:
         raise NotImplementedError
 
+    @staticmethod
+    def _normalize_code_key(code: object) -> str:
+        text = str(code or "").strip()
+        if text.endswith(".0") and text[:-2].isdigit():
+            return text[:-2]
+        return text
+
     def get_by_code(self, code: str) -> Optional[PriceItem]:
-        row = next((x for x in self._data if str(x.get("code", "")) == str(code)), None)
+        raw = str(code or "").strip()
+        row = next((x for x in self._data if str(x.get("code", "")) == raw), None)
+        if not row and raw:
+            norm = self._normalize_code_key(raw)
+            row = next(
+                (x for x in self._data if self._normalize_code_key(x.get("code", "")) == norm),
+                None,
+            )
         if not row:
             return None
         return self._row_to_item(row)

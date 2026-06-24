@@ -1,5 +1,19 @@
 {
   "sources": {
+    "cicro": {
+      "name": "cicro",
+      "label": "CICRO/SICRO",
+      "download_url": "https://www.gov.br/dnit/pt-br/assuntos/planejamento-e-pesquisa/custos-referenciais/sistemas-de-custos/sicro/relatorios/relatorios-sicro",
+      "custom": false,
+      "created_at": ""
+    },
+    "dp_seminf": {
+      "name": "dp_seminf",
+      "label": "DP/SEMINF",
+      "download_url": "https://www.caixa.gov.br/site/Paginas/downloads.aspx#categoria_888",
+      "custom": true,
+      "created_at": "2026-06-23T13:22:03.067501+00:00"
+    },
     "sinapi": {
       "name": "sinapi",
       "label": "SINAPI",
@@ -8,5 +22,5 @@
       "created_at": ""
     }
   },
-  "updated_at": "2026-06-22T18:39:38.852463+00:00"
+  "updated_at": "2026-06-23T13:46:44.445846+00:00"
 }

@@ -115,6 +115,9 @@ class AppSettings(BaseSettings):
     ollama_chat_light_model: str = Field(
         default="gemma2:2b", validation_alias="OLLAMA_CHAT_LIGHT_MODEL"
     )
+    ollama_heavy_model_timeout: int = Field(
+        default=300, validation_alias="OLLAMA_HEAVY_MODEL_TIMEOUT"
+    )
     chat_use_llm: bool = Field(default=True, validation_alias="CHAT_USE_LLM")
 
     # --- Feature flags ---
@@ -233,6 +236,7 @@ _LEGACY_FIELD_MAP: dict[str, str] = {
     "OLLAMA_CHAT_CPU_WHEN_GPU_BUSY": "ollama_chat_cpu_when_gpu_busy",
     "OLLAMA_CHAT_GPU_BUSY_VRAM_PCT": "ollama_chat_gpu_busy_vram_pct",
     "OLLAMA_CHAT_LIGHT_MODEL": "ollama_chat_light_model",
+    "OLLAMA_HEAVY_MODEL_TIMEOUT": "ollama_heavy_model_timeout",
     "CHAT_USE_LLM": "chat_use_llm",
     "USE_INTENT_LAYER": "use_intent_layer",
     "USE_INTELLIGENT_AGENTS": "use_intelligent_agents",

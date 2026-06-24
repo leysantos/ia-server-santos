@@ -177,17 +177,39 @@ class BudgetPricingTools:
             f"Código: {comp.get('code', '')}",
             f"Descrição: {comp.get('description', '')}",
             f"Unidade: {comp.get('unit', '')}",
+        ]
+        if comp.get("grupo"):
+            lines.append(f"Grupo: {comp.get('grupo')}")
+        if comp.get("tp2") == "AS":
+            lines.append("tp2: AS (preços associados a São Paulo)")
+        lines.extend([
             f"UF: {uf} | Período: {ref_label}",
             "",
             "**Totais sintéticos (aba fechada)**",
             f"- Com desoneração (ComD/CCD): R$ {float(comp.get('total_price') or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
             f"- Sem desoneração (SemD/CSD): R$ {float(comp.get('total_price_sem') or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        ])
+        pct_com = comp.get("pct_as_comd")
+        pct_sem = comp.get("pct_as_semd")
+        if pct_com or pct_sem:
+            lines.append(
+                f"- %AS ComD: {float(pct_com or 0) * 100:.2f}% | %AS SemD: {float(pct_sem or 0) * 100:.2f}%"
+            )
+        labor = comp.get("labor_charges") or {}
+        if labor.get("horista_comd") or labor.get("horista_semd"):
+            lines.append(
+                f"- Encargos MO Horista: ComD {_labor_pct(labor.get('horista_comd'))} | "
+                f"SemD {_labor_pct(labor.get('horista_semd'))} | "
+                f"Mensalista ComD {_labor_pct(labor.get('mensalista_comd'))} | "
+                f"SemD {_labor_pct(labor.get('mensalista_semd'))}"
+            )
+        lines.extend([
             "",
             "**Totais analíticos (soma dos parciais da CPU)**",
             f"- ComD: R$ {float(comp.get('analytical_total_com') or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
             f"- SemD: R$ {float(comp.get('analytical_total_sem') or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
             "",
-        ]
+        ])
         variation = comp.get("period_variation") or {}
         var_warnings = variation.get("warnings") or []
         if var_warnings:
@@ -197,19 +219,22 @@ class BudgetPricingTools:
                 lines.append(f"- {w.get('message', '')}")
             lines.append("")
         lines.extend([
-            "| Tipo | Código | Descrição | Und | Coef. | Preço un. ComD | Parcial ComD | Preço un. SemD | Parcial SemD |",
-            "|------|--------|-----------|-----|-------|----------------|--------------|----------------|--------------|",
+            "| Tipo | Classif. | Código | Descrição | Und | Coef. | Origem | tp2 | Preço un. ComD | Parcial ComD | Preço un. SemD | Parcial SemD |",
+            "|------|----------|--------|-----------|-----|-------|--------|-----|----------------|--------------|----------------|--------------|",
         ])
         items = comp.get("items") or []
         for item in items[:max_items]:
             desc = str(item.get("description") or "")[:80].replace("|", "/")
             lines.append(
-                "| {tipo} | {code} | {desc} | {unit} | {coef} | {ucom} | {pcom} | {usem} | {psem} |".format(
+                "| {tipo} | {classif} | {code} | {desc} | {unit} | {coef} | {origem} | {tp2} | {ucom} | {pcom} | {usem} | {psem} |".format(
                     tipo=item.get("item_type", ""),
+                    classif=item.get("classificacao") or "",
                     code=item.get("code", ""),
                     desc=desc,
                     unit=item.get("unit", ""),
                     coef=item.get("coefficient", ""),
+                    origem=item.get("origem_preco") or "",
+                    tp2=item.get("tp2") or "",
                     ucom=_brl(item.get("unit_price")),
                     pcom=_brl(item.get("partial_cost")),
                     usem=_brl(item.get("unit_price_sem")),
@@ -239,6 +264,16 @@ class BudgetPricingTools:
             )
         except Exception:
             pass
+
+
+def _labor_pct(value: Any) -> str:
+    try:
+        n = float(value or 0)
+    except (TypeError, ValueError):
+        return "—"
+    if n <= 0:
+        return "—"
+    return f"{n * 100:.2f}%".replace(".", ",")
 
 
 def _brl(value: Any) -> str:

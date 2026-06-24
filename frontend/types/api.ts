@@ -472,6 +472,8 @@ export interface SystemBenchmarkMetric {
   memory_percent?: number | null;
   memory_used_mb?: number;
   memory_total_mb?: number;
+  used_mb?: number;
+  total_mb?: number;
 }
 
 export interface SystemBenchmarkResponse {
@@ -481,6 +483,7 @@ export interface SystemBenchmarkResponse {
   cpu?: SystemBenchmarkMetric;
   memory?: SystemBenchmarkMetric;
   gpu?: SystemBenchmarkMetric;
+  vram?: SystemBenchmarkMetric;
 }
 
 export interface KnowledgeOptionItem {
@@ -522,7 +525,6 @@ export interface KnowledgeIngestFileResult {
   price_base_active?: boolean;
   budget_model_indexed?: number;
   service_count?: number;
-  reason?: string;
   saved_as?: string;
   storage_renamed?: boolean;
 }
@@ -852,6 +854,7 @@ export interface NormPackChunkPreview {
   chunk_index: number;
   page?: number | null;
   filename?: string | null;
+  edition_year?: number | null;
   text: string;
   char_count: number;
 }
@@ -860,6 +863,7 @@ export interface NormPackNbrPreviewItem {
   nbr_code: string;
   title: string;
   filename?: string | null;
+  edition_year?: number | null;
   legal_source: string;
   chunk_count: number;
   chunks: NormPackChunkPreview[];
@@ -1121,6 +1125,14 @@ export interface OpenCompositionItem {
   partial_cost: number;
   unit_price_sem?: number;
   partial_cost_sem?: number;
+  /** Marcação AS = insumo/composição com preço de São Paulo (SEMINF tp2 ou SINAPI %AS). */
+  tp2?: string;
+  /** SINAPI ISD: SERVIÇOS, MATERIAL, MAO DE OBRA… */
+  classificacao?: string;
+  /** SINAPI ISD: C, CR… */
+  origem_preco?: string;
+  /** SINAPI Analítico: COM CUSTO, EM ESTUDO… */
+  situacao?: string;
 }
 
 export interface CompositionPeriodVariationWarning {
@@ -1143,6 +1155,33 @@ export interface CompositionPeriodVariation {
   warnings: CompositionPeriodVariationWarning[];
 }
 
+export interface OpenCompositionSummary {
+  code: string;
+  description: string;
+  unit: string;
+  total_price: number;
+  total_price_sem: number;
+  items_count: number;
+  tp2?: string;
+  match_kind?: "code" | "description";
+}
+
+export interface OpenCompositionListResponse {
+  reference: string;
+  uf: string;
+  total: number;
+  offset: number;
+  limit: number;
+  items: OpenCompositionSummary[];
+}
+
+export interface OpenCompositionSearchResponse {
+  reference: string;
+  uf: string;
+  query: string;
+  items: OpenCompositionSummary[];
+}
+
 export interface OpenCompositionDetail {
   code: string;
   description: string;
@@ -1153,6 +1192,22 @@ export interface OpenCompositionDetail {
   available_ufs?: string[];
   analytical_total_com?: number;
   analytical_total_sem?: number;
+  /** SINAPI: grupo da composição (ex. Alvenaria de Vedação). */
+  grupo?: string;
+  /** SINAPI %AS com desoneração (fração 0–1). */
+  pct_as_comd?: number;
+  /** SINAPI %AS sem desoneração (fração 0–1). */
+  pct_as_semd?: number;
+  /** tp2 unificado: AS = São Paulo (%AS SINAPI ou coluna tp2 SEMINF). */
+  tp2?: string;
+  /** Encargos sociais Horista/Mensalista para a UF consultada. */
+  labor_charges?: {
+    localidade?: string;
+    horista_comd?: number;
+    mensalista_comd?: number;
+    horista_semd?: number;
+    mensalista_semd?: number;
+  };
   period_variation?: CompositionPeriodVariation;
   items: OpenCompositionItem[];
 }
@@ -1183,7 +1238,14 @@ export interface TechSpecFormatting {
   font_size: number;
   line_spacing: number;
   margin_cm: number;
+  margin_top_cm?: number;
+  margin_bottom_cm?: number;
+  margin_left_cm?: number;
+  margin_right_cm?: number;
   page_numbers?: boolean;
+  page_number_position?: "left" | "center" | "right";
+  text_align?: "justify" | "left" | "center";
+  header_text?: string | null;
   logo_text?: string | null;
   document_title?: string | null;
 }
@@ -1205,6 +1267,7 @@ export interface TechSpecStreamEvent {
 export interface BudgetSummary {
   id: string;
   title: string;
+  orcamento?: string;
   project_id?: string | null;
   session_id: string;
   grand_total: number;

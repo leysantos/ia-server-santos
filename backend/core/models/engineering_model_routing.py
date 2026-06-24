@@ -45,6 +45,11 @@ def engineering_generate(
 
     llm = client or OllamaClient(timeout=timeout or 120)
     if not engineering_routing_enabled():
+        from core.llm_override import get_llm_model_override
+
+        override = get_llm_model_override()
+        if override:
+            return llm.generate(prompt, model=override)
         return llm.generate(prompt)
 
     router = get_model_router()
@@ -57,6 +62,30 @@ def engineering_generate(
         "discipline": discipline,
         "module": "agent",
     }
+    model = router.get_model(task_type, ctx)
+    fallbacks = router.get_fallback_models(task_type, ctx)
+
+    from core.llm_override import get_llm_model_override
+    from core.runtime.ollama_concurrency import resolve_llm_stream_config
+
+    override = get_llm_model_override()
+    if override:
+        model = override
+    stream_timeout, ollama_options, fallbacks = resolve_llm_stream_config(
+        primary_model=model,
+        fallback_models=fallbacks,
+    )
+    effective_timeout = timeout or stream_timeout
+    llm = client or OllamaClient(timeout=effective_timeout)
+
+    if override:
+        return llm.generate(
+            prompt,
+            model=model,
+            fallback_models=fallbacks or None,
+            options=ollama_options or None,
+        )
+
     return routed_generate(
         prompt,
         task_type,
@@ -64,7 +93,7 @@ def engineering_generate(
         module="agent",
         discipline=discipline,
         client=llm,
-        timeout=timeout,
+        timeout=effective_timeout,
     )
 
 
@@ -73,15 +102,23 @@ def engineering_stream_models(
     discipline: str,
     *,
     complexity: str | None = None,
+    llm_model: str | None = None,
 ) -> tuple[str, list[str], str]:
     if not engineering_routing_enabled():
         from config.settings import OLLAMA_LLM_MODEL
+        from core.llm_override import resolve_llm_model
+
+        override = resolve_llm_model(llm_model)
+        if override:
+            fb = settings.OLLAMA_LLM_FALLBACK_MODEL
+            fallbacks = [fb] if fb and fb != override else []
+            return override, fallbacks, "user_override"
 
         fb = settings.OLLAMA_LLM_FALLBACK_MODEL
         fallbacks = [fb] if fb and fb != OLLAMA_LLM_MODEL else []
         return OLLAMA_LLM_MODEL, fallbacks, "engineering_fallback"
 
-    from core.llm_override import get_llm_model_override
+    from core.llm_override import resolve_llm_model
 
     router = get_model_router()
     cx = complexity or estimate_engineering_complexity(text, discipline)
@@ -93,7 +130,7 @@ def engineering_stream_models(
         "discipline": discipline,
         "module": "agent",
     }
-    override = get_llm_model_override()
+    override = resolve_llm_model(llm_model)
     if override:
         fallbacks = router.get_fallback_models(task_type, ctx)
         return override, fallbacks, "user_override"

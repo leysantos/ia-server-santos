@@ -329,6 +329,7 @@ class NormPackChunkPreview(BaseModel):
     chunk_index: int
     page: Optional[int] = None
     filename: Optional[str] = None
+    edition_year: Optional[int] = None
     text: str
     char_count: int = 0
 
@@ -337,6 +338,7 @@ class NormPackNbrPreviewItem(BaseModel):
     nbr_code: str
     title: str
     filename: Optional[str] = None
+    edition_year: Optional[int] = None
     legal_source: str = ""
     chunk_count: int = 0
     chunks: list[NormPackChunkPreview] = Field(default_factory=list)

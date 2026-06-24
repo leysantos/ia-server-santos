@@ -5,7 +5,7 @@ from app.schemas import ChatRequest, ChatResponse
 from app.services import ChatService
 from app.services.chat_stream_service import ChatStreamService
 
-from core.llm_override import llm_model_scope
+from core.llm_override import llm_model_scope, normalize_llm_model_choice
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 chat_service = ChatService()
@@ -34,14 +34,15 @@ def chat_stream(request: ChatRequest):
     Chat com streaming SSE — tokens em tempo real + status dos agentes/modelos.
     """
     def event_stream():
-        with llm_model_scope(request.llm_model):
-            yield from chat_stream_service.stream(
-                text=request.text,
-                use_rag=request.use_rag,
-                persist=request.persist,
-                conversation_id=request.conversation_id,
-                project_id=request.project_id,
-            )
+        # Não usar llm_model_scope aqui — ContextVar quebra no thread pool do SSE.
+        yield from chat_stream_service.stream(
+            text=request.text,
+            use_rag=request.use_rag,
+            persist=request.persist,
+            conversation_id=request.conversation_id,
+            project_id=request.project_id,
+            llm_model=normalize_llm_model_choice(request.llm_model),
+        )
 
     return StreamingResponse(
         event_stream(),

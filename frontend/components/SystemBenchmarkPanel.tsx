@@ -8,15 +8,16 @@ import { cn } from "@/lib/utils";
 const HISTORY_LEN = 36;
 const POLL_MS = 2000;
 
-type MetricKey = "cpu" | "memory" | "gpu";
+type MetricKey = "cpu" | "memory" | "gpu" | "vram";
 
 interface MetricHistory {
   cpu: number[];
   memory: number[];
   gpu: number[];
+  vram: number[];
 }
 
-const EMPTY_HISTORY: MetricHistory = { cpu: [], memory: [], gpu: [] };
+const EMPTY_HISTORY: MetricHistory = { cpu: [], memory: [], gpu: [], vram: [] };
 
 function pushHistory(prev: MetricHistory, key: MetricKey, value: number | null): MetricHistory {
   if (value == null || Number.isNaN(value)) return prev;
@@ -152,8 +153,19 @@ export default function SystemBenchmarkPanel() {
         let next = prev;
         next = pushHistory(next, "cpu", data.cpu?.percent ?? null);
         next = pushHistory(next, "memory", data.memory?.percent ?? null);
-        const gpuVal = data.gpu?.available ? (data.gpu.percent ?? data.gpu.memory_percent ?? null) : null;
-        next = pushHistory(next, "gpu", gpuVal);
+        const gpuAvailable = data.gpu?.available ?? data.vram?.available ?? false;
+        next = pushHistory(
+          next,
+          "gpu",
+          gpuAvailable ? (data.gpu?.percent ?? null) : null
+        );
+        next = pushHistory(
+          next,
+          "vram",
+          gpuAvailable
+            ? (data.vram?.percent ?? data.gpu?.memory_percent ?? null)
+            : null
+        );
         return next;
       });
     } catch (err) {
@@ -172,7 +184,7 @@ export default function SystemBenchmarkPanel() {
     };
   }, [poll]);
 
-  const gpuAvailable = snapshot?.gpu?.available ?? false;
+  const gpuAvailable = snapshot?.gpu?.available ?? snapshot?.vram?.available ?? false;
   const memDetail =
     snapshot?.memory?.used_gb != null && snapshot?.memory?.total_gb != null
       ? `${snapshot.memory.used_gb} / ${snapshot.memory.total_gb} GB`
@@ -180,10 +192,18 @@ export default function SystemBenchmarkPanel() {
   const cpuDetail =
     snapshot?.cpu?.cores != null ? `${snapshot.cpu.cores} núcleos lógicos` : undefined;
   const gpuDetail = gpuAvailable
-    ? snapshot?.gpu?.memory_used_mb != null
-      ? `VRAM ${snapshot.gpu.memory_used_mb} / ${snapshot.gpu.memory_total_mb} MB`
-      : "NVIDIA detectada"
+    ? "Utilização CUDA (nvidia-smi)"
     : "Sem GPU NVIDIA (nvidia-smi)";
+  const vramUsed =
+    snapshot?.vram?.used_mb ?? snapshot?.gpu?.memory_used_mb ?? null;
+  const vramTotal =
+    snapshot?.vram?.total_mb ?? snapshot?.gpu?.memory_total_mb ?? null;
+  const vramDetail =
+    gpuAvailable && vramUsed != null && vramTotal != null
+      ? `${vramUsed} / ${vramTotal} MB`
+      : gpuAvailable
+        ? "VRAM NVIDIA"
+        : undefined;
 
   return (
     <div className="w-full">
@@ -221,13 +241,24 @@ export default function SystemBenchmarkPanel() {
         />
         <MetricRow
           label="GPU"
-          value={
-            gpuAvailable ? (snapshot?.gpu?.percent ?? snapshot?.gpu?.memory_percent ?? null) : null
-          }
+          value={gpuAvailable ? (snapshot?.gpu?.percent ?? null) : null}
           history={history.gpu}
           stroke="#34d399"
           gradientId="bench-gpu"
           detail={gpuDetail}
+          unavailable={!gpuAvailable}
+        />
+        <MetricRow
+          label="VRAM"
+          value={
+            gpuAvailable
+              ? (snapshot?.vram?.percent ?? snapshot?.gpu?.memory_percent ?? null)
+              : null
+          }
+          history={history.vram}
+          stroke="#fbbf24"
+          gradientId="bench-vram"
+          detail={vramDetail}
           unavailable={!gpuAvailable}
         />
 

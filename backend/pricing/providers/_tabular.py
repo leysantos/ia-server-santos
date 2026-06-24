@@ -156,6 +156,15 @@ class TabularPriceProvider(BasePriceProvider):
         matcher = PriceMatcher()
         query = request.query.strip()
         if query:
+            digits = re.sub(r"\D", "", query)
+            if digits and len(digits) >= 4 and digits == query.replace(" ", ""):
+                item = self.get_by_code_flexible(digits)
+                if item:
+                    return [item]
+            item = self.get_by_code_flexible(query)
+            if item:
+                return [item]
+
             qn = matcher.normalize(query)
             code_hits = [
                 self._row_to_item(row)

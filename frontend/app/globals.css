@@ -17,6 +17,28 @@
   padding-right: var(--shell-gutter-x);
 }
 
+/* Cabeçalhos com título + modelos WSL: altura flexível em telas estreitas */
+.shell-header:has(.shell-header-split) {
+  min-height: auto;
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+}
+
+@media (min-width: 1024px) {
+  .shell-header:has(.shell-header-split) {
+    min-height: var(--shell-header-h);
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  :root {
+    --shell-gutter-x: 1rem;
+    --shell-header-h: 6.5rem;
+  }
+}
+
 .shell-footer {
   min-height: calc(var(--shell-footer-h) + var(--shell-safe-bottom));
   padding-top: 1rem;

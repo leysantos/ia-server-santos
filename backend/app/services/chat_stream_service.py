@@ -19,6 +19,7 @@ class ChatStreamService:
         persist: bool = True,
         conversation_id: Optional[str] = None,
         project_id: Optional[str] = None,
+        llm_model: Optional[str] = None,
     ) -> Generator[str, None, None]:
         yield format_sse(
             "status",
@@ -32,11 +33,23 @@ class ChatStreamService:
                 persist=persist,
                 conversation_id=conversation_id,
                 project_id=project_id,
+                llm_model=llm_model,
             )
         except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).exception("Chat stream interrompido")
             yield format_sse(
                 "error",
                 {"message": f"Erro no streaming: {exc}", "phase": "error"},
+            )
+            yield format_sse(
+                "done",
+                {
+                    "result": f"Erro no streaming: {exc}",
+                    "error": True,
+                    "response": f"Erro no streaming: {exc}",
+                },
             )
 
     def _stream_body(
@@ -46,6 +59,7 @@ class ChatStreamService:
         persist: bool,
         conversation_id: Optional[str],
         project_id: Optional[str],
+        llm_model: Optional[str] = None,
     ) -> Generator[str, None, None]:
         active_conversation_id = conversation_id
         if persist:
@@ -94,12 +108,29 @@ class ChatStreamService:
                     },
                 )
 
+            from core.runtime.ollama_concurrency import is_heavy_llm_model
+
+            selected_model = llm_model
+            if is_heavy_llm_model(selected_model):
+                yield format_sse(
+                    "status",
+                    {
+                        "message": (
+                            f"Carregando {selected_model} — modelos grandes podem levar "
+                            "1–3 min até o primeiro token. Aguarde..."
+                        ),
+                        "phase": "model_load",
+                        "llm_model": selected_model,
+                    },
+                )
+
             for event_type, data in iter_intent_events(
                 agent_input,
                 use_rag=use_rag,
                 persist=persist,
                 conversation_id=active_conversation_id,
                 project_id=active_project_id,
+                llm_model=llm_model,
             ):
                 runtime_job.update_from_stream(event_type, data)
                 if event_type == "done":

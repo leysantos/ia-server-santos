@@ -13,7 +13,7 @@ from config.settings import KNOWLEDGE_DIR
 
 REGISTRY_PATH = KNOWLEDGE_DIR / "price_base_sources.json"
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
-_RESERVED = frozenset({"sinapi", "orse", "tcpo", "cicro", "ppd_seminf", "custom", "new"})
+_RESERVED = frozenset({"sinapi", "orse", "tcpo", "cicro", "ppd_seminf", "dp_seminf", "custom", "new"})
 
 
 @dataclass

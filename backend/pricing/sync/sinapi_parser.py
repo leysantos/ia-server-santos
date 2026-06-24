@@ -81,6 +81,30 @@ def _float_cell(value: object, default: float = 0.0) -> float:
         return default
 
 
+def _pct_cell(value: object, default: float = 0.0) -> float:
+    """%AS na planilha SINAPI: fração decimal (0.0204 = 2,04%) ou inteiro percentual."""
+    if value is None:
+        return default
+    text = str(value).strip()
+    if not text or text in {"-", "—", "–"}:
+        return default
+    if text.endswith("%"):
+        text = text[:-1].strip()
+    try:
+        num = float(text.replace(",", "."))
+    except (TypeError, ValueError):
+        return default
+    if num > 1:
+        return num / 100.0
+    return num
+
+
+def _str_cell(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
 def _is_national_matrix(matrix: list[tuple]) -> bool:
     if len(matrix) <= _NATIONAL_UF_ROW:
         return False
@@ -100,9 +124,40 @@ def _uf_columns_from_row(row: tuple) -> dict[str, int]:
     return mapping
 
 
-def _composition_codes_from_analitico(matrix: list[tuple]) -> list[tuple[str, str, str]]:
-    """Linhas-pai do Analítico: (código, descrição, unidade) na ordem do CSD."""
-    out: list[tuple[str, str, str]] = []
+def _insumo_uf_columns(matrix: list[tuple]) -> dict[str, int]:
+    """ISD/ICD: UFs na linha de cabeçalho (geralmente índice 3 ou 9)."""
+    for row_idx in (3, _NATIONAL_HEADER_ROW, _NATIONAL_UF_ROW):
+        if row_idx < len(matrix):
+            cols = _uf_columns_from_row(matrix[row_idx])
+            if cols:
+                return cols
+    return {}
+
+
+def _closed_uf_cost_pct_columns(matrix: list[tuple]) -> dict[str, dict[str, int]]:
+    """CSD/CCD: cada UF tem coluna Custo (R$) e %AS adjacente."""
+    uf_row = matrix[_NATIONAL_UF_ROW] if len(matrix) > _NATIONAL_UF_ROW else ()
+    header_row = matrix[_NATIONAL_HEADER_ROW] if len(matrix) > _NATIONAL_HEADER_ROW else ()
+    mapping: dict[str, dict[str, int]] = {}
+    for idx, cell in enumerate(uf_row):
+        if cell is None:
+            continue
+        uf = str(cell).strip().upper()
+        if uf not in BRAZIL_UFS:
+            continue
+        cost_col = idx
+        pct_col = idx + 1
+        if pct_col < len(header_row):
+            h_next = _norm(header_row[pct_col])
+            if "%as" not in h_next and h_next not in {"as", "% as"}:
+                pct_col = idx + 1
+        mapping[uf] = {"cost_col": cost_col, "pct_as_col": pct_col}
+    return mapping
+
+
+def _composition_codes_from_analitico(matrix: list[tuple]) -> list[tuple[str, str, str, str]]:
+    """Linhas-pai do Analítico: (código, descrição, unidade, grupo) na ordem do CSD."""
+    out: list[tuple[str, str, str, str]] = []
     for row in matrix[_NATIONAL_DATA_START:]:
         if not row or len(row) < 6:
             continue
@@ -114,6 +169,7 @@ def _composition_codes_from_analitico(matrix: list[tuple]) -> list[tuple[str, st
                     str(int(code)) if isinstance(code, (int, float)) else str(code).strip(),
                     str(row[4] or "").strip(),
                     str(row[5] or "un").strip(),
+                    _str_cell(row[0]),
                 )
             )
     return out
@@ -122,25 +178,29 @@ def _composition_codes_from_analitico(matrix: list[tuple]) -> list[tuple[str, st
 def _parse_closed_national_all_ufs(
     matrix: list[tuple],
     *,
-    comp_codes: list[tuple[str, str, str]],
-) -> list[tuple[str, str, str, dict[str, float]]]:
-    """Retorna (code, desc, unit, {uf: price}) por linha — aba CSD ou CCD."""
-    uf_cols = _uf_columns_from_row(matrix[_NATIONAL_UF_ROW])
-    rows: list[tuple[str, str, str, dict[str, float]]] = []
+    comp_codes: list[tuple[str, str, str, str]],
+) -> list[tuple[str, str, str, str, dict[str, dict[str, float]]]]:
+    """Retorna (code, desc, unit, grupo, {uf: {price, pct_as}}) por linha — aba CSD ou CCD."""
+    uf_cols = _closed_uf_cost_pct_columns(matrix)
+    rows: list[tuple[str, str, str, str, dict[str, dict[str, float]]]] = []
     for idx, row in enumerate(matrix[_NATIONAL_DATA_START:]):
         if not row:
             continue
         meta = comp_codes[idx] if idx < len(comp_codes) else None
+        grupo = meta[3] if meta else _str_cell(row[0])
         code = meta[0] if meta else str(row[1] or "").strip()
         desc = meta[1] if meta else str(row[2] or "").strip()
         unit = meta[2] if meta else str(row[3] or "un").strip()
         if not desc:
             continue
-        regional: dict[str, float] = {}
-        for uf, col in uf_cols.items():
-            if col < len(row):
-                regional[uf] = _float_cell(row[col])
-        rows.append((code, desc, unit, regional))
+        regional: dict[str, dict[str, float]] = {}
+        for uf, cols in uf_cols.items():
+            cost_col = cols["cost_col"]
+            pct_col = cols["pct_as_col"]
+            price = _float_cell(row[cost_col]) if cost_col < len(row) else 0.0
+            pct_as = _pct_cell(row[pct_col]) if pct_col < len(row) else 0.0
+            regional[uf] = {"price": price, "pct_as": pct_as}
+        rows.append((code, desc, unit, grupo, regional))
     return rows
 
 
@@ -148,10 +208,10 @@ def _parse_insumos_national_all_ufs(
     matrix: list[tuple],
     *,
     origin: str,
-) -> list[tuple[str, str, str, dict[str, float]]]:
-    """Retorna (code, desc, unit, {uf: price}) por insumo."""
-    uf_cols = _uf_columns_from_row(matrix[3]) or _uf_columns_from_row(matrix[_NATIONAL_UF_ROW])
-    rows: list[tuple[str, str, str, dict[str, float]]] = []
+) -> list[tuple[str, str, str, str, str, dict[str, float]]]:
+    """Retorna (code, desc, unit, classificacao, origem_preco, {uf: price}) por insumo."""
+    uf_cols = _insumo_uf_columns(matrix)
+    rows: list[tuple[str, str, str, str, str, dict[str, float]]] = []
     for row in matrix[_NATIONAL_DATA_START:]:
         if not row:
             continue
@@ -161,11 +221,13 @@ def _parse_insumos_national_all_ufs(
             continue
         code = str(int(code_raw)) if isinstance(code_raw, (int, float)) else str(code_raw).strip()
         unit = str(row[3] or "un").strip()
+        classificacao = _str_cell(row[0])
+        origem_preco = _str_cell(row[4]) if len(row) > 4 else ""
         regional: dict[str, float] = {}
         for uf, col in uf_cols.items():
             if col < len(row):
                 regional[uf] = _float_cell(row[col])
-        rows.append((code, desc, unit, regional))
+        rows.append((code, desc, unit, classificacao, origem_preco, regional))
     return rows
 
 
@@ -173,26 +235,28 @@ def _parse_closed_national(
     matrix: list[tuple],
     *,
     uf: str,
-    comp_codes: list[tuple[str, str, str]],
-) -> list[tuple[str, str, str, float]]:
-    """Retorna (code, desc, unit, price) por linha."""
+    comp_codes: list[tuple[str, str, str, str]],
+) -> list[tuple[str, str, str, str, float]]:
+    """Retorna (code, desc, unit, grupo, price) por linha."""
     uf = uf.upper()
-    uf_cols = _uf_columns_from_row(matrix[_NATIONAL_UF_ROW])
-    col = uf_cols.get(uf)
-    if col is None:
+    uf_cols = _closed_uf_cost_pct_columns(matrix)
+    cols = uf_cols.get(uf)
+    if cols is None:
         raise ValueError(f"UF {uf} não encontrada na planilha SINAPI nacional")
+    col = cols["cost_col"]
 
-    rows: list[tuple[str, str, str, float]] = []
+    rows: list[tuple[str, str, str, str, float]] = []
     for idx, row in enumerate(matrix[_NATIONAL_DATA_START:]):
         if not row or len(row) <= col:
             continue
         meta = comp_codes[idx] if idx < len(comp_codes) else None
+        grupo = meta[3] if meta else _str_cell(row[0])
         code = meta[0] if meta else str(row[1] or "").strip()
         desc = meta[1] if meta else str(row[2] or "").strip()
         unit = meta[2] if meta else str(row[3] or "un").strip()
         if not desc:
             continue
-        rows.append((code, desc, unit, _float_cell(row[col])))
+        rows.append((code, desc, unit, grupo, _float_cell(row[col])))
     return rows
 
 
@@ -201,15 +265,15 @@ def _parse_insumos_national(
     *,
     uf: str,
     origin: str,
-) -> list[tuple[str, str, str, float]]:
-    """Retorna (code, desc, unit, price) por insumo."""
+) -> list[tuple[str, str, str, str, str, float]]:
+    """Retorna (code, desc, unit, classificacao, origem_preco, price) por insumo."""
     uf = uf.upper()
-    uf_cols = _uf_columns_from_row(matrix[3]) or _uf_columns_from_row(matrix[_NATIONAL_HEADER_ROW])
+    uf_cols = _insumo_uf_columns(matrix)
     col = uf_cols.get(uf)
     if col is None:
         return []
 
-    rows: list[tuple[str, str, str, float]] = []
+    rows: list[tuple[str, str, str, str, str, float]] = []
     for row in matrix[_NATIONAL_DATA_START:]:
         if not row or len(row) <= col:
             continue
@@ -219,7 +283,9 @@ def _parse_insumos_national(
             continue
         code = str(int(code_raw)) if isinstance(code_raw, (int, float)) else str(code_raw).strip()
         unit = str(row[3] or "un").strip()
-        rows.append((code, desc, unit, _float_cell(row[col])))
+        classificacao = _str_cell(row[0])
+        origem_preco = _str_cell(row[4]) if len(row) > 4 else ""
+        rows.append((code, desc, unit, classificacao, origem_preco, _float_cell(row[col])))
     return rows
 
 
@@ -255,11 +321,16 @@ def _parse_analytical_national(
     comp_sem: dict[str, float],
     ins_com: dict[str, float],
     ins_sem: dict[str, float],
+    insumo_meta: dict[str, dict[str, str]] | None = None,
+    closed_grupos: dict[str, str] | None = None,
 ) -> dict[str, CompositionOpen]:
     compositions: dict[str, CompositionOpen] = {}
     current_code = ""
     current_desc = ""
     current_unit = "un"
+    current_grupo = ""
+    meta_by_code = insumo_meta or {}
+    grupos_by_code = closed_grupos or {}
 
     for row in matrix[_NATIONAL_DATA_START:]:
         if not row or len(row) < 6:
@@ -270,6 +341,7 @@ def _parse_analytical_national(
         desc = str(row[4] or "").strip()
         unit = str(row[5] or "un").strip()
         coef = _float_cell(row[6] if len(row) > 6 else 0)
+        situacao = _str_cell(row[7]) if len(row) > 7 else ""
 
         if comp_code_raw and not tipo:
             current_code = (
@@ -279,6 +351,7 @@ def _parse_analytical_national(
             )
             current_desc = desc
             current_unit = unit
+            current_grupo = _str_cell(row[0]) or grupos_by_code.get(current_code, "")
             if current_code not in compositions:
                 price_com = comp_com.get(current_code, 0.0)
                 price_sem = comp_sem.get(current_code, 0.0)
@@ -288,6 +361,7 @@ def _parse_analytical_national(
                     unit=current_unit,
                     total_price=price_com,
                     total_price_sem=price_sem,
+                    grupo=current_grupo,
                     items=[],
                 )
             continue
@@ -311,6 +385,10 @@ def _parse_analytical_national(
         partial = round(coef * unit_price, 6) if coef and unit_price else 0.0
         partial_sem = round(coef * unit_price_sem, 6) if coef and unit_price_sem else 0.0
 
+        ins_meta = meta_by_code.get(item_code, {})
+        classificacao = ins_meta.get("classificacao", "")
+        origem_preco = ins_meta.get("origem_preco", "")
+
         comp = compositions.setdefault(
             current_code,
             CompositionOpen(
@@ -319,9 +397,12 @@ def _parse_analytical_national(
                 unit=current_unit,
                 total_price=comp_com.get(current_code, 0.0),
                 total_price_sem=comp_sem.get(current_code, 0.0),
+                grupo=current_grupo or grupos_by_code.get(current_code, ""),
                 items=[],
             ),
         )
+        if current_grupo and not comp.grupo:
+            comp.grupo = current_grupo
         comp.items.append(
             CompositionItem(
                 item_type=item_type,
@@ -333,10 +414,96 @@ def _parse_analytical_national(
                 partial_cost=partial,
                 unit_price_sem=unit_price_sem,
                 partial_cost_sem=partial_sem,
+                classificacao=classificacao,
+                origem_preco=origem_preco,
+                situacao=situacao,
             )
         )
 
     return compositions
+
+
+def _parse_labor_charges_sheet(
+    matrix: list[tuple],
+    *,
+    paired_uf_cols: bool,
+) -> dict[str, dict[str, float | str]]:
+    """Extrai Horista/Mensalista por UF das linhas 4–7 da planilha nacional."""
+    if len(matrix) < 7:
+        return {}
+    uf_row = matrix[3]
+    loc_row = matrix[4]
+    horista_row = matrix[5]
+    mens_row = matrix[6]
+    out: dict[str, dict[str, float | str]] = {}
+
+    def _scan_ufs(row: tuple) -> list[tuple[str, int]]:
+        found: list[tuple[str, int]] = []
+        for idx, cell in enumerate(row):
+            if cell is None:
+                continue
+            uf = str(cell).strip().upper()
+            if uf in BRAZIL_UFS:
+                found.append((uf, idx))
+        return found
+
+    for uf, idx in _scan_ufs(uf_row):
+        out[uf] = {
+            "localidade": _str_cell(loc_row[idx] if idx < len(loc_row) else ""),
+            "horista": _float_cell(horista_row[idx] if idx < len(horista_row) else 0),
+            "mensalista": _float_cell(mens_row[idx] if idx < len(mens_row) else 0),
+        }
+    return out
+
+
+def _merge_labor_charges(
+    semd: dict[str, dict[str, float | str]],
+    comd: dict[str, dict[str, float | str]],
+) -> dict[str, dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for uf in set(semd) | set(comd):
+        s = semd.get(uf, {})
+        c = comd.get(uf, {})
+        merged[uf] = {
+            "localidade": str(s.get("localidade") or c.get("localidade") or ""),
+            "horista_semd": float(s.get("horista") or 0),
+            "mensalista_semd": float(s.get("mensalista") or 0),
+            "horista_comd": float(c.get("horista") or 0),
+            "mensalista_comd": float(c.get("mensalista") or 0),
+        }
+    return merged
+
+
+def _apply_sinapi_tp2(
+    closed: list[CompositionClosed],
+    open_map: dict[str, CompositionOpen],
+) -> None:
+    from pricing.budget.tp2_as import apply_tp2_to_items, composition_tp2_from_regional, merge_tp2
+
+    closed_by_code = {c.code: c for c in closed}
+    for comp in closed:
+        comp.tp2 = composition_tp2_from_regional(comp.regional)
+
+    for code, comp in open_map.items():
+        closed_row = closed_by_code.get(code)
+        comp_tp2 = ""
+        pct_as = 0.0
+        if closed_row:
+            comp_tp2 = closed_row.tp2 or composition_tp2_from_regional(closed_row.regional)
+            for entry in (closed_row.regional or {}).values():
+                if isinstance(entry, dict):
+                    pct_as = max(
+                        pct_as,
+                        float(entry.get("pct_as_comd") or 0),
+                        float(entry.get("pct_as_semd") or 0),
+                    )
+        comp.tp2 = merge_tp2(comp_tp2, pct_as)
+        items_dicts = apply_tp2_to_items(
+            [i.to_dict() for i in comp.items],
+            composition_tp2=comp.tp2,
+            pct_as=pct_as,
+        )
+        comp.items = [CompositionItem(**item) for item in items_dicts]
 
 
 def _parse_national_workbook(wb: Any, *, uf: str) -> dict[str, Any]:
@@ -361,18 +528,27 @@ def _parse_national_workbook(wb: Any, *, uf: str) -> dict[str, Any]:
     comp_codes = _composition_codes_from_analitico(analitico) if analitico else []
     csd_all = _parse_closed_national_all_ufs(csd, comp_codes=comp_codes)
     ccd_all = _parse_closed_national_all_ufs(ccd, comp_codes=comp_codes) if ccd else []
-    ccd_by_idx = {i: reg for i, (_, _, _, reg) in enumerate(ccd_all)}
+    ccd_by_idx = {i: reg for i, (_, _, _, _, reg) in enumerate(ccd_all)}
 
     primary = uf.upper()
     closed: list[CompositionClosed] = []
-    for idx, (code, desc, unit, sem_reg) in enumerate(csd_all):
+    closed_grupos: dict[str, str] = {}
+    for idx, (code, desc, unit, grupo, sem_reg) in enumerate(csd_all):
         com_reg = ccd_by_idx.get(idx, sem_reg)
-        merged = {
-            u: {"comd": com_reg.get(u, sem_reg.get(u, 0.0)), "semd": sem_reg.get(u, 0.0)}
-            for u in set(com_reg) | set(sem_reg)
-        }
+        merged: dict[str, dict[str, float]] = {}
+        for u in set(com_reg) | set(sem_reg):
+            sem_entry = sem_reg.get(u, {})
+            com_entry = com_reg.get(u, {})
+            merged[u] = {
+                "comd": float(com_entry.get("price", 0.0)),
+                "semd": float(sem_entry.get("price", 0.0)),
+                "pct_as_comd": float(com_entry.get("pct_as", 0.0)),
+                "pct_as_semd": float(sem_entry.get("pct_as", 0.0)),
+            }
         price_com = merged.get(primary, {}).get("comd", 0.0)
         price_sem = merged.get(primary, {}).get("semd", price_com)
+        if grupo:
+            closed_grupos[code] = grupo
         closed.append(
             CompositionClosed(
                 code=code,
@@ -381,15 +557,17 @@ def _parse_national_workbook(wb: Any, *, uf: str) -> dict[str, Any]:
                 price=price_com,
                 price_sem_desoneracao=price_sem,
                 regional=merged,
+                grupo=grupo,
             )
         )
 
     isd_all = _parse_insumos_national_all_ufs(isd, origin="ISD") if isd else []
     icd_all = _parse_insumos_national_all_ufs(icd, origin="ICD") if icd else []
-    icd_by_code = {code: reg for code, _, _, reg in icd_all}
+    icd_by_code = {code: reg for code, _, _, _, _, reg in icd_all}
+    insumo_meta: dict[str, dict[str, str]] = {}
 
     insumos: list[InsumoRecord] = []
-    for code, desc, unit, sem_reg in isd_all:
+    for code, desc, unit, classificacao, origem_preco, sem_reg in isd_all:
         com_reg = icd_by_code.get(code, sem_reg)
         merged = {
             u: {"comd": com_reg.get(u, sem_reg.get(u, 0.0)), "semd": sem_reg.get(u, 0.0)}
@@ -397,6 +575,10 @@ def _parse_national_workbook(wb: Any, *, uf: str) -> dict[str, Any]:
         }
         price_com = merged.get(primary, {}).get("comd", 0.0)
         price_sem = merged.get(primary, {}).get("semd", price_com)
+        insumo_meta[code] = {
+            "classificacao": classificacao,
+            "origem_preco": origem_preco,
+        }
         insumos.append(
             InsumoRecord(
                 code=code,
@@ -406,6 +588,8 @@ def _parse_national_workbook(wb: Any, *, uf: str) -> dict[str, Any]:
                 price_sem_desoneracao=price_sem,
                 origin="ICD" if code in icd_by_code else "ISD",
                 regional=merged,
+                classificacao=classificacao,
+                origem_preco=origem_preco,
             )
         )
 
@@ -420,6 +604,8 @@ def _parse_national_workbook(wb: Any, *, uf: str) -> dict[str, Any]:
             comp_sem=comp_sem,
             ins_com=ins_com,
             ins_sem=ins_sem,
+            insumo_meta=insumo_meta,
+            closed_grupos=closed_grupos,
         )
         if analitico
         else {}
@@ -433,12 +619,19 @@ def _parse_national_workbook(wb: Any, *, uf: str) -> dict[str, Any]:
             if not comp.total_price_sem:
                 comp.total_price_sem = row.price_for_uf(primary, sem=True)
 
+    _apply_sinapi_tp2(closed, open_map)
+
+    labor_semd = _parse_labor_charges_sheet(csd, paired_uf_cols=True)
+    labor_comd = _parse_labor_charges_sheet(ccd, paired_uf_cols=True) if ccd else {}
+    labor_charges = _merge_labor_charges(labor_semd, labor_comd)
+
     return {
         "closed": closed,
         "open": open_map,
         "insumos": insumos,
         "format": "national",
         "all_ufs": True,
+        "labor_charges": labor_charges,
     }
 
 

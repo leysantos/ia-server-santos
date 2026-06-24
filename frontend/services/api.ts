@@ -41,6 +41,8 @@ import type {
   PriceSyncSourceInfo,
   PriceSyncStatusResponse,
   OpenCompositionDetail,
+  OpenCompositionListResponse,
+  OpenCompositionSearchResponse,
   SystemBenchmarkResponse,
   ProjectDetail,
   ProjectFormatsResponse,
@@ -88,6 +90,7 @@ import type {
   ShellRunResponse,
   ShellHistoryItem,
 } from "@/types/api";
+import { seminfBundleFilesWithBasenames } from "@/lib/seminf-bundle";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -130,6 +133,21 @@ function getMultipartAuthHeaders(): HeadersInit {
   }
 
   return headers;
+}
+
+async function parseFetchError(response: Response): Promise<string> {
+  const text = await response.text();
+  try {
+    const json = JSON.parse(text) as { detail?: string | Array<{ msg?: string }> };
+    if (typeof json.detail === "string") return json.detail;
+    if (Array.isArray(json.detail)) {
+      const parts = json.detail.map((d) => d.msg ?? "").filter(Boolean);
+      if (parts.length) return parts.join("; ");
+    }
+  } catch {
+    /* corpo não é JSON */
+  }
+  return text || `Erro HTTP ${response.status}`;
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -210,11 +228,48 @@ export function isSessionNotFoundError(err: unknown): boolean {
 }
 
 const BUDGET_SESSION_RESTORED = "budget-session-restored";
+const BUDGET_SESSION_STORAGE_KEY = "iaserver.budget.session";
 
 let budgetSessionSnapshot: BudgetSessionResponse | null = null;
 
+function persistBudgetSessionStorage(session: BudgetSessionResponse | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (!session) {
+      sessionStorage.removeItem(BUDGET_SESSION_STORAGE_KEY);
+      return;
+    }
+    sessionStorage.setItem(BUDGET_SESSION_STORAGE_KEY, JSON.stringify(session));
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+export async function restoreBudgetSessionFromStorage(): Promise<BudgetSessionResponse | null> {
+  if (typeof window === "undefined") return null;
+  const raw = sessionStorage.getItem(BUDGET_SESSION_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const payload = JSON.parse(raw) as BudgetSessionResponse;
+    if (!payload?.rows?.length && !payload?.items?.length) return null;
+    const restored = await request<BudgetSessionResponse>("/pricing/budget/restore", {
+      method: "POST",
+      body: JSON.stringify({ payload }),
+    });
+    budgetSessionSnapshot = restored;
+    persistBudgetSessionStorage(restored);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(BUDGET_SESSION_RESTORED, { detail: restored }));
+    }
+    return restored;
+  } catch {
+    return null;
+  }
+}
+
 export function syncBudgetSessionSnapshot(session: BudgetSessionResponse | null): void {
   budgetSessionSnapshot = session;
+  persistBudgetSessionStorage(session);
 }
 
 async function restoreBudgetSessionSnapshot(): Promise<BudgetSessionResponse> {
@@ -1395,6 +1450,37 @@ export const api = {
     );
   },
 
+  pricingSyncListOpenCompositions(options?: {
+    reference?: string;
+    uf?: string;
+    q?: string;
+    offset?: number;
+    limit?: number;
+  }): Promise<OpenCompositionListResponse> {
+    const params = new URLSearchParams();
+    if (options?.reference) params.set("reference", options.reference);
+    if (options?.uf) params.set("uf", options.uf);
+    if (options?.q) params.set("q", options.q);
+    if (options?.offset != null) params.set("offset", String(options.offset));
+    if (options?.limit != null) params.set("limit", String(options.limit));
+    const qs = params.toString();
+    return request(`/pricing/sync/bank/open-compositions${qs ? `?${qs}` : ""}`);
+  },
+
+  pricingSyncSearchOpenCompositions(
+    q: string,
+    options?: { reference?: string; uf?: string; limit?: number; signal?: AbortSignal }
+  ): Promise<OpenCompositionSearchResponse> {
+    const params = new URLSearchParams();
+    params.set("q", q);
+    if (options?.reference) params.set("reference", options.reference);
+    if (options?.uf) params.set("uf", options.uf);
+    if (options?.limit != null) params.set("limit", String(options.limit));
+    return request(`/pricing/sync/bank/open-compositions/search?${params.toString()}`, {
+      signal: options?.signal,
+    });
+  },
+
   pricingSyncSource(
     source: string,
     body?: {
@@ -1450,6 +1536,94 @@ export const api = {
       }
     }
     throw new Error("Importação encerrada sem resultado");
+  },
+
+  async pricingSyncDpSeminfBundleWithProgress(
+    source: string,
+    files: {
+      closed: File;
+      openComd: File;
+      openSemd: File;
+    },
+    options: {
+      uf?: string;
+      year?: number;
+      month?: number;
+      index_faiss?: boolean;
+      reload_providers?: boolean;
+      set_active?: boolean;
+    } | undefined,
+    onProgress: (progress: WebIngestProgress) => void,
+    signal?: AbortSignal
+  ): Promise<PriceSyncResult> {
+    const params = new URLSearchParams();
+    if (options?.uf) params.set("uf", options.uf);
+    if (options?.year != null) params.set("year", String(options.year));
+    if (options?.month != null) params.set("month", String(options.month));
+    if (options?.index_faiss === false) params.set("index_faiss", "false");
+    if (options?.reload_providers === false) params.set("reload_providers", "false");
+    if (options?.set_active === false) params.set("set_active", "false");
+    const qs = params.toString();
+    const safeFiles = seminfBundleFilesWithBasenames(files);
+    const formData = new FormData();
+    formData.append("closed_file", safeFiles.closed);
+    formData.append("open_comd_file", safeFiles.openComd);
+    formData.append("open_semd_file", safeFiles.openSemd);
+    onProgress({
+      phase: "upload",
+      percent: 2,
+      current: 0,
+      total: 3,
+      message: "Enviando planilhas…",
+    });
+    const response = await fetch(
+      `${API_BASE_URL}/pricing/sync/${encodeURIComponent(source)}/upload/bundle/stream${qs ? `?${qs}` : ""}`,
+      {
+        method: "POST",
+        headers: getMultipartAuthHeaders(),
+        body: formData,
+        signal,
+      }
+    );
+    if (!response.ok) {
+      throw new Error(await parseFetchError(response));
+    }
+    for await (const event of readSseStream(response)) {
+      if (event.type === "progress") {
+        onProgress(event.data as WebIngestProgress);
+      } else if (event.type === "done") {
+        return event.data as PriceSyncResult;
+      } else if (event.type === "error") {
+        const payload = event.data as { error?: string };
+        throw new Error(payload.error || "Erro no upload em lote");
+      }
+    }
+    throw new Error("Upload em lote encerrado sem resultado");
+  },
+
+  pricingSyncRefreshSeminfPrices(
+    source: string,
+    body: {
+      reference: string;
+      sinapi_reference: string;
+      uf?: string;
+      set_active?: boolean;
+    }
+  ): Promise<{
+    status: string;
+    reference: string;
+    parent_reference?: string;
+    sinapi_reference: string;
+    uf: string;
+    compositions_updated: number;
+    items_updated: number;
+    items_missing_price: number;
+    warnings: string[];
+  }> {
+    return request(`/pricing/sync/${encodeURIComponent(source)}/refresh-prices`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
   },
 
   async pricingSyncUploadWithProgress(
@@ -2009,23 +2183,9 @@ export const api = {
       throw new Error(errorText || `Erro HTTP ${response.status}`);
     }
 
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error("Streaming não suportado");
-
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const blocks = buffer.split("\n\n");
-      buffer = blocks.pop() ?? "";
-      for (const block of blocks) {
-        const event = parseSseBlock(block.trim());
-        if (event?.type === "live") {
-          yield event.data as ConsoleLiveResponse;
-        }
+    for await (const event of readSseStream(response)) {
+      if (event.type === "live") {
+        yield event.data as ConsoleLiveResponse;
       }
     }
   },

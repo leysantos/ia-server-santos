@@ -159,7 +159,7 @@ class PriceBankIndex:
         synced_at: str,
         counts: dict[str, int],
         metadata: dict[str, Any] | None = None,
-        set_active: bool = True,
+        set_active: bool = False,
     ) -> None:
         reference = reference.replace("/", "-").upper()
         if not reference.startswith("BR-"):

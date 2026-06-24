@@ -688,15 +688,15 @@ export default function DocumentLibrary({
             <p className="mt-1 text-xs text-slate-500">Tente buscar só pelo número (ex.: 6118) ou por uma palavra-chave.</p>
           </div>
         ) : (
-          <div className="max-h-[28rem] overflow-y-auto overflow-x-hidden rounded-xl ring-1 ring-slate-800">
-            <table className="w-full table-fixed text-left text-sm">
+          <div className="max-h-[28rem] overflow-x-auto overflow-y-auto rounded-xl ring-1 ring-slate-800">
+            <table className="w-full min-w-[720px] table-fixed text-left text-sm">
               <thead className="sticky top-0 bg-slate-950/95 text-xs uppercase text-slate-500">
                 <tr className="border-b border-slate-800">
                   <th className="px-4 py-3 font-medium">Nome</th>
-                  <th className="w-28 px-4 py-3 font-medium">Tipo</th>
-                  <th className="w-40 px-4 py-3 font-medium">Preços</th>
-                  <th className="w-28 px-4 py-3 font-medium">Data</th>
-                  <th className="w-60 px-4 py-3 font-medium">Ações</th>
+                  <th className="w-24 px-4 py-3 font-medium">Tipo</th>
+                  <th className="w-32 px-4 py-3 font-medium">Preços</th>
+                  <th className="w-44 px-4 py-3 font-medium">Data</th>
+                  <th className="w-36 px-4 py-3 text-right font-medium">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
@@ -742,8 +742,8 @@ export default function DocumentLibrary({
                     <td className="whitespace-nowrap px-4 py-3 align-top text-xs text-slate-500">
                       {item.catalog_ts ? formatDate(item.catalog_ts) : "—"}
                     </td>
-                    <td className="px-4 py-3 align-top">
-                      <div className="flex flex-wrap gap-1">
+                    <td className="px-4 py-3 align-top text-right">
+                      <div className="flex flex-wrap justify-end gap-1">
                         {onUpdateDocument && (
                           <button
                             type="button"

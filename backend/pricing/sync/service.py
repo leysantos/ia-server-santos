@@ -17,7 +17,7 @@ _SYNC_CACHE = KNOWLEDGE_DIR / "sync" / "price_bases"
 _service: "PriceSyncService | None" = None
 
 # Bases tabulares de preço — operacionais via price_bank, não via catálogo/FAISS RAG.
-_PRICE_SOURCES = frozenset({"sinapi", "tcpo", "orse", "cicro", "ppd_seminf"})
+_PRICE_SOURCES = frozenset({"sinapi", "tcpo", "orse", "cicro", "ppd_seminf", "dp_seminf"})
 
 
 def _is_price_bank_source(name: str) -> bool:

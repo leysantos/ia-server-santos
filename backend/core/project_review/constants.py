@@ -63,10 +63,10 @@ TWIN_DISCIPLINE_KEYS: tuple[str, ...] = (
     "documentacao",
 )
 
-VISION_MODEL_PRIMARY = "gemma3:12b"
-VISION_MODEL_FALLBACKS: tuple[str, ...] = ("gemma3:12b", "gemma3")
+VISION_MODEL_PRIMARY = "gemma4:latest"
+VISION_MODEL_FALLBACKS: tuple[str, ...] = ("gemma4:latest", "gemma3:12b", "gemma3")
 TECHNICAL_MODEL = "qwen3:14b"
-TECHNICAL_MODEL_FALLBACK = "gemma3:12b"
+TECHNICAL_MODEL_FALLBACK = "gemma4:latest"
 
 NORMATIVE_BASES: tuple[str, ...] = (
     "NBR",

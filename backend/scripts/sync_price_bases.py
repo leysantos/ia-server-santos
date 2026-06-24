@@ -23,6 +23,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Sync bases de preço SINAPI/ORSE/TCPO")
     parser.add_argument("--source", choices=["sinapi", "orse", "tcpo", "cicro"])
     parser.add_argument("--all", action="store_true", help="Sincroniza fontes com download automático")
+    parser.add_argument("--all-ufs", action="store_true", help="SICRO: baixa todas as UFs do portal DNIT")
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="SICRO (--all-ufs): pular UFs já importadas no mesmo ano/mês",
+    )
     parser.add_argument("--uf", default="SP", help="UF SINAPI (default SP)")
     parser.add_argument("--year", type=int)
     parser.add_argument("--month", type=int)
@@ -54,6 +60,17 @@ def main() -> int:
                 "year": args.year,
                 "month": args.month,
                 "desonerado": not args.nao_desonerado,
+            }
+        )
+    if args.source == "cicro" or (args.all and args.source is None):
+        options.update(
+            {
+                "uf": args.uf,
+                "year": args.year,
+                "month": args.month,
+                "desonerado": not args.nao_desonerado,
+                "download_all_regions": args.all_ufs,
+                "skip_existing_ufs": args.skip_existing,
             }
         )
 

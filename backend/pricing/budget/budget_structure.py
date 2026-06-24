@@ -268,6 +268,80 @@ def split_composition_prompt(text: str) -> list[str]:
     return [p.strip() for p in parts if len(p.strip()) >= 2]
 
 
+_BASE_LINE_RE = re.compile(r"^bases?\s*:?\s*(.+)$", re.IGNORECASE)
+_BASE_ALIASES: dict[str, str] = {
+    "sinapi": "sinapi",
+    "sicro": "cicro",
+    "sicro3": "cicro",
+    "sicro 3": "cicro",
+    "cicro": "cicro",
+    "tcpo": "tcpo",
+    "orse": "orse",
+    "sbc": "sbc",
+}
+
+
+def _normalize_base_token(token: str) -> str | None:
+    key = re.sub(r"\s+", " ", token.strip().lower())
+    return _BASE_ALIASES.get(key)
+
+
+def parse_base_names(text: str) -> list[str]:
+    """Extrai nomes de base (sinapi, sicro/cicro…) de uma linha 'base …'."""
+    names: list[str] = []
+    for chunk in re.split(r"[,;/+]| e ", text, flags=re.IGNORECASE):
+        mapped = _normalize_base_token(chunk)
+        if mapped and mapped not in names:
+            names.append(mapped)
+    return names
+
+
+def parse_composition_prompt_with_bases(
+    text: str,
+    default_priority: list[str] | None = None,
+) -> list[tuple[str, list[str] | None]]:
+    """
+    Interpreta prompt de composição com linhas opcionais ``base sicro`` / ``base sinapi``.
+    Retorna (termo, prioridade) — None usa default_priority da sessão.
+    """
+    terms: list[tuple[str, list[str] | None]] = []
+    current_priority: list[str] | None = None
+
+    for raw_line in text.replace("\r", "").split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        base_match = _BASE_LINE_RE.match(line)
+        if base_match:
+            rest = base_match.group(1).strip()
+            parsed = parse_base_names(rest)
+            if parsed:
+                tail = rest
+                for alias in _BASE_ALIASES:
+                    tail = re.sub(rf"\b{re.escape(alias)}\b", "", tail, flags=re.I)
+                tail = re.sub(r"[,;/+]", " ", tail).strip()
+                if len(tail) < 3:
+                    current_priority = parsed
+                    continue
+                for part in split_composition_prompt(tail):
+                    terms.append((part, parsed))
+                continue
+
+        for part in split_composition_prompt(line):
+            if _BASE_LINE_RE.match(part):
+                parsed = parse_base_names(part.split(":", 1)[-1] if ":" in part else part.split(None, 1)[-1])
+                if parsed:
+                    current_priority = parsed
+                continue
+            terms.append((part, current_priority))
+
+    if not terms and text.strip():
+        for part in split_composition_prompt(text):
+            terms.append((part, None))
+
+    return terms
+
+
 _UNIT_PROMPT_LABELS: dict[str, str] = {
     "MES": "mes",
     "H": "h",
@@ -309,13 +383,28 @@ def service_to_prompt_term(item: BudgetItem) -> str:
     return query
 
 
-def group_services_to_prompt(group: BudgetItem) -> str:
-    terms = [
+def group_services_to_prompt(
+    group: BudgetItem,
+    project: BudgetProjectMetadata | None = None,
+) -> str:
+    lines: list[str] = []
+    if project:
+        enabled = [b for b in (project.price_bases or []) if b.get("enabled")]
+        if enabled:
+            labels: list[str] = []
+            for base in enabled:
+                label = str(base.get("label") or base.get("source") or "").strip().lower()
+                if label and label not in labels:
+                    labels.append(label)
+            if labels:
+                lines.append(f"base {', '.join(labels)}")
+
+    lines.extend(
         service_to_prompt_term(child)
         for child in group.children
         if child.row_type == ROW_TYPE_SERVICO
-    ]
-    return "\n".join(terms)
+    )
+    return "\n".join(lines)
 
 
 def clear_group_services(group: BudgetItem) -> int:
@@ -559,17 +648,18 @@ def compose_group_from_prompt(
     log: list[dict[str, Any]] = []
     priority = source_priority or ["sinapi"]
 
-    for raw_term in split_composition_prompt(prompt):
+    for raw_term, term_priority in parse_composition_prompt_with_bases(prompt, default_priority=priority):
         query, unit_hint, term_qty = parse_term_hints(raw_term)
         if len(query) < 2:
             continue
         resolved_qty = term_qty if term_qty is not None else default_quantity
         if resolved_qty is None:
             resolved_qty = 0.0
+        effective_priority = term_priority or priority
         request = build_price_request(
             query,
             unit=unit_hint,
-            source_priority=priority,
+            source_priority=effective_priority,
             limit=8,
         )
         results = engine.resolve_many(request, best_only=False)
@@ -579,6 +669,7 @@ def compose_group_from_prompt(
                     "term": raw_term,
                     "query": query,
                     "unit_hint": unit_hint,
+                    "source_priority": effective_priority,
                     "resolved": False,
                     "reason": "sem match",
                 }
@@ -609,6 +700,7 @@ def compose_group_from_prompt(
                 "term": raw_term,
                 "query": query,
                 "unit_hint": unit_hint,
+                "source_priority": effective_priority,
                 "quantity": resolved_qty,
                 "quantity_source": "term" if term_qty is not None else ("default" if default_quantity is not None else "none"),
                 "resolved": True,
@@ -616,6 +708,7 @@ def compose_group_from_prompt(
                 "description": price.description[:120],
                 "unit": svc.unit,
                 "price": price.price,
+                "source": price.source,
             }
         )
 

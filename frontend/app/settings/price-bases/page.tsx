@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type InputHTMLAttributes, type ReactNode } from "react";
 import { api } from "@/services/api";
 import type {
   OpenCompositionDetail,
@@ -19,12 +19,55 @@ import {
   sinapiDefaultPeriod,
   sinapiNationalDownloadsUrl,
 } from "@/lib/sinapi-links";
-
+import {
+  SICRO_PORTAL_URL,
+  SICRO_QUARTER_MONTHS,
+  SICRO_REGIONS,
+  sicroDefaultPeriod,
+  sicroUfsForRegion,
+} from "@/lib/sicro-links";
 import { BRAZIL_UFS, referenceLabelFromKey } from "@/lib/brazil-ufs";
+import {
+  detectSeminfBundleFromFolder,
+  formatSeminfBundleSummary,
+  type SeminfBundleDetection,
+} from "@/lib/seminf-bundle";
+
+const ALL_SICRO_UFS = SICRO_REGIONS.flatMap((r) => r.ufs);
+
+function importedSicroUfsForPeriod(
+  references: PriceBankReference[],
+  year: number,
+  month: number
+): Set<string> {
+  const suffix = `-${year}-${String(month).padStart(2, "0")}`;
+  const ufs = new Set<string>();
+  for (const r of references) {
+    const ref = r.reference.toUpperCase();
+    if (!ref.startsWith("BR-SICRO-") || !ref.endsWith(suffix)) continue;
+    const uf = ref.split("-")[2];
+    if (uf) ufs.add(uf);
+  }
+  return ufs;
+}
 
 const MONTHS = Array.from({ length: 12 }, (_, i) => i + 1);
 const SYNC_YEARS = Array.from({ length: 4 }, (_, i) => new Date().getFullYear() - i);
 const NEW_SOURCE_OPTION = "__new__";
+
+const CPU_ITEM_TYPE_LABELS: Record<string, string> = {
+  mao_obra: "Mão de obra",
+  insumo: "Material",
+  equipamento: "Equipamento",
+  atividade: "Atividade auxiliar",
+  tempo_fixo: "Tempo fixo",
+  transporte: "Transporte",
+  fic: "FIC",
+};
+
+function cpuItemTypeLabel(itemType: string): string {
+  return CPU_ITEM_TYPE_LABELS[itemType] ?? itemType.replace(/_/g, " ");
+}
 
 function referenceLabel(reference: string, refs: PriceBankReference[] = []): string {
   const found = refs.find((r) => r.reference === reference);
@@ -36,10 +79,29 @@ function sourceKey(ref: PriceBankReference): string {
   return (ref.source || "sinapi").toLowerCase();
 }
 
+function isSeminfBundleSource(source: string): boolean {
+  return source === "ppd_seminf" || source === "dp_seminf";
+}
+
+function parseSeminfRefPeriod(reference: string): { year: number; month: number } | null {
+  const normalized = reference.replace(/-R\d+$/i, "");
+  const m = normalized.match(/BR-(?:DP-SEMINF|SEMINF)-(\d{4})-(\d{2})/i);
+  if (!m) return null;
+  return { year: Number(m[1]), month: Number(m[2]) };
+}
+
 function acceptForSource(source: string): string {
-  if (source === "ppd_seminf") return ".xlsm,.xlsx,.xls";
+  if (source === "ppd_seminf" || source === "dp_seminf") return ".xlsm,.xlsx,.xls";
   if (source === "sinapi") return ".zip,.xlsx,.xls";
+  if (source === "cicro") return ".7z,.zip,.xlsx,.xls";
   return ".zip,.xlsx,.xls,.csv";
+}
+
+function defaultDownloadUrl(source: string, year: number, month: number): string {
+  if (source === "sinapi") return sinapiNationalDownloadsUrl();
+  if (source === "cicro") return SICRO_PORTAL_URL;
+  if (source === "ppd_seminf") return "";
+  return "";
 }
 
 function ExternalLink({
@@ -120,12 +182,6 @@ function StatCard({
   );
 }
 
-function defaultDownloadUrl(source: string, year: number, month: number): string {
-  if (source === "sinapi") return sinapiNationalDownloadsUrl();
-  if (source === "ppd_seminf") return "";
-  return "";
-}
-
 function SourceHint({
   source,
   year,
@@ -159,10 +215,31 @@ function SourceHint({
       </p>
     );
   }
-  if (source === "ppd_seminf") {
+  if (source === "ppd_seminf" || source === "dp_seminf") {
     return (
       <p className="text-xs text-slate-500">
-        Planilha MC_OR da SEMINF/SEINFRA-AM (.xlsm). Composições fechadas com preços regionais (UF AM).
+        Selecione a pasta do servidor SEMINF — o sistema localiza automaticamente as 3 planilhas
+        do período (ignora outros arquivos; aceita variações como Composição/composicao,
+        preços/precos). Depois da 1ª importação, use{" "}
+        <strong className="text-slate-400">Gerar nova base (SINAPI)</strong> cria a base
+        do mês selecionado (ex. <code className="text-slate-400">BR-DP-SEMINF-2026-03</code>) com
+        preços do SINAPI Caixa do mesmo período — a estrutura vem da base SEMINF anterior (ou da mais
+        próxima, se houver lacuna no histórico). A fonte permanece no histórico.
+      </p>
+    );
+  }
+  if (source === "cicro") {
+    return (
+      <p className="text-xs text-slate-500">
+        Portal DNIT SICRO:{" "}
+        <ExternalLink href={SICRO_PORTAL_URL} className="text-cyan-400 underline">
+          relatórios SICRO por região/UF
+        </ExternalLink>
+        . O <strong className="text-slate-400">download automático</strong> baixa o arquivo{" "}
+        <code className="text-slate-400">.7z</code> do estado (ex. <code className="text-slate-400">am-01-2026.7z</code>
+        ). Use <strong className="text-slate-400">Sincronizar UFs faltantes</strong> para baixar só estados
+        ainda não importados no período, ou <strong className="text-slate-400">Sincronizar todas</strong> para
+        forçar reimportação das 27 UFs.
       </p>
     );
   }
@@ -177,6 +254,7 @@ function SourceHint({
 export default function SettingsPriceBasesPage() {
   const defaultPeriod = sinapiDefaultPeriod();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const seminfFolderRef = useRef<HTMLInputElement>(null);
 
   const [sources, setSources] = useState<PriceSyncSourceInfo[]>([]);
   const [inventory, setInventory] = useState<PriceBankInventory | null>(null);
@@ -188,9 +266,12 @@ export default function SettingsPriceBasesPage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [syncYear, setSyncYear] = useState(defaultPeriod.year);
   const [syncMonth, setSyncMonth] = useState(defaultPeriod.month);
+  const [syncUf, setSyncUf] = useState("SP");
+  const [syncRegion, setSyncRegion] = useState("all");
   const [viewReference, setViewReference] = useState("");
   const [previewSource, setPreviewSource] = useState("sinapi");
   const [previewUf, setPreviewUf] = useState("SP");
+  const [previewRegion, setPreviewRegion] = useState("all");
   const [previewCode, setPreviewCode] = useState("");
   const [preview, setPreview] = useState<OpenCompositionDetail | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -204,6 +285,8 @@ export default function SettingsPriceBasesPage() {
   const [newSourceName, setNewSourceName] = useState("");
   const [newSourceLabel, setNewSourceLabel] = useState("");
   const [creatingSource, setCreatingSource] = useState(false);
+  const [seminfBundlePreview, setSeminfBundlePreview] = useState<SeminfBundleDetection | null>(null);
+  const [refreshingSeminf, setRefreshingSeminf] = useState(false);
 
   const references: PriceBankReference[] = bank?.references ?? inventory?.groups.flatMap((g) =>
     g.periods.map((p) => ({
@@ -232,6 +315,10 @@ export default function SettingsPriceBasesPage() {
     if (importSource === NEW_SOURCE_OPTION) return;
     const info = sources.find((s) => s.name === importSource);
     setDownloadUrl(info?.download_url ?? "");
+    if (isSeminfBundleSource(importSource)) {
+      setSyncUf("AM");
+      setSeminfBundlePreview(null);
+    }
   }, [importSource, sources]);
 
   const previewSources = useMemo(() => {
@@ -246,6 +333,54 @@ export default function SettingsPriceBasesPage() {
     () => references.filter((r) => sourceKey(r) === previewSource),
     [references, previewSource]
   );
+
+  const syncUfOptions = useMemo(() => {
+    if (importSource === "cicro") return [...sicroUfsForRegion(syncRegion)];
+    return [...BRAZIL_UFS];
+  }, [importSource, syncRegion]);
+
+  const previewUfOptions = useMemo(() => {
+    if (previewSource === "cicro") return [...sicroUfsForRegion(previewRegion)];
+    return [...BRAZIL_UFS];
+  }, [previewSource, previewRegion]);
+
+  const syncMonthOptions = useMemo(() => {
+    if (importSource === "cicro") return [...SICRO_QUARTER_MONTHS];
+    return MONTHS;
+  }, [importSource]);
+
+  const missingSicroUfs = useMemo(() => {
+    const imported = importedSicroUfsForPeriod(references, syncYear, syncMonth);
+    return ALL_SICRO_UFS.filter((uf) => !imported.has(uf));
+  }, [references, syncYear, syncMonth]);
+
+  useEffect(() => {
+    if (importSource === "cicro") {
+      const period = sicroDefaultPeriod();
+      setSyncYear(period.year);
+      setSyncMonth(period.month);
+      setSyncUf("AM");
+      setSyncRegion("norte");
+    } else if (importSource === "sinapi") {
+      const period = sinapiDefaultPeriod();
+      setSyncYear(period.year);
+      setSyncMonth(period.month);
+      setSyncUf("SP");
+      setSyncRegion("all");
+    }
+  }, [importSource]);
+
+  useEffect(() => {
+    if (!syncUfOptions.includes(syncUf)) {
+      setSyncUf(syncUfOptions[0] ?? "SP");
+    }
+  }, [syncUfOptions, syncUf]);
+
+  useEffect(() => {
+    if (!previewUfOptions.includes(previewUf)) {
+      setPreviewUf(previewUfOptions[0] ?? "SP");
+    }
+  }, [previewUfOptions, previewUf]);
 
   const refresh = useCallback(async (reference?: string) => {
     const ref = reference ?? (viewReference || undefined);
@@ -285,6 +420,20 @@ export default function SettingsPriceBasesPage() {
     comp.total_price_sem ??
     comp.items.reduce((sum, item) => sum + (item.partial_cost_sem ?? item.partial_cost), 0);
 
+  const formatPctAs = (value: number | undefined) => {
+    if (value == null || value <= 0) return "—";
+    return `${(value * 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`;
+  };
+
+  /** Encargos sociais MO na planilha Caixa vêm como fator (0,9835 = 98,35%). */
+  const formatLaborChargePct = (value: number | undefined) => {
+    if (value == null || value <= 0) return "—";
+    return `${(value * 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+  };
+
+  const previewPctAs = (comp: OpenCompositionDetail) =>
+    previewPriceMode === "semd" ? comp.pct_as_semd : comp.pct_as_comd;
+
   const metaCount = (meta: Record<string, unknown> | undefined, key: string) => {
     const v = meta?.[key];
     return typeof v === "number" ? v : undefined;
@@ -298,17 +447,25 @@ export default function SettingsPriceBasesPage() {
     return `${name.toUpperCase()} importado — fechadas: ${closed}, abertas: ${open ?? "—"}, insumos: ${insumos ?? "—"}`;
   };
 
-  const handleSync = async (name: string) => {
+  const handleSync = async (
+    name: string,
+    opts?: { download_all_regions?: boolean; skip_existing_ufs?: boolean }
+  ) => {
     setSyncing(name);
     setImportProgress({ phase: "start", percent: 0, current: 0, total: 0, message: "Iniciando…" });
     setError(null);
     setSuccess(null);
+    const allRegions = opts?.download_all_regions ?? false;
+    const skipExisting = opts?.skip_existing_ufs ?? false;
     try {
       const result = await api.pricingSyncSourceWithProgress(
         name,
         {
           year: syncYear,
           month: syncMonth,
+          uf: syncUf,
+          download_all_regions: allRegions,
+          skip_existing_ufs: skipExisting,
           index_faiss: false,
           reload_providers: false,
           set_active: false,
@@ -321,7 +478,31 @@ export default function SettingsPriceBasesPage() {
           : null) ?? `BR-${syncYear}-${String(syncMonth).padStart(2, "0")}`;
       setViewReference(refKey);
       setPreviewSource(name);
-      setSuccess(formatSyncSuccess(name, result));
+      if (allRegions && name === "cicro") {
+        const meta = result.download?.metadata as Record<string, unknown> | undefined;
+        const synced = meta?.synced_ufs;
+        const skipped = meta?.skipped_ufs;
+        const failed = meta?.failed_ufs;
+        const message = typeof meta?.message === "string" ? meta.message : "";
+        const syncedCount = Array.isArray(synced) ? synced.length : 0;
+        const skippedCount = Array.isArray(skipped) ? skipped.length : 0;
+        const failedCount = Array.isArray(failed) ? failed.length : 0;
+        if (syncedCount === 0 && skippedCount > 0 && failedCount === 0) {
+          setSuccess(message || `SICRO — todas as ${skippedCount} UF(s) já estavam importadas.`);
+        } else if (failedCount > 0) {
+          setSuccess(
+            `SICRO — ${syncedCount} importada(s), ${skippedCount} pulada(s), ${failedCount} falha(s). Ref.: ${refKey}.`
+          );
+        } else if (skippedCount > 0) {
+          setSuccess(
+            `SICRO — ${syncedCount} UF(s) importada(s), ${skippedCount} já existente(s) (puladas). Ref.: ${refKey}.`
+          );
+        } else {
+          setSuccess(`SICRO — ${syncedCount || "todas as"} UF(s) sincronizadas (ref. ${refKey}).`);
+        }
+      } else {
+        setSuccess(formatSyncSuccess(name, result));
+      }
       await refresh(refKey);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha na sincronização");
@@ -330,6 +511,12 @@ export default function SettingsPriceBasesPage() {
       setImportProgress(null);
     }
   };
+
+  const handleSyncAllSicro = () =>
+    void handleSync("cicro", { download_all_regions: true, skip_existing_ufs: false });
+
+  const handleSyncMissingSicro = () =>
+    void handleSync("cicro", { download_all_regions: true, skip_existing_ufs: true });
 
   const handleUpload = async (name: string, file: File) => {
     setSyncing(name);
@@ -343,6 +530,7 @@ export default function SettingsPriceBasesPage() {
         {
           year: syncYear,
           month: syncMonth,
+          uf: syncUf,
           set_active: false,
           index_faiss: false,
           reload_providers: false,
@@ -365,6 +553,194 @@ export default function SettingsPriceBasesPage() {
       setSyncing(null);
       setImportProgress(null);
     }
+  };
+
+  const handleSeminfBundleUpload = async (
+    name: string,
+    files: { closed: File; openComd: File; openSemd: File },
+    folderLabel?: string
+  ) => {
+    setSyncing(name);
+    setImportProgress({
+      phase: "start",
+      percent: 0,
+      current: 0,
+      total: 0,
+      message: folderLabel ? `Importando ${folderLabel}…` : "Enviando planilhas SEMINF…",
+    });
+    setError(null);
+    setSuccess(null);
+    try {
+      const result = await api.pricingSyncDpSeminfBundleWithProgress(
+        name,
+        files,
+        {
+          year: syncYear,
+          month: syncMonth,
+          uf: syncUf,
+          set_active: false,
+          index_faiss: false,
+          reload_providers: false,
+        },
+        (p) => setImportProgress(p)
+      );
+      const refKey =
+        (typeof result.download?.metadata?.reference === "string"
+          ? result.download.metadata.reference
+          : null) ?? viewReference;
+      if (refKey) {
+        setViewReference(refKey);
+        setPreviewSource(name);
+      }
+      setSuccess(formatSyncSuccess(name, result));
+      await refresh(refKey || undefined);
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : "Falha no upload em lote";
+      try {
+        const parsed = JSON.parse(raw) as { detail?: string };
+        setError(typeof parsed.detail === "string" ? parsed.detail : raw);
+      } catch {
+        setError(raw);
+      }
+    } finally {
+      setSyncing(null);
+      setImportProgress(null);
+      setSeminfBundlePreview(null);
+    }
+  };
+
+  const seminfRootForPeriod = useMemo(() => {
+    if (!isSeminfBundleSource(importSource)) return null;
+    const group = inventory?.groups.find((g) => g.source === importSource);
+    const periods = group?.periods ?? [];
+    return (
+      periods.find((p) => {
+        const parsed = parseSeminfRefPeriod(p.reference);
+        return parsed?.year === syncYear && parsed?.month === syncMonth;
+      }) ?? null
+    );
+  }, [importSource, inventory, syncYear, syncMonth]);
+
+  const seminfStructureSource = useMemo(() => {
+    if (!isSeminfBundleSource(importSource)) return null;
+    const targetKey = syncYear * 100 + syncMonth;
+    const group = inventory?.groups.find((g) => g.source === importSource);
+    const periods = group?.periods ?? [];
+    const parsed = periods
+      .map((p) => ({ period: p, parsed: parseSeminfRefPeriod(p.reference) }))
+      .filter(
+        (x): x is { period: (typeof periods)[number]; parsed: { year: number; month: number } } =>
+          x.parsed !== null
+      );
+
+    const before = parsed
+      .filter((x) => x.parsed.year * 100 + x.parsed.month < targetKey)
+      .sort((a, b) => {
+        const ka = a.parsed.year * 100 + a.parsed.month;
+        const kb = b.parsed.year * 100 + b.parsed.month;
+        return kb - ka;
+      });
+    if (before[0]) return before[0].period;
+
+    // Lacuna no histórico: usa a base SEMINF mais próxima (ex. só 04/05 importados → gera 03 com estrutura 04)
+    const after = parsed
+      .filter((x) => x.parsed.year * 100 + x.parsed.month > targetKey)
+      .sort((a, b) => {
+        const ka = a.parsed.year * 100 + a.parsed.month;
+        const kb = b.parsed.year * 100 + b.parsed.month;
+        return ka - kb;
+      });
+    return after[0]?.period ?? null;
+  }, [importSource, inventory, syncYear, syncMonth]);
+
+  const seminfStructureBackfill = useMemo(() => {
+    if (!seminfStructureSource) return false;
+    const targetKey = syncYear * 100 + syncMonth;
+    const parsed = parseSeminfRefPeriod(seminfStructureSource.reference);
+    if (!parsed) return false;
+    return parsed.year * 100 + parsed.month > targetKey;
+  }, [seminfStructureSource, syncYear, syncMonth]);
+
+  const sinapiPeriodImported = useMemo(() => {
+    const suffix = `-${syncYear}-${String(syncMonth).padStart(2, "0")}`;
+    const group = inventory?.groups.find((g) => g.source === "sinapi");
+    return group?.periods.some((p) => p.reference.endsWith(suffix)) ?? false;
+  }, [inventory, syncYear, syncMonth]);
+
+  const seminfGenerateDisabledReason = useMemo((): string | null => {
+    if (!isSeminfBundleSource(importSource)) return null;
+    if (seminfRootForPeriod) {
+      return `A base ${String(syncMonth).padStart(2, "0")}/${syncYear} já foi importada.`;
+    }
+    if (!sinapiPeriodImported) {
+      return `Importe o SINAPI Caixa ${String(syncMonth).padStart(2, "0")}/${syncYear} antes de gerar a nova base.`;
+    }
+    if (!seminfStructureSource) {
+      return "Importe ao menos uma base SEMINF (pasta) ou selecione outro período.";
+    }
+    return null;
+  }, [
+    importSource,
+    seminfRootForPeriod,
+    sinapiPeriodImported,
+    seminfStructureSource,
+    syncMonth,
+    syncYear,
+  ]);
+
+  const handleSeminfRefreshPrices = async () => {
+    const period = seminfStructureSource;
+    if (!period) {
+      setError(
+        "Importe ao menos uma base SEMINF (Selecionar pasta) ou escolha outro período."
+      );
+      return;
+    }
+    if (seminfRootForPeriod) {
+      setError(
+        `A base ${String(syncMonth).padStart(2, "0")}/${syncYear} já existe — selecione outro período ou exclua-a.`
+      );
+      return;
+    }
+    if (!sinapiPeriodImported) {
+      setError(`Importe o SINAPI ${String(syncMonth).padStart(2, "0")}/${syncYear} (UF AM) antes de gerar a nova base.`);
+      return;
+    }
+    const sinapiRef = `BR-${syncYear}-${String(syncMonth).padStart(2, "0")}`;
+    setRefreshingSeminf(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const result = await api.pricingSyncRefreshSeminfPrices(importSource, {
+        reference: period.reference,
+        sinapi_reference: sinapiRef,
+        uf: syncUf,
+        set_active: false,
+      });
+      const warnings = Array.isArray(result.warnings) ? result.warnings.join(" ") : "";
+      setSuccess(
+        `Nova base ${result.reference} criada (SINAPI ${sinapiRef}) — ${period.reference} preservada.${warnings ? ` ${warnings}` : ""}`
+      );
+      setViewReference(result.reference);
+      await refresh(result.reference);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Falha ao gerar base SEMINF atualizada");
+    } finally {
+      setRefreshingSeminf(false);
+    }
+  };
+
+  const handleSeminfFolderSelect = (fileList: FileList | null) => {
+    if (!fileList?.length) return;
+    const detected = detectSeminfBundleFromFolder(fileList, syncYear, syncMonth);
+    if ("error" in detected) {
+      setSeminfBundlePreview(null);
+      setError(detected.error);
+      return;
+    }
+    setSeminfBundlePreview(detected);
+    setError(null);
+    void handleSeminfBundleUpload(importSource, detected.files, detected.folderName);
   };
 
   const loadPreview = async (opts?: { uf?: string; reference?: string }) => {
@@ -537,12 +913,15 @@ export default function SettingsPriceBasesPage() {
                   )}
                 >
                   <td className="px-3 py-2 font-medium text-slate-200">
-                    {p.label}
-                    {p.active && (
-                      <span className="ml-2 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] text-emerald-300">
-                        ativo
-                      </span>
-                    )}
+                    <button
+                      type="button"
+                      disabled={!!syncing}
+                      onClick={() => setViewReference(p.reference)}
+                      className="text-left hover:text-cyan-300 disabled:opacity-50"
+                      title="Consultar este período na prévia"
+                    >
+                      {p.label}
+                    </button>
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
                     {(p.counts?.compositions_closed ?? 0).toLocaleString("pt-BR")}
@@ -658,6 +1037,41 @@ export default function SettingsPriceBasesPage() {
               <option value={NEW_SOURCE_OPTION}>+ Adicionar novo tipo…</option>
             </select>
           </label>
+          {importSource === "cicro" && !showNewSourceForm && (
+            <label className="text-sm text-slate-400">
+              Região
+              <select
+                value={syncRegion}
+                onChange={(e) => setSyncRegion(e.target.value)}
+                disabled={!!syncing}
+                className="mt-1 block min-w-[140px] rounded-lg border-0 bg-slate-800 px-3 py-2 text-sm text-white ring-1 ring-slate-700 disabled:opacity-50"
+              >
+                <option value="all">Todas</option>
+                {SICRO_REGIONS.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {(importSource === "cicro" || importSource === "sinapi") && !showNewSourceForm && (
+            <label className="text-sm text-slate-400">
+              UF
+              <select
+                value={syncUf}
+                onChange={(e) => setSyncUf(e.target.value)}
+                disabled={!!syncing}
+                className="mt-1 block rounded-lg border-0 bg-slate-800 px-3 py-2 text-sm text-white ring-1 ring-slate-700 disabled:opacity-50"
+              >
+                {syncUfOptions.map((u) => (
+                  <option key={u} value={u}>
+                    {u}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="text-sm text-slate-400">
             Mês
             <select
@@ -666,9 +1080,10 @@ export default function SettingsPriceBasesPage() {
               disabled={!!syncing || showNewSourceForm}
               className="mt-1 block rounded-lg border-0 bg-slate-800 px-3 py-2 text-sm text-white ring-1 ring-slate-700 disabled:opacity-50"
             >
-              {MONTHS.map((m) => (
+              {syncMonthOptions.map((m) => (
                 <option key={m} value={m}>
                   {String(m).padStart(2, "0")}
+                  {importSource === "cicro" ? " (trim.)" : ""}
                 </option>
               ))}
             </select>
@@ -703,7 +1118,9 @@ export default function SettingsPriceBasesPage() {
               placeholder={
                 importSource === "sinapi"
                   ? sinapiNationalDownloadsUrl()
-                  : "https://…"
+                  : importSource === "cicro"
+                    ? SICRO_PORTAL_URL
+                    : "https://…"
               }
               className="mt-1 block w-full rounded-lg border-0 bg-slate-800 px-3 py-2 text-sm text-white ring-1 ring-slate-700 placeholder:text-slate-600 disabled:opacity-50"
             />
@@ -772,8 +1189,35 @@ export default function SettingsPriceBasesPage() {
               onClick={() => void handleSync(importSource)}
               className="rounded-lg bg-emerald-600/80 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
             >
-              {syncing === importSource ? "Baixando…" : "Download automático"}
+              {syncing === importSource ? "Baixando…" : importSource === "cicro" ? `Download automático (${syncUf})` : "Download automático"}
             </button>
+          )}
+          {importSource === "cicro" && canAutoDownload && !showNewSourceForm && (
+            <>
+              <button
+                type="button"
+                disabled={!!syncing || missingSicroUfs.length === 0}
+                onClick={() => void handleSyncMissingSicro()}
+                className="rounded-lg bg-cyan-700/80 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-600 disabled:opacity-50"
+                title={
+                  missingSicroUfs.length === 0
+                    ? "Todas as UFs já importadas neste período"
+                    : `Pendentes: ${missingSicroUfs.join(", ")}`
+                }
+              >
+                {syncing === "cicro"
+                  ? "Sincronizando…"
+                  : `Sincronizar UFs faltantes (${missingSicroUfs.length})`}
+              </button>
+              <button
+                type="button"
+                disabled={!!syncing}
+                onClick={() => void handleSyncAllSicro()}
+                className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 ring-1 ring-slate-700 hover:bg-slate-700 disabled:opacity-50"
+              >
+                {syncing === "cicro" ? "Sincronizando…" : "Reimportar todas as UFs"}
+              </button>
+            </>
           )}
           {effectiveDownloadUrl && !showNewSourceForm && (
             <ExternalLink
@@ -783,7 +1227,70 @@ export default function SettingsPriceBasesPage() {
               Abrir página de download
             </ExternalLink>
           )}
-          {!showNewSourceForm && (
+          {!showNewSourceForm && isSeminfBundleSource(importSource) ? (
+            <div className="flex w-full flex-col gap-2">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={!!syncing || refreshingSeminf}
+                  onClick={() => seminfFolderRef.current?.click()}
+                  className="rounded-lg bg-cyan-700/80 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-600 disabled:opacity-50"
+                >
+                  {syncing === importSource
+                    ? "Importando…"
+                    : `Selecionar pasta (${String(syncMonth).padStart(2, "0")}/${syncYear})`}
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    !!syncing ||
+                    refreshingSeminf ||
+                    !seminfStructureSource ||
+                    !sinapiPeriodImported ||
+                    !!seminfRootForPeriod
+                  }
+                  onClick={() => void handleSeminfRefreshPrices()}
+                  className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 ring-1 ring-slate-700 hover:bg-slate-700 disabled:opacity-50"
+                  title={
+                    seminfGenerateDisabledReason ??
+                    (seminfStructureBackfill
+                      ? `Estrutura de ${referenceLabel(seminfStructureSource!.reference, references)} (lacuna) + SINAPI ${String(syncMonth).padStart(2, "0")}/${syncYear}`
+                      : `Estrutura de ${seminfStructureSource ? referenceLabel(seminfStructureSource.reference, references) : "—"} + SINAPI ${String(syncMonth).padStart(2, "0")}/${syncYear}`)
+                  }
+                >
+                  {refreshingSeminf ? "Gerando…" : "Gerar nova base (SINAPI)"}
+                </button>
+              </div>
+              {seminfGenerateDisabledReason && !syncing && !refreshingSeminf && (
+                <p className="text-xs text-amber-400/90">{seminfGenerateDisabledReason}</p>
+              )}
+              {!seminfGenerateDisabledReason && seminfStructureSource && !syncing && !refreshingSeminf && (
+                <p className="text-xs text-slate-500">
+                  {seminfStructureBackfill ? (
+                    <>
+                      Lacuna no histórico — estrutura de{" "}
+                      <strong>{referenceLabel(seminfStructureSource.reference, references)}</strong>
+                      {" · "}
+                      preços SINAPI {String(syncMonth).padStart(2, "0")}/{syncYear}
+                    </>
+                  ) : (
+                    <>
+                      Estrutura:{" "}
+                      <strong>{referenceLabel(seminfStructureSource.reference, references)}</strong>
+                      {" · "}
+                      preços SINAPI {String(syncMonth).padStart(2, "0")}/{syncYear} →{" "}
+                      <code className="text-slate-400">
+                        BR-DP-SEMINF-{syncYear}-{String(syncMonth).padStart(2, "0")}
+                      </code>
+                    </>
+                  )}
+                </p>
+              )}
+              {seminfBundlePreview && !syncing && (
+                <p className="text-xs text-slate-500">{formatSeminfBundleSummary(seminfBundlePreview)}</p>
+              )}
+            </div>
+          ) : !showNewSourceForm ? (
             <button
               type="button"
               disabled={!!syncing}
@@ -792,7 +1299,7 @@ export default function SettingsPriceBasesPage() {
             >
               {syncing === importSource ? "Importando…" : "Importar arquivo local"}
             </button>
-          )}
+          ) : null}
           {isCustomSource && !showNewSourceForm && (
             <button
               type="button"
@@ -815,6 +1322,18 @@ export default function SettingsPriceBasesPage() {
               e.target.value = "";
             }}
           />
+          <input
+            ref={seminfFolderRef}
+            type="file"
+            className="hidden"
+            disabled={!!syncing}
+            multiple
+            onChange={(e) => {
+              handleSeminfFolderSelect(e.target.files);
+              e.target.value = "";
+            }}
+            {...({ webkitdirectory: "", directory: "" } as InputHTMLAttributes<HTMLInputElement>)}
+          />
         </div>
 
         <div className="mt-3">
@@ -831,7 +1350,8 @@ export default function SettingsPriceBasesPage() {
         <section className="rounded-xl bg-slate-900/40 p-5 ring-1 ring-slate-800">
           <h3 className="text-sm font-semibold text-slate-200">Períodos importados</h3>
           <p className="mt-1 text-xs text-slate-500">
-            Resumo por fonte e período. Clique em excluir para remover e reimportar.
+            Todas as bases ficam disponíveis para consulta e para o orçamento — escolha o período em
+            Orçamento → Dados. Clique no nome do período para prévia; excluir remove e permite reimportar.
           </p>
           <div className="mt-4 space-y-6">
             {(inventory?.groups ?? []).map(renderInventoryGroup)}
@@ -921,6 +1441,24 @@ export default function SettingsPriceBasesPage() {
               </select>
             </label>
           )}
+          {previewSource === "cicro" && (
+            <label className="text-sm text-slate-400">
+              Região
+              <select
+                value={previewRegion}
+                onChange={(e) => setPreviewRegion(e.target.value)}
+                disabled={previewLoading}
+                className="ml-2 rounded-lg border-0 bg-slate-800 px-3 py-2 text-sm text-white ring-1 ring-slate-700 disabled:opacity-50"
+              >
+                <option value="all">Todas</option>
+                {SICRO_REGIONS.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="text-sm text-slate-400">
             UF
             <select
@@ -929,7 +1467,7 @@ export default function SettingsPriceBasesPage() {
               disabled={previewLoading}
               className="ml-2 rounded-lg border-0 bg-slate-800 px-3 py-2 text-sm text-white ring-1 ring-slate-700 disabled:opacity-50"
             >
-              {BRAZIL_UFS.map((u) => (
+              {previewUfOptions.map((u) => (
                 <option key={u} value={u}>
                   {u}
                 </option>
@@ -962,6 +1500,9 @@ export default function SettingsPriceBasesPage() {
           <div className="mt-4 overflow-x-auto">
             <p className="mb-2 text-sm text-slate-300">
               <strong>{preview.code}</strong> — {preview.description} ({preview.unit})
+              {preview.grupo ? (
+                <span className="ml-2 text-xs text-slate-500">· Grupo: {preview.grupo}</span>
+              ) : null}
             </p>
             <div className="mb-3 flex flex-wrap gap-4 text-sm">
               <span className="rounded-lg bg-emerald-500/10 px-3 py-1.5 text-emerald-200 ring-1 ring-emerald-500/30">
@@ -971,6 +1512,55 @@ export default function SettingsPriceBasesPage() {
                 SemD (CSD):{" "}
                 <strong className="tabular-nums">{formatBrl(previewTotalSemd(preview))}</strong>
               </span>
+              {(preview.pct_as_comd != null || preview.pct_as_semd != null) && (
+                <span
+                  className="rounded-lg bg-amber-500/10 px-3 py-1.5 text-amber-200 ring-1 ring-amber-500/30"
+                  title="% do custo obtido com preços de insumos de São Paulo por indisponibilidade no estado"
+                >
+                  %AS: <strong className="tabular-nums">{formatPctAs(previewPctAs(preview))}</strong>
+                  {preview.tp2 === "AS" ? " · tp2 AS" : ""}
+                </span>
+              )}
+              {preview.tp2 === "AS" &&
+                preview.pct_as_comd == null &&
+                preview.pct_as_semd == null && (
+                  <span
+                    className="rounded-lg bg-amber-500/10 px-3 py-1.5 text-amber-200 ring-1 ring-amber-500/30"
+                    title="Composição ou itens com preços associados a São Paulo"
+                  >
+                    tp2: <strong>AS</strong>
+                  </span>
+                )}
+              {preview.labor_charges &&
+                (preview.labor_charges.horista_comd ||
+                  preview.labor_charges.horista_semd) && (
+                  <span
+                    className="rounded-lg bg-violet-500/10 px-3 py-1.5 text-violet-200 ring-1 ring-violet-500/30"
+                    title={
+                      preview.labor_charges.localidade
+                        ? `Localidade: ${preview.labor_charges.localidade}`
+                        : undefined
+                    }
+                  >
+                    Horista:{" "}
+                    <strong className="tabular-nums">
+                      {formatLaborChargePct(
+                        previewPriceMode === "semd"
+                          ? preview.labor_charges.horista_semd
+                          : preview.labor_charges.horista_comd
+                      )}
+                    </strong>
+                    {" · "}
+                    Mensalista:{" "}
+                    <strong className="tabular-nums">
+                      {formatLaborChargePct(
+                        previewPriceMode === "semd"
+                          ? preview.labor_charges.mensalista_semd
+                          : preview.labor_charges.mensalista_comd
+                      )}
+                    </strong>
+                  </span>
+                )}
               {(preview.price_uf || previewUf) && (
                 <span className="self-center text-xs text-slate-500">
                   UF {preview.price_uf ?? previewUf}
@@ -1009,10 +1599,17 @@ export default function SettingsPriceBasesPage() {
               <thead>
                 <tr className="border-b border-slate-700 text-slate-500">
                   <th className="py-2 pr-2">Tipo</th>
+                  <th className="py-2 pr-2">Classif.</th>
                   <th className="py-2 pr-2">Código</th>
                   <th className="py-2 pr-2">Descrição</th>
                   <th className="py-2 pr-2">Und</th>
                   <th className="py-2 pr-2 text-right">Coef.</th>
+                  <th className="py-2 pr-2" title="Origem de preço SINAPI (C, CR…)">
+                    Origem
+                  </th>
+                  <th className="py-2 pr-2" title="AS = preço associado a São Paulo (SEMINF tp2 ou SINAPI %AS)">
+                    tp2
+                  </th>
                   <th className="py-2 pr-2 text-right">
                     Preço un. {previewPriceMode === "comd" ? "(ComD)" : "(SemD)"}
                   </th>
@@ -1033,11 +1630,26 @@ export default function SettingsPriceBasesPage() {
                       : item.partial_cost;
                   return (
                     <tr key={`${item.code}-${i}`} className="border-b border-slate-800/80">
-                      <td className="py-1.5 pr-2 capitalize text-cyan-400/90">{item.item_type.replace("_", " ")}</td>
+                      <td className="py-1.5 pr-2 text-cyan-400/90">{cpuItemTypeLabel(item.item_type)}</td>
+                      <td className="py-1.5 pr-2 text-slate-400">{item.classificacao || "—"}</td>
                       <td className="py-1.5 pr-2 font-mono">{item.code}</td>
                       <td className="py-1.5 pr-2">{item.description}</td>
                       <td className="py-1.5 pr-2">{item.unit}</td>
                       <td className="py-1.5 pr-2 text-right tabular-nums">{item.coefficient}</td>
+                      <td className="py-1.5 pr-2 font-mono text-slate-400">{item.origem_preco || "—"}</td>
+                      <td
+                        className={cn(
+                          "py-1.5 pr-2 font-mono",
+                          item.tp2 === "AS" ? "text-amber-300" : "text-slate-600"
+                        )}
+                        title={
+                          item.tp2 === "AS"
+                            ? "Item com preço associado a São Paulo (tp2/%AS)"
+                            : undefined
+                        }
+                      >
+                        {item.tp2 || "—"}
+                      </td>
                       <td className="py-1.5 pr-2 text-right tabular-nums">
                         {unitPrice.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                       </td>

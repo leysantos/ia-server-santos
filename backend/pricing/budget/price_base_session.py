@@ -11,6 +11,43 @@ logger = logging.getLogger(__name__)
 
 REF_PATTERN = re.compile(r"^BR-(\d{4})-(\d{2})$", re.I)
 
+_LOADED_FINGERPRINT: str | None = None
+_LOADED_RESULT: dict[str, Any] | None = None
+
+
+def _selection_fingerprint(selections: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for sel in sorted(selections, key=lambda s: str(s.get("source") or "")):
+        if not sel.get("enabled"):
+            continue
+        parts.append(
+            "|".join(
+                [
+                    str(sel.get("source") or "sinapi").lower(),
+                    str(sel.get("uf") or "SP").upper(),
+                    str(sel.get("reference") or "").replace("/", "-"),
+                ]
+            )
+        )
+    return "::".join(parts)
+
+
+def _providers_match_fingerprint(fingerprint: str) -> bool:
+    from pricing.bootstrap import ensure_providers_registered
+    from pricing.registry.provider_registry import ProviderRegistry
+
+    ensure_providers_registered()
+    if not fingerprint:
+        return False
+    for chunk in fingerprint.split("::"):
+        source, _uf, _reference = chunk.split("|", 2)
+        provider = ProviderRegistry.get(source)
+        if not provider or not provider.is_loaded:
+            return False
+        if not getattr(provider, "_data", []):
+            return False
+    return True
+
 
 def reference_label(reference: str) -> str:
     m = REF_PATTERN.match(reference.replace("/", "-"))
@@ -20,38 +57,64 @@ def reference_label(reference: str) -> str:
 
 
 def apply_price_bases_selection(selections: list[dict[str, Any]]) -> dict[str, Any]:
-    """Carrega composições fechadas da referência/UF escolhidas no provider global."""
+    """Carrega composições fechadas de cada base habilitada no provider correspondente."""
+    global _LOADED_FINGERPRINT, _LOADED_RESULT
+
     enabled = [s for s in selections if s.get("enabled")]
     if not enabled:
         raise ValueError("Selecione ao menos uma base de preços")
 
-    primary = enabled[0]
-    source = str(primary.get("source") or "sinapi").lower()
-    uf = str(primary.get("uf") or "SP").upper()
-    reference = str(primary.get("reference") or "").replace("/", "-")
-    if not reference:
-        raise ValueError("Período da base SINAPI não informado")
+    fingerprint = _selection_fingerprint(enabled)
+    if (
+        fingerprint
+        and fingerprint == _LOADED_FINGERPRINT
+        and _LOADED_RESULT
+        and _providers_match_fingerprint(fingerprint)
+    ):
+        return dict(_LOADED_RESULT)
 
     from pricing.budget.price_bank_store import PriceBankStore
 
-    rows = PriceBankStore.for_reference(reference).closed_as_provider_rows(uf=uf)
-    if not rows:
-        raise ValueError(f"Nenhuma composição em {reference} para UF {uf}")
-
-    summary = _load_provider_rows(source, rows, reference=reference, uf=uf)
-
+    summaries: list[dict[str, Any]] = []
     labels: list[str] = []
-    for sel in enabled:
-        lbl = str(sel.get("label") or sel.get("source") or "").upper()
-        ref = reference_label(str(sel.get("reference") or ""))
-        labels.append(f"{lbl} {sel.get('uf', 'SP')} {ref}".strip())
+    source_priority: list[str] = []
 
-    return {
-        **summary,
+    for sel in enabled:
+        source = str(sel.get("source") or "sinapi").lower()
+        uf = str(sel.get("uf") or "SP").upper()
+        reference = str(sel.get("reference") or "").replace("/", "-")
+        if not reference:
+            raise ValueError(f"Período da base {source.upper()} não informado")
+
+        rows = PriceBankStore.for_reference(reference).closed_as_provider_rows(uf=uf)
+        if not rows:
+            raise ValueError(f"Nenhuma composição em {reference} para UF {uf}")
+
+        summary = _load_provider_rows(source, rows, reference=reference, uf=uf)
+        summaries.append(summary)
+        source_priority.append(source)
+
+        lbl = str(sel.get("label") or sel.get("source") or "").upper()
+        ref_key = str(sel.get("reference") or "").replace("/", "-")
+        ref = reference_label(ref_key) if REF_PATTERN.match(ref_key) else ref_key
+        labels.append(f"{lbl} {uf} {ref}".strip())
+
+    primary_sel = enabled[0]
+    primary_summary = summaries[0]
+    result = {
+        **primary_summary,
+        "summaries": summaries,
         "base_preco": " · ".join(labels),
-        "source_priority": [str(s.get("source") or "sinapi").lower() for s in enabled],
-        "primary": {"source": source, "uf": uf, "reference": reference},
+        "source_priority": source_priority,
+        "primary": {
+            "source": str(primary_sel.get("source") or "sinapi").lower(),
+            "uf": str(primary_sel.get("uf") or "SP").upper(),
+            "reference": str(primary_sel.get("reference") or "").replace("/", "-"),
+        },
     }
+    _LOADED_FINGERPRINT = fingerprint
+    _LOADED_RESULT = dict(result)
+    return result
 
 
 def _load_provider_rows(
@@ -87,6 +150,7 @@ def _load_provider_rows(
         label=f"{provider.label} {uf} {reference_label(reference)}",
         item_count=len(rows),
         path=str(dest),
+        metadata={"reference": reference, "uf": uf},
     )
 
     if provider_name == "sinapi" and rows:
@@ -94,7 +158,9 @@ def _load_provider_rows(
             from pricing.budget.composition_index import get_composition_index
 
             index = get_composition_index()
-            if len(rows) > 800:
+            if index.is_current(rows, stem):
+                pass
+            elif len(rows) > 800:
                 index.schedule_rebuild(rows, label=stem, source="sinapi")
             else:
                 index.rebuild(rows, label=stem, source="sinapi")

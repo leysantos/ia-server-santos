@@ -103,7 +103,10 @@ function GroupSection({
     const t = setTimeout(async () => {
       setSearching(true);
       try {
-        const res = await api.pricingSearchPrices(manualQ.trim(), 12);
+        const res = await api.pricingSearchPrices(manualQ.trim(), 12, {
+          sessionId: session.session_id,
+          sourcePriority: session.source_priority,
+        });
         setHits((res.results || []) as PriceHit[]);
         const pq = res.parsed_quantity ?? res.parsed?.quantity;
         setSearchParsedQty(pq != null && pq > 0 ? pq : null);
@@ -115,7 +118,7 @@ function GroupSection({
       }
     }, 350);
     return () => clearTimeout(t);
-  }, [manualQ]);
+  }, [manualQ, session.session_id, session.source_priority]);
 
   const handleCompose = async (replaceExisting = false) => {
     if (!prompt.trim()) return;
@@ -372,7 +375,7 @@ function GroupSection({
             rows={Math.min(12, Math.max(3, prompt.split("\n").length + 1))}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="(6 mes) engenheiro civil&#10;(720 h) vigia&#10;(4 m²) pintura"
+            placeholder={"base sicro\n(500 m²) pavimentação, (150 m²) pintura de ligação\n\nOu: (6 mes) engenheiro civil"}
             className={cn(budgetTextarea, "font-mono leading-relaxed")}
           />
           <div className="flex w-full flex-col gap-2 md:flex-row md:items-stretch">
@@ -476,6 +479,7 @@ function GroupSection({
         {services.length > 0 && (
           <ServiceTable
             sessionId={session.session_id}
+            sourcePriority={session.source_priority}
             services={services}
             onDelete={handleDelete}
             onQuantityChange={handleQuantityChange}
@@ -534,6 +538,7 @@ function PriceHitList({
 
 function ServiceTable({
   sessionId,
+  sourcePriority,
   services,
   onDelete,
   onQuantityChange,
@@ -541,6 +546,7 @@ function ServiceTable({
   onError,
 }: {
   sessionId: string;
+  sourcePriority?: string[];
   services: BudgetRow[];
   onDelete: (id: string) => void;
   onQuantityChange: (rowId: string, code: string, value: string) => void;
@@ -560,7 +566,10 @@ function ServiceTable({
     const t = setTimeout(async () => {
       setReplaceSearching(true);
       try {
-        const res = await api.pricingSearchPrices(replaceQ.trim(), 12);
+        const res = await api.pricingSearchPrices(replaceQ.trim(), 12, {
+          sessionId,
+          sourcePriority,
+        });
         setReplaceHits((res.results || []) as PriceHit[]);
       } catch {
         setReplaceHits([]);
@@ -569,7 +578,7 @@ function ServiceTable({
       }
     }, 350);
     return () => clearTimeout(t);
-  }, [replacingId, replaceQ]);
+  }, [replacingId, replaceQ, sessionId, sourcePriority]);
 
   const startReplace = (svc: BudgetRow) => {
     setReplacingId(svc.row_id);

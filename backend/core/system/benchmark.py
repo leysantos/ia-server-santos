@@ -89,6 +89,7 @@ def _collect_system_benchmark_uncached() -> dict[str, Any]:
             "cpu": {"percent": None},
             "memory": {"percent": None},
             "gpu": {"available": False, "percent": None},
+            "vram": {"available": False, "percent": None},
         }
 
     try:
@@ -116,6 +117,12 @@ def _collect_system_benchmark_uncached() -> dict[str, Any]:
                 **gpu,
                 "percent": gpu_percent,
             },
+            "vram": {
+                "available": gpu.get("available", False),
+                "percent": gpu.get("memory_percent"),
+                "used_mb": gpu.get("memory_used_mb"),
+                "total_mb": gpu.get("memory_total_mb"),
+            },
         }
     except Exception as exc:
         logger.warning("Benchmark collection failed: %s", exc)
@@ -125,4 +132,5 @@ def _collect_system_benchmark_uncached() -> dict[str, Any]:
             "cpu": {"percent": None},
             "memory": {"percent": None},
             "gpu": {"available": False, "percent": None},
+            "vram": {"available": False, "percent": None},
         }

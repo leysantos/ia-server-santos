@@ -46,6 +46,12 @@ _ENGINEERING_HEAVY_KEYWORDS = (
     "fundação", "fundacao", "passarela", "ponte", "viga", "laje", "pilar",
 )
 
+_REASONING_KEYWORDS = (
+    "justificar", "justificativa", "memorial", "analisar", "avaliar", "comparar",
+    "raciocínio", "raciocinio", "deduzir", "conclusão", "conclusao", "hipótese",
+    "hipotese", "premissa", "sintetizar", "síntese", "sintese",
+)
+
 _DISCIPLINE_HEAVY = frozenset(
     {"ESTRUTURAL", "GEOTECNIA", "ORÇAMENTO", "INFRAESTRUTURA", "TRANSPORTES"}
 )
@@ -164,40 +170,69 @@ class ModelRouter:
             # Código / fallback rápido
             "code_generation": "deepseek-coder:latest",
             "code_understanding": "qwen2.5-coder:latest",
-            # Engenharia — híbrido VRAM+RAM
-            "engineering_primary": "gemma3:12b",
+            # Engenharia — gemma4 (primário) + deepseek-r1 (raciocínio) + gemma3 (secundário)
+            "engineering_primary": "gemma4:latest",
+            "engineering_reasoning": "deepseek-r1:14b",
+            "engineering_secondary": "gemma3:12b",
             "engineering_fallback": "qwen2.5-coder:latest",
             "rag_embedding": "nomic-embed-text",
-            "orchestration_synthesis": "gemma3:12b",
-            "aed_simulation": "gemma3:12b",
-            "aed_evaluation": "gemma3:12b",
+            "orchestration_synthesis": "deepseek-r1:14b",
+            "platform_evaluation": "deepseek-r1:14b",
+            "aed_simulation": "gemma4:latest",
+            "aed_evaluation": "deepseek-r1:14b",
             # Orçamento WBS / pricing
             "budget_wbs_light": "mistral:7b",
             "budget_wbs": "qwen2.5-coder:latest",
-            "budget_wbs_high": "gemma3:12b",
+            "budget_wbs_high": "deepseek-r1:14b",
             "budget_pricing_light": "phi3:mini",
             "budget_pricing": "mistral:7b",
             "budget_pricing_high": "qwen2.5-coder:latest",
         }
 
         self._fallback_map: dict[str, str] = {
-            "engineering_primary": "engineering_fallback",
+            "engineering_primary": "engineering_reasoning",
+            "engineering_reasoning": "engineering_secondary",
+            "engineering_secondary": "engineering_fallback",
             "chat_natural": "chat_simple",
-            "aed_simulation": "engineering_fallback",
-            "orchestration_synthesis": "engineering_fallback",
+            "aed_simulation": "engineering_reasoning",
+            "aed_evaluation": "engineering_secondary",
+            "orchestration_synthesis": "engineering_secondary",
+            "platform_evaluation": "engineering_secondary",
             "budget_wbs_high": "budget_wbs",
             "budget_wbs": "budget_wbs_light",
             "budget_pricing_high": "budget_pricing",
             "budget_pricing": "budget_pricing_light",
         }
 
+        self._fallback_chains: dict[str, tuple[str, ...]] = {
+            "engineering_primary": (
+                "engineering_reasoning",
+                "engineering_secondary",
+                "engineering_fallback",
+            ),
+            "engineering_reasoning": ("engineering_secondary", "engineering_fallback"),
+            "engineering_secondary": ("engineering_fallback",),
+            "orchestration_synthesis": ("engineering_secondary", "engineering_fallback"),
+            "platform_evaluation": ("engineering_secondary", "engineering_fallback"),
+            "aed_simulation": (
+                "engineering_reasoning",
+                "engineering_secondary",
+                "engineering_fallback",
+            ),
+            "aed_evaluation": ("engineering_secondary", "engineering_fallback"),
+            "budget_wbs_high": ("budget_wbs", "budget_wbs_light"),
+        }
+
         self._legacy_map: dict[str, str] = {
             "chat_simple": settings.OLLAMA_CHAT_MODEL,
             "chat_natural": settings.OLLAMA_CHAT_MODEL,
             "engineering_primary": settings.OLLAMA_LLM_MODEL,
+            "engineering_reasoning": settings.OLLAMA_LLM_MODEL,
+            "engineering_secondary": settings.OLLAMA_LLM_FALLBACK_MODEL,
             "engineering_fallback": settings.OLLAMA_LLM_FALLBACK_MODEL,
             "rag_embedding": settings.OLLAMA_EMBED_MODEL,
             "orchestration_synthesis": settings.OLLAMA_LLM_MODEL,
+            "platform_evaluation": settings.OLLAMA_LLM_MODEL,
             "aed_simulation": settings.OLLAMA_LLM_MODEL,
             "aed_evaluation": settings.OLLAMA_LLM_MODEL,
             "code_generation": settings.OLLAMA_LLM_FALLBACK_MODEL,
@@ -256,9 +291,15 @@ class ModelRouter:
         return "budget_pricing_light"
 
     def resolve_engineering_task_type(self, complexity: str) -> str:
-        if complexity in ("HIGH", "MEDIUM"):
+        if complexity == "HIGH":
             return "engineering_primary"
+        if complexity == "MEDIUM":
+            return "engineering_reasoning"
         return "engineering_fallback"
+
+    def _needs_reasoning(self, text: str) -> bool:
+        lower = (text or "").lower()
+        return any(k in lower for k in _REASONING_KEYWORDS)
 
     def get_optimal_model(
         self,
@@ -308,14 +349,16 @@ class ModelRouter:
             fb = settings.OLLAMA_LLM_FALLBACK_MODEL
             return [fb] if fb != primary else []
 
-        resolved = self._resolve_task_type(task_type, {})
+        resolved = self._resolve_task_type(task_type, context)
         fallbacks: list[str] = []
-        fb_key = self._fallback_map.get(resolved)
-        if fb_key and fb_key in self.model_map:
-            fallbacks.append(self.model_map[fb_key])
-        if resolved == "engineering_primary":
-            fallbacks.append(self.model_map["engineering_fallback"])
-        elif resolved == "chat_natural":
+        chain = self._fallback_chains.get(resolved)
+        if chain:
+            fallbacks.extend(self.model_map[k] for k in chain if k in self.model_map)
+        else:
+            fb_key = self._fallback_map.get(resolved)
+            if fb_key and fb_key in self.model_map:
+                fallbacks.append(self.model_map[fb_key])
+        if resolved == "chat_natural":
             fallbacks.append(self.model_map["chat_simple"])
         # dedupe preserving order
         seen: set[str] = set()
@@ -361,11 +404,14 @@ class ModelRouter:
         *,
         complexity: Optional[str] = None,
     ) -> str:
-        if complexity == "HIGH" or (discipline == "ESTRUTURAL" and self.is_engineering_task(text, discipline)):
-            if complexity == "HIGH":
-                return "engineering_primary"
-        if self.is_engineering_task(text, discipline):
+        if complexity == "HIGH":
             return "engineering_primary"
+        if complexity == "MEDIUM":
+            return "engineering_reasoning"
+        if self.is_engineering_task(text, discipline):
+            if self._needs_reasoning(text) or discipline in _DISCIPLINE_HEAVY:
+                return "engineering_reasoning"
+            return "engineering_fallback"
         return "engineering_fallback"
 
     def record_inference(

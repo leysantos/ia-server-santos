@@ -84,7 +84,7 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-slate-800/80 bg-slate-950/90 backdrop-blur-xl">
+    <aside className="flex h-full w-56 shrink-0 flex-col border-r border-slate-800/80 bg-slate-950/90 backdrop-blur-xl md:w-64">
       <ShellHeader>
         <Link href="/" className="group flex min-w-0 items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 shadow-lg shadow-cyan-500/20 ring-1 ring-cyan-400/20">

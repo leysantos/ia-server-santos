@@ -227,6 +227,12 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
               scheduleContentUpdate(assistantId, accumulated, streamMeta);
             }
 
+            if (event.type === "error") {
+              const errMsg = String(event.data.message ?? "Erro no streaming");
+              streamMeta = { streaming: true, streamStatus: errMsg };
+              flushSync(() => updateAssistant(assistantId, { meta: streamMeta }));
+            }
+
             if (event.type === "done") {
               finalResponse = event.data as unknown as ChatResponse;
               accumulated = finalResponse.result || accumulated;

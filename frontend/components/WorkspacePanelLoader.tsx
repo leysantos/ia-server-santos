@@ -18,7 +18,7 @@ function WorkspacePanelShell() {
     <div
       className={cn(
         "relative flex h-full shrink-0 flex-col border-r border-slate-800/80 bg-slate-950/95 transition-[width] duration-300 ease-in-out",
-        collapsed ? "w-0 overflow-hidden border-r-0" : "w-72"
+        collapsed ? "w-0 overflow-hidden border-r-0" : "w-64 lg:w-72"
       )}
       aria-hidden={collapsed && hydrated}
     >
@@ -31,7 +31,7 @@ export default function WorkspacePanelLoader() {
   return (
     <Suspense
       fallback={
-        <aside className="flex w-72 shrink-0 items-center justify-center border-r border-slate-800/80 bg-slate-950/95">
+        <aside className="flex w-64 shrink-0 items-center justify-center border-r border-slate-800/80 bg-slate-950/95 lg:w-72">
           <LoadingSpinner size="sm" />
         </aside>
       }

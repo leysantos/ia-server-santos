@@ -23,10 +23,25 @@ def get_llm_model_override() -> Optional[str]:
     return _llm_override.get()
 
 
+def resolve_llm_model(explicit: Optional[str] = None) -> Optional[str]:
+    """
+    Modelo efetivo: parâmetro explícito (SSE/stream) tem prioridade sobre ContextVar.
+    ContextVar não funciona em generators SSE (Starlette usa thread pool por chunk).
+    """
+    normalized = normalize_llm_model_choice(explicit)
+    if normalized is not None:
+        return normalized
+    return get_llm_model_override()
+
+
 @contextmanager
 def llm_model_scope(model: Optional[str]) -> Iterator[None]:
     token = _llm_override.set(normalize_llm_model_choice(model))
     try:
         yield
     finally:
-        _llm_override.reset(token)
+        try:
+            _llm_override.reset(token)
+        except ValueError:
+            # Generator SSE — token criado em outro contexto/thread (Starlette thread pool)
+            pass

@@ -62,6 +62,26 @@ def test_benchmark_cache_returns_cached_flag():
     assert second.get("cached") is True
 
 
+def test_benchmark_includes_vram_metric():
+    from core.system.benchmark import collect_system_benchmark
+
+    with patch("core.system.benchmark._read_gpu_stats") as mock_gpu:
+        mock_gpu.return_value = {
+            "available": True,
+            "percent": 42.0,
+            "memory_percent": 75.5,
+            "memory_used_mb": 6040.0,
+            "memory_total_mb": 8192.0,
+        }
+        result = collect_system_benchmark(use_cache=False)
+
+    assert result["vram"]["available"] is True
+    assert result["vram"]["percent"] == 75.5
+    assert result["vram"]["used_mb"] == 6040.0
+    assert result["vram"]["total_mb"] == 8192.0
+    assert result["gpu"]["percent"] == 42.0
+
+
 def test_track_sync_job_context_manager():
     from core.runtime.job_tracking import track_sync_job
 

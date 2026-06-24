@@ -216,7 +216,7 @@ def parse_ppd_sheet(ws, sheet_name: str = "PLANILHA") -> tuple[BudgetProjectMeta
                 total_price=total,
                 total_price_semd=total_semd,
                 source_code=source_code.strip(),
-                source_base=metadata.base_preco.split("/")[0] if metadata.base_preco else "SINAPI",
+                source_base=_service_source_base(source_code.strip(), metadata),
                 row_type=ROW_TYPE_SERVICO,
                 item_type=BudgetItemType.COMPOSITION,
                 calculation_note=pending_memory or "",
@@ -280,12 +280,11 @@ def parse_ppd_workbook(path: str | Path) -> tuple[BudgetProjectMetadata, list[Bu
         _merge_mcq_memories(wb[sheet_mcq], items)
 
     base_count = 0
-    for name in wb.sheetnames:
-        if name.lower().startswith("base"):
-            base_count = _load_base_sheet(wb[name])
-            info["base_sheet"] = name
-            info["base_items"] = base_count
-            break
+    base_sheet = pick_base_sheet_name(wb.sheetnames)
+    if base_sheet:
+        base_count = _load_base_sheet(wb[base_sheet])
+        info["base_sheet"] = base_sheet
+        info["base_items"] = base_count
 
     wb.close()
     return metadata, items, info
@@ -367,23 +366,63 @@ def _is_valid_price_base_code(code: str) -> bool:
     return bool(_PRICE_BASE_CODE_RE.match(raw))
 
 
-def extract_price_base_rows(path: str | Path) -> list[dict]:
+def _service_source_base(source_code: str, metadata: BudgetProjectMetadata) -> str:
+    """Fonte da composição no orçamento — regional SEMINF não usa banco SINAPI."""
+    from pricing.budget.seminf_base_parser import is_seminf_regional_code
+
+    code = (source_code or "").strip()
+    if is_seminf_regional_code(code):
+        return "DP-SEMINF"
+    if metadata.base_preco:
+        first = metadata.base_preco.split("/")[0].strip()
+        if first:
+            return first
+    return "SINAPI"
+
+
+def pick_base_sheet_name(sheet_names: list[str]) -> str | None:
+    """Escolhe aba Base — prefere cópia de trabalho sobre ORIGINAL."""
+    bases = [n for n in sheet_names if n.lower().startswith("base")]
+    if not bases:
+        return None
+    lowered = {n: n.lower() for n in bases}
+    for name, low in lowered.items():
+        if "copia" in low or "copy" in low:
+            return name
+    non_original = [n for n in bases if "original" not in lowered[n]]
+    if non_original:
+        return non_original[0]
+    return bases[0]
+
+
+def _find_tp2_col(headers: list[str]) -> int | None:
+    for idx, cell in enumerate(headers):
+        if _str_val(cell).lower() == "tp2":
+            return idx
+    return None
+
+
+def extract_price_base_rows(path: str | Path, *, sheet_name: str | None = None) -> list[dict]:
     """Retorna linhas da aba Base para carregar no provider SINAPI."""
     import openpyxl
 
     path = Path(path)
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-    base_ws = None
-    for name in wb.sheetnames:
-        if name.lower().startswith("base"):
-            base_ws = wb[name]
-            break
+    base_name = sheet_name or pick_base_sheet_name(wb.sheetnames)
+    base_ws = wb[base_name] if base_name and base_name in wb.sheetnames else None
     if not base_ws:
         wb.close()
         return []
 
+    rows = list(base_ws.iter_rows(values_only=True))
+    header_idx = _find_base_header_row(rows)
+    data_rows = rows[header_idx + 1 :] if header_idx is not None else rows
+    header_row = rows[header_idx] if header_idx is not None else ()
+    headers = [_str_val(c) for c in header_row[:12]]
+    tp2_i = _find_tp2_col(headers)
+
     items: list[dict] = []
-    for row in base_ws.iter_rows(values_only=True):
+    for row in data_rows:
         code = _str_val(row[0] if row else "")
         if not _is_valid_price_base_code(code):
             continue
@@ -391,14 +430,32 @@ def extract_price_base_rows(path: str | Path) -> list[dict]:
         unit = _str_val(row[2] if len(row) > 2 else "un")
         price_com = _float_val(row[3] if len(row) > 3 else 0)
         price_sem = _float_val(row[4] if len(row) > 4 else price_com)
+        tp2 = ""
+        if tp2_i is not None and len(row) > tp2_i:
+            tp2 = _str_val(row[tp2_i])
         items.append(
             {
                 "code": code,
                 "description": desc,
                 "unit": unit,
                 "price": price_com,
-                "metadata": {"price_sem_desoneracao": price_sem, "source": "PPD_BASE"},
+                "metadata": {
+                    "price_sem_desoneracao": price_sem,
+                    "source": "PPD_BASE",
+                    "base_sheet": base_name,
+                    "tp2": tp2,
+                },
             }
         )
     wb.close()
     return items
+
+
+def _find_base_header_row(rows: list[tuple[Any, ...]]) -> int | None:
+    for idx, row in enumerate(rows[:30]):
+        cells = [_str_val(c).upper() for c in row[:8]]
+        if not cells:
+            continue
+        if cells[0] in ("CODIGO", "CÓDIGO") and any("DESCR" in c for c in cells):
+            return idx
+    return None

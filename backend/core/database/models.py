@@ -691,9 +691,11 @@ class BudgetDocument(Base):
     )
 
     def to_summary(self) -> dict:
+        project = (self.payload or {}).get("project") or {}
         return {
             "id": str(self.id),
             "title": self.title,
+            "orcamento": str(project.get("orcamento") or ""),
             "project_id": str(self.project_id) if self.project_id else None,
             "session_id": self.session_id,
             "grand_total": self.grand_total,

@@ -38,7 +38,7 @@ def test_case1_steel_industrial_40m():
     assert norms == ["NBR 8800", "NBR 14762", "NBR 6123"]
 
     model = ModelSelector().select(result["system"], result["complexity"])
-    assert model == "gemma3:12b"
+    assert model == "gemma4:latest"
 
 
 def test_case2_residential_concrete():
@@ -85,7 +85,7 @@ def test_engine_full_pipeline():
     )
 
     assert ctx.system == "STEEL_STRUCTURE"
-    assert ctx.model == "gemma3:12b"
+    assert ctx.model == "gemma4:latest"
     assert "NBR 8800" in ctx.norms
     assert "NBR 8800 trechos relevantes" in prompt
 
@@ -94,7 +94,7 @@ def test_dispatch_adapter_success():
     agent = MagicMock()
     agent.use_rag = False
     agent.retrieve_context.return_value = ""
-    agent.llm_client.generate.return_value = ("Resposta técnica SIE", "gemma3:12b")
+    agent.llm_client.generate.return_value = ("Resposta técnica SIE", "gemma4:latest")
     agent.build_extra.return_value = {"normas_base": ["NBR 8800"]}
     agent.build_response.return_value = {
         "agent": "estruturas_agent",
@@ -112,7 +112,7 @@ def test_dispatch_adapter_success():
     assert result is not None
     agent.llm_client.generate.assert_called_once()
     call_kwargs = agent.llm_client.generate.call_args
-    assert call_kwargs.kwargs.get("model") == "gemma3:12b" or call_kwargs[1].get("model") == "gemma3:12b"
+    assert call_kwargs.kwargs.get("model") == "gemma4:latest" or call_kwargs[1].get("model") == "gemma4:latest"
 
 
 def test_dispatch_adapter_fallback_on_failure():

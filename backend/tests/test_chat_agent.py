@@ -41,6 +41,37 @@ def test_post_format_strips_think_blocks():
     assert post_format_response(raw) == "Resposta limpa."
 
 
+def test_post_format_strips_unclosed_think():
+    think_open = "<" + "think" + ">"
+    think_close = "</" + "think" + ">"
+    raw_open = f"{think_open}Raciocínio interrompido"
+    assert post_format_response(raw_open) == ""
+    raw_closed = f"{think_open}ok{think_close}\n\n## Pontos fracos\n\nLacunas reais."
+    out = post_format_response(raw_closed)
+    assert "Raciocínio" not in out
+    assert "Pontos fracos" in out
+
+
+def test_iter_visible_llm_tokens_filters_think():
+    from agents.chat import iter_visible_llm_tokens
+
+    think_open = "<" + "think" + ">"
+    think_close = "</" + "think" + ">"
+
+    def fake_stream():
+        yield think_open, "deepseek-r1:14b"
+        yield "reasoning...\n", "deepseek-r1:14b"
+        yield think_close, "deepseek-r1:14b"
+        yield "\n\n## Pontos fortes\n\n", "deepseek-r1:14b"
+        yield "Item A", "deepseek-r1:14b"
+
+    tokens = list(iter_visible_llm_tokens(fake_stream(), max_chars=8000))
+    merged = "".join(tokens)
+    assert "reasoning" not in merged.lower()
+    assert "## Pontos fortes" in merged
+    assert merged.endswith("Item A")
+
+
 def test_build_chat_extra_schema():
     from agents.chat import ChatIntent
 

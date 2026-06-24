@@ -20,10 +20,15 @@ def test_legacy_mode_uses_settings():
 def test_router_enabled_model_map():
     with patch.object(settings_mod, "USE_MODEL_ROUTER", True):
         router = ModelRouter()
-        assert router.get_model("engineering_primary") == "gemma3:12b"
+        assert router.get_model("engineering_primary") == "gemma4:latest"
+        assert router.get_model("engineering_reasoning") == "deepseek-r1:14b"
+        assert router.get_model("engineering_secondary") == "gemma3:12b"
         assert router.get_model("chat_natural") == "mistral:7b"
         assert router.get_model("chat_simple") == "phi3:mini"
-        assert router.get_model("aed_simulation") == "gemma3:12b"
+        assert router.get_model("aed_simulation") == "gemma4:latest"
+        assert router.get_model("aed_evaluation") == "deepseek-r1:14b"
+        assert router.get_model("orchestration_synthesis") == "deepseek-r1:14b"
+        assert router.get_model("budget_wbs_high") == "deepseek-r1:14b"
 
 
 def test_is_light_task():
@@ -53,7 +58,17 @@ def test_engineering_fallback_chain():
     with patch.object(settings_mod, "USE_MODEL_ROUTER", True):
         router = ModelRouter()
         fallbacks = router.get_fallback_models("engineering_primary")
-        assert "qwen2.5-coder" in fallbacks[0]
+        assert fallbacks[0] == "deepseek-r1:14b"
+        assert "gemma3:12b" in fallbacks
+        assert "qwen2.5-coder" in fallbacks[-1]
+
+
+def test_engineering_reasoning_medium_complexity():
+    with patch.object(settings_mod, "USE_MODEL_ROUTER", True):
+        router = ModelRouter()
+        task = router.resolve_engineering_task_type("MEDIUM")
+        assert task == "engineering_reasoning"
+        assert router.get_model(task) == "deepseek-r1:14b"
 
 
 def test_chat_natural_fallback_chain():
@@ -72,7 +87,7 @@ def test_norms_steel_high_complexity_context():
             complexity="HIGH",
         )
         model = router.get_model(task, {"complexity": "HIGH", "discipline": "ESTRUTURAL"})
-        assert model == "gemma3:12b"
+        assert model == "gemma4:latest"
 
 
 def test_routed_generate_records_inference():
@@ -133,6 +148,7 @@ if __name__ == "__main__":
     test_is_engineering_task()
     test_resolve_chat_task()
     test_engineering_fallback_chain()
+    test_engineering_reasoning_medium_complexity()
     test_chat_natural_fallback_chain()
     test_norms_steel_high_complexity_context()
     test_routed_generate_records_inference()
