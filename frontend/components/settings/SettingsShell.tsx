@@ -36,8 +36,8 @@ function SettingsNav({
             className={cn(
               "flex items-start gap-3 rounded-xl px-3 py-2.5 text-left transition",
               active
-                ? "bg-cyan-500/15 text-cyan-100 ring-1 ring-cyan-500/30"
-                : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+                ? "bg-brand-500/15 text-brand-100 ring-1 ring-brand-500/30"
+                : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
             )}
           >
             <span className={cn("mt-0.5", active ? "text-cyan-400" : "text-slate-500")}>

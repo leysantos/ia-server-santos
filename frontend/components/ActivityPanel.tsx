@@ -15,7 +15,7 @@ const SOURCE_LABELS: Record<string, string> = {
 };
 
 const STATUS_DOT: Record<string, string> = {
-  running: "bg-cyan-400 animate-pulse",
+  running: "bg-brand-400 animate-pulse",
   done: "bg-emerald-400",
   error: "bg-red-400",
 };
@@ -30,17 +30,17 @@ export default function ActivityPanel() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full bg-slate-900/95 px-4 py-2 text-sm text-slate-200 shadow-lg ring-1 ring-slate-700/80 backdrop-blur"
+        className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border border-white/5 bg-surface-card px-4 py-2 text-sm text-slate-200 shadow-lg backdrop-blur"
       >
-        {running > 0 && <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />}
+        {running > 0 && <span className="h-2 w-2 rounded-full bg-brand-400 animate-pulse" />}
         Atividade ({entries.length})
       </button>
     );
   }
 
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col border-l border-slate-800/80 bg-slate-950/95 backdrop-blur-xl">
-      <div className="flex items-center justify-between border-b border-slate-800/80 px-4 py-3">
+    <aside className="flex h-full w-80 shrink-0 flex-col border-l border-white/5 bg-surface/95 backdrop-blur-xl">
+      <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
         <div>
           <h2 className="text-sm font-semibold text-white">Atividade</h2>
           <p className="text-xs text-slate-500">Pipelines em tempo real</p>
@@ -73,11 +73,11 @@ export default function ActivityPanel() {
             {entries.map((entry) => (
               <li
                 key={entry.id}
-                className="rounded-lg bg-slate-900/60 px-3 py-2 ring-1 ring-slate-800/80"
+                className="rounded-lg border border-white/5 bg-surface-card px-3 py-2"
               >
                 <div className="mb-1 flex items-center gap-2">
                   <span className={cn("h-2 w-2 shrink-0 rounded-full", STATUS_DOT[entry.status])} />
-                  <span className="text-xs font-medium text-cyan-300/90">
+                  <span className="text-xs font-medium text-brand-300/90">
                     {SOURCE_LABELS[entry.source] ?? entry.source}
                   </span>
                   {entry.phase && (
@@ -93,7 +93,7 @@ export default function ActivityPanel() {
                 {entry.projectId && (
                   <Link
                     href={`/projects/${entry.projectId}/activity`}
-                    className="mt-1 inline-block text-xs text-cyan-500 hover:text-cyan-400"
+                    className="mt-1 inline-block text-xs text-brand-500 hover:text-brand-400"
                   >
                     Ver timeline do projeto
                   </Link>
@@ -104,10 +104,10 @@ export default function ActivityPanel() {
         )}
       </div>
 
-      <div className="border-t border-slate-800/80 px-4 py-2">
+      <div className="border-t border-white/5 px-4 py-2">
         <Link
           href="/console"
-          className="text-xs text-slate-500 hover:text-cyan-400"
+          className="text-xs text-slate-500 hover:text-brand-400"
         >
           Abrir Orchestrator Console →
         </Link>

@@ -48,7 +48,7 @@ export default function ChatBox({
   };
 
   return (
-    <ShellFooter className="bg-slate-950/90 backdrop-blur-xl" innerClassName="items-start">
+    <ShellFooter className="bg-surface/90 backdrop-blur-xl" innerClassName="items-start">
       <form onSubmit={handleSubmit} className="mx-auto w-full max-w-4xl">
         <div className="flex w-full flex-col gap-3.5">
           <div className="flex min-h-[1.75rem] flex-wrap items-center justify-center gap-x-6 gap-y-2 sm:justify-start">
@@ -57,7 +57,7 @@ export default function ChatBox({
                 type="checkbox"
                 checked={useRag}
                 onChange={(e) => setUseRag(e.target.checked)}
-                className="rounded border-slate-600 bg-slate-800 text-cyan-500 focus:ring-cyan-500/50"
+                className="rounded border-white/10 bg-surface-card text-brand-500 focus:ring-brand-500/50"
               />
               RAG v2 (normas NBR)
             </label>
@@ -66,7 +66,7 @@ export default function ChatBox({
                 type="checkbox"
                 checked={persist}
                 onChange={(e) => setPersist(e.target.checked)}
-                className="rounded border-slate-600 bg-slate-800 text-cyan-500 focus:ring-cyan-500/50"
+                className="rounded border-white/10 bg-surface-card text-brand-500 focus:ring-brand-500/50"
               />
               Salvar no histórico
             </label>
@@ -82,7 +82,7 @@ export default function ChatBox({
             className="px-1"
           />
 
-          <div className="flex items-center gap-3 rounded-2xl bg-slate-900/90 p-2 ring-1 ring-slate-700/80 focus-within:ring-cyan-500/40">
+          <div className="flex items-center gap-3 rounded-2xl border border-white/5 bg-surface-card p-2 focus-within:border-brand-500/40 focus-within:ring-1 focus-within:ring-brand-500/30">
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
@@ -95,7 +95,7 @@ export default function ChatBox({
             <button
               type="submit"
               disabled={loading || !text.trim()}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-600 text-white shadow-lg shadow-cyan-600/20 transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-600 text-white shadow-brand-sm transition hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-40"
               aria-label="Enviar mensagem"
             >
               {loading ? (

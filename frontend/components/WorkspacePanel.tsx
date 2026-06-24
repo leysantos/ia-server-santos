@@ -288,13 +288,13 @@ export default function WorkspacePanel() {
   if (!showPanel) return null;
 
   return (
-    <aside className="flex h-full min-h-0 w-full flex-col bg-slate-950/95">
+    <aside className="flex h-full min-h-0 w-full flex-col border-r border-white/5 bg-surface/95 backdrop-blur-xl">
       <ShellHeader innerClassName="flex-col justify-center gap-2.5 py-3">
         <div className="flex w-full items-center gap-2">
           <button
             type="button"
             onClick={() => startNewChat(activeProjectId ?? undefined)}
-            className="flex min-h-[2.5rem] flex-1 items-center justify-center gap-2 rounded-xl bg-cyan-600/90 px-3 text-sm font-medium text-white shadow-lg shadow-cyan-600/20 transition hover:bg-cyan-500"
+            className="flex min-h-[2.5rem] flex-1 items-center justify-center gap-2 rounded-xl bg-brand-600 px-3 text-sm font-medium text-white shadow-brand-sm transition hover:bg-brand-500"
           >
             <span className="text-base leading-none">+</span>
             Nova conversa
@@ -302,7 +302,7 @@ export default function WorkspacePanel() {
           <button
             type="button"
             onClick={() => openBudget(activeProjectId ?? undefined)}
-            className="flex min-h-[2.5rem] shrink-0 items-center justify-center rounded-xl bg-slate-800 px-3 text-sm text-slate-300 ring-1 ring-slate-700 transition hover:bg-slate-700"
+            className="flex min-h-[2.5rem] shrink-0 items-center justify-center rounded-xl border border-white/5 bg-surface-card px-3 text-sm text-slate-300 transition hover:bg-surface-elevated"
             title="Orçamento do projeto"
           >
             ₢
@@ -324,7 +324,7 @@ export default function WorkspacePanel() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Buscar conversas e projetos..."
-            className="w-full rounded-xl border border-slate-700/80 bg-slate-900/80 py-2 pl-3 pr-8 text-sm text-white placeholder:text-slate-500 focus:border-cyan-500/60 focus:outline-none focus:ring-1 focus:ring-cyan-500/30"
+            className="w-full rounded-xl border border-white/5 bg-surface-card py-2 pl-3 pr-8 text-sm text-white placeholder:text-slate-500 focus:border-brand-500/60 focus:outline-none focus:ring-1 focus:ring-brand-500/30"
           />
           {searchQuery && (
             <button
@@ -356,19 +356,19 @@ export default function WorkspacePanel() {
               <button
                 type="button"
                 onClick={() => setCreatingProject((v) => !v)}
-                className="text-xs text-cyan-400 hover:text-cyan-300"
+                className="text-xs text-brand-400 hover:text-brand-300"
               >
                 {creatingProject ? "Cancelar" : "+ Novo"}
               </button>
             </div>
 
             {creatingProject && (
-              <div className="mb-3 space-y-2 rounded-xl bg-slate-900/80 p-2 ring-1 ring-slate-800">
+              <div className="app-card mb-3 space-y-2 p-2">
                 <input
                   value={newProjectName}
                   onChange={(e) => setNewProjectName(e.target.value)}
                   placeholder="Nome do projeto"
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-white focus:border-cyan-500 focus:outline-none"
+                  className="w-full rounded-lg border border-white/5 bg-surface px-2 py-1.5 text-sm text-white focus:border-brand-500 focus:outline-none"
                   onKeyDown={(e) => e.key === "Enter" && handleCreateProject()}
                 />
                 <button

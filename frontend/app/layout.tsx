@@ -34,7 +34,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-BR">
-      <body className={`${geistSans.variable} min-h-screen bg-slate-950 font-sans antialiased`}>
+      <body className={`${geistSans.variable} min-h-screen bg-surface font-sans antialiased`}>
         <WorkspaceShellProvider>
           <ModelsStatusProvider>
             <ActivityProvider>
@@ -45,7 +45,7 @@ export default function RootLayout({
                   <div className="flex h-dvh overflow-hidden">
                     <Sidebar />
                     <WorkspacePanelLoader />
-                    <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+                    <main className="app-ambient relative flex min-w-0 flex-1 flex-col overflow-hidden bg-surface">
                       <ChatStreamBanner />
                       <VisionJobBanner />
                       <NormBulkImportBanner />

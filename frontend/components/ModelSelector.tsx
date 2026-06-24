@@ -69,7 +69,7 @@ export default function ModelSelector({ value, onChange, className, id }: ModelS
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={loading && models.length === 0}
-        className="h-8 min-w-0 flex-1 rounded-lg bg-slate-900 px-2 text-xs text-slate-200 ring-1 ring-slate-600 focus:outline-none focus:ring-cyan-500/40 disabled:opacity-50 sm:max-w-xs sm:flex-none"
+        className="h-8 min-w-0 flex-1 rounded-lg border border-white/5 bg-surface-card px-2 text-xs text-slate-200 focus:outline-none focus:border-brand-500/40 focus:ring-1 focus:ring-brand-500/30 disabled:opacity-50 sm:max-w-xs sm:flex-none"
       >
         {options.map((opt) => (
           <option key={opt.value} value={opt.value}>

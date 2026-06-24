@@ -84,14 +84,14 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="flex h-full w-56 shrink-0 flex-col border-r border-slate-800/80 bg-slate-950/90 backdrop-blur-xl md:w-64">
+    <aside className="flex h-full w-56 shrink-0 flex-col border-r border-white/5 bg-surface/90 backdrop-blur-xl md:w-64">
       <ShellHeader>
         <Link href="/" className="group flex min-w-0 items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 shadow-lg shadow-cyan-500/20 ring-1 ring-cyan-400/20">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-brand-600 shadow-brand-sm ring-1 ring-brand-400/20">
             <span className="text-sm font-bold text-white">IA</span>
           </div>
           <div className="min-w-0">
-            <p className="truncate font-semibold text-white transition-colors group-hover:text-cyan-300">
+            <p className="truncate font-semibold text-white transition-colors group-hover:text-brand-300">
               IA Server Santos
             </p>
             <p className="truncate text-xs text-slate-500">Engenharia SaaS</p>
@@ -109,11 +109,11 @@ export default function Sidebar() {
               className={cn(
                 "flex items-center gap-3 rounded-xl px-3 py-3 transition-all",
                 active
-                  ? "bg-cyan-500/10 text-cyan-300 ring-1 ring-cyan-500/30"
-                  : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+                  ? "bg-brand-500/10 text-brand-300 ring-1 ring-brand-500/30"
+                  : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
               )}
             >
-              <span className={active ? "text-cyan-400" : "text-slate-500"}>{item.icon}</span>
+              <span className={active ? "text-brand-400" : "text-slate-500"}>{item.icon}</span>
               <div className="min-w-0">
                 <p className="text-sm font-medium">{item.label}</p>
                 <p className="text-xs opacity-60">{item.description}</p>
@@ -123,14 +123,14 @@ export default function Sidebar() {
         })}
       </nav>
 
-      <div className="shrink-0 border-t border-slate-800/80 bg-slate-950/95 px-5 py-3">
+      <div className="shrink-0 border-t border-white/5 bg-surface/95 px-5 py-3">
         <SystemBenchmarkPanel />
       </div>
 
       <ShellFooter innerClassName="items-stretch">
-        <div className="w-full rounded-xl bg-slate-900/80 p-3 ring-1 ring-slate-800">
+        <div className="app-card w-full p-3">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-800 text-xs font-medium text-slate-300 ring-1 ring-slate-700/80">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface-elevated text-xs font-medium text-slate-300 ring-1 ring-white/10">
               U
             </div>
             <div className="min-w-0 flex-1">

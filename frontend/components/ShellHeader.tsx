@@ -27,7 +27,7 @@ export default function ShellHeader({
   return (
     <header
       className={cn(
-        "shell-header shrink-0 border-b border-slate-800/80 bg-slate-950/50 backdrop-blur-xl",
+        "shell-header shrink-0 border-b border-white/5 bg-surface/80 backdrop-blur-xl",
         className
       )}
     >
@@ -57,7 +57,7 @@ export function ShellFooter({ children, className, innerClassName }: ShellFooter
   return (
     <footer
       className={cn(
-        "shell-footer shrink-0 border-t border-slate-800/80 bg-slate-950/50 backdrop-blur-xl",
+        "shell-footer shrink-0 border-t border-white/5 bg-surface/80 backdrop-blur-xl",
         className
       )}
     >

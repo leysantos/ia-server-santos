@@ -18,7 +18,7 @@ export default function LoadingSpinner({
   return (
     <div className="flex items-center gap-3 text-slate-400">
       <div
-        className={`${sizeMap[size]} animate-spin rounded-full border-slate-600 border-t-cyan-400`}
+        className={`${sizeMap[size]} animate-spin rounded-full border-slate-600 border-t-brand-400`}
       />
       {label && <span className="text-sm">{label}</span>}
     </div>

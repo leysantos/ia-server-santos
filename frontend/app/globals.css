@@ -3,8 +3,13 @@
 @tailwind utilities;
 
 :root {
-  --background: #020617;
-  --foreground: #f8fafc;
+  --background: #0a0a0b;
+  --foreground: #fafafa;
+  --surface: #0a0a0b;
+  --surface-elevated: #111113;
+  --surface-card: #161618;
+  --app-border: #27272a;
+  --muted: #71717a;
   --shell-header-h: 7.5rem;
   --shell-footer-h: 9.5rem;
   --shell-safe-bottom: 2rem;
@@ -17,7 +22,6 @@
   padding-right: var(--shell-gutter-x);
 }
 
-/* Cabeçalhos com título + modelos WSL: altura flexível em telas estreitas */
 .shell-header:has(.shell-header-split) {
   min-height: auto;
   padding-top: 0.75rem;
@@ -48,12 +52,52 @@
 }
 
 .panel-collapse-btn {
-  @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-700/80 bg-slate-900/90 text-slate-400 shadow-sm transition-all hover:border-cyan-500/40 hover:bg-slate-800 hover:text-cyan-300;
+  @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-surface-card text-slate-400 shadow-sm transition-all hover:border-brand-500/40 hover:bg-surface-elevated hover:text-brand-300;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
+}
+
+::selection {
+  @apply bg-brand-500/30 text-white;
+}
+
+/* Ambient glow — mesmo efeito sutil da landing */
+.app-ambient {
+  position: relative;
+  isolation: isolate;
+}
+
+.app-ambient::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(14, 165, 233, 0.1), transparent),
+    radial-gradient(ellipse 50% 35% at 100% 0%, rgba(14, 165, 233, 0.05), transparent);
+}
+
+.app-ambient > * {
+  position: relative;
+  z-index: 1;
+}
+
+@layer components {
+  .gradient-text {
+    @apply bg-gradient-to-r from-white via-zinc-200 to-zinc-400 bg-clip-text text-transparent;
+  }
+
+  .app-card {
+    @apply rounded-2xl border border-white/5 bg-surface-card transition-colors hover:border-brand-500/30;
+  }
+
+  .app-shell-panel {
+    @apply border border-white/5 bg-surface-card/90 backdrop-blur-xl;
+  }
 }
 
 ::-webkit-scrollbar {
@@ -64,11 +108,11 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: #3f3f46;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: #52525b;
 }
 
 @keyframes stream-cursor-blink {

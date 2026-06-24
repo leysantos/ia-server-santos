@@ -95,7 +95,7 @@ function ChatPageContent() {
         showModelsStatus
         trailing={
           activeModel ? (
-            <div className="rounded-xl bg-slate-800/80 px-3 py-2 text-right ring-1 ring-slate-700/80">
+            <div className="app-card px-3 py-2 text-right">
               <p className="text-xs font-medium text-emerald-300">Modelo ativo: {activeModel}</p>
             </div>
           ) : undefined
@@ -104,7 +104,7 @@ function ChatPageContent() {
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <WorkspaceExpandButton />
           <div className="min-w-0">
-            <h1 className="truncate text-lg font-semibold text-white">
+            <h1 className="truncate text-lg font-semibold gradient-text">
               {conversationTitle ? conversationTitle : "Chat IA"}
             </h1>
             <p className="truncate text-sm text-slate-500">
