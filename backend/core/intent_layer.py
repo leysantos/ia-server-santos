@@ -442,6 +442,16 @@ def _stream_step_events(
             )
             if isinstance(agent, ChatAgent):
                 intent = detect_intent(step.input)
+                vram_note = getattr(agent, "_llm_status_note", None)
+                if vram_note:
+                    yield (
+                        "status",
+                        {
+                            "message": vram_note,
+                            "phase": "model_vram",
+                            "step": step.to_dict(),
+                        },
+                    )
                 for token in agent.iter_tokens(step.input, llm_model=llm_model):
                     tokens.append(token)
                     yield ("token", _token_payload(step, token, agent=agent))
@@ -459,6 +469,16 @@ def _stream_step_events(
                 )
             else:
                 context = route_result.get("context")
+                vram_note = getattr(agent, "_llm_status_note", None)
+                if vram_note:
+                    yield (
+                        "status",
+                        {
+                            "message": vram_note,
+                            "phase": "model_vram",
+                            "step": step.to_dict(),
+                        },
+                    )
                 for token in agent.iter_tokens(
                     step.input,
                     context=context,

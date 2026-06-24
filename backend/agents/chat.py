@@ -315,15 +315,17 @@ class ChatAgent(BaseAgent):
                 primary = router.get_model(task_type, {"text": text, "module": "chat"})
             fallbacks = router.get_fallback_models(task_type, {"text": text})
 
-        timeout, ollama_options, fallbacks = resolve_llm_stream_config(
+        timeout, ollama_options, fallbacks, vram_notice, effective = resolve_llm_stream_config(
             primary_model=primary,
             fallback_models=fallbacks,
             llm_model=llm_model,
         )
+        if vram_notice:
+            self._llm_status_note = vram_notice
         opts = dict(ollama_options or {})
         opts.setdefault("num_predict", 8192)
         opts.setdefault("num_ctx", 12288)
-        return primary, fallbacks, timeout, opts
+        return effective or primary, fallbacks, timeout, opts
 
     def _call_platform_evaluation(self, text: str, llm_model: str | None = None) -> str:
         from core.platform_knowledge import (
@@ -382,10 +384,11 @@ class ChatAgent(BaseAgent):
                 primary = plan.model_override or router.get_model(task_type, {"text": text})
             fallbacks = router.get_fallback_models(task_type, {"text": text})
 
-        timeout, ollama_options, fallbacks = resolve_llm_stream_config(
+        timeout, ollama_options, fallbacks, _, effective = resolve_llm_stream_config(
             primary_model=primary,
             fallback_models=fallbacks,
         )
+        primary = effective or primary
         client = OllamaClient(
             primary_model=OLLAMA_CHAT_MODEL,
             fallback_model=None,
@@ -495,11 +498,14 @@ class ChatAgent(BaseAgent):
                         )
                     fallbacks = router.get_fallback_models(task_type, {"text": text})
 
-                timeout, ollama_options, fallbacks = resolve_llm_stream_config(
+                timeout, ollama_options, fallbacks, vram_notice, effective = resolve_llm_stream_config(
                     primary_model=primary,
                     fallback_models=fallbacks,
                     llm_model=llm_model,
                 )
+                if vram_notice:
+                    self._llm_status_note = vram_notice
+                primary = effective or primary
                 client = OllamaClient(
                     primary_model=OLLAMA_CHAT_MODEL,
                     fallback_model=None,

@@ -15,6 +15,7 @@ from config.settings import (
 logger = logging.getLogger(__name__)
 
 _PREFERRED_MODEL_SUBSTRINGS = (
+    "qwen3.6",
     "gemma4",
     "deepseek-r1",
     "qwen2.5-coder",
@@ -217,6 +218,17 @@ class OllamaClient:
             f"Falha ao gerar resposta LLM (modelos: {models_to_try}): {last_error}"
         )
 
+    def _extract_stream_text(self, payload: dict) -> str:
+        """Texto visível no chunk Ollama (response ou thinking em modelos reasoning)."""
+        parts: list[str] = []
+        response = payload.get("response")
+        if isinstance(response, str) and response:
+            parts.append(response)
+        thinking = payload.get("thinking")
+        if isinstance(thinking, str) and thinking:
+            parts.append(thinking)
+        return "".join(parts)
+
     def generate_stream(
         self,
         prompt: str,
@@ -244,6 +256,7 @@ class OllamaClient:
                     body["format"] = "json"
                 if options:
                     body["options"] = options
+                token_count = 0
                 with requests.post(
                     f"{self.base_url}/api/generate",
                     json=body,
@@ -255,11 +268,18 @@ class OllamaClient:
                         if not line:
                             continue
                         payload = json.loads(line)
-                        token = payload.get("response", "")
+                        token = self._extract_stream_text(payload)
                         if token:
+                            token_count += len(token)
                             yield token, current_model
                         if payload.get("done"):
+                            if token_count == 0:
+                                raise RuntimeError(
+                                    f"Modelo {current_model} concluiu sem emitir tokens"
+                                )
                             return
+                if token_count == 0:
+                    raise RuntimeError(f"Modelo {current_model} retornou stream vazio")
                 return
             except Exception as exc:
                 last_error = exc

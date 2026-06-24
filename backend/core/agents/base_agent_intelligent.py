@@ -302,27 +302,61 @@ RESPOSTA TÉCNICA ESTRUTURADA:"""
         llm_model: str | None = None,
     ):
         """Stream de tokens LLM para resposta técnica (com roteamento por complexidade)."""
-        from core.models.engineering_model_routing import engineering_stream_models
+        from core.models.engineering_model_routing import engineering_generate, engineering_stream_models
         from core.runtime.ollama_concurrency import resolve_llm_stream_config
+        from core.stream_events import iter_text_chunks
 
         prompt, _, _ = self.prepare_prompt(text, context, use_rag)
         model, fallbacks, _task = engineering_stream_models(
             text, self.discipline, llm_model=llm_model
         )
-        timeout, ollama_options, fallbacks = resolve_llm_stream_config(
+        timeout, ollama_options, fallbacks, vram_notice, effective = resolve_llm_stream_config(
             primary_model=model,
             fallback_models=fallbacks,
             llm_model=llm_model,
         )
+        if vram_notice:
+            self._llm_status_note = vram_notice
+        model = effective or model
         client = OllamaClient(timeout=timeout)
-        for token, model_used in client.generate_stream(
-            prompt,
-            model=model,
-            fallback_models=fallbacks or None,
-            options=ollama_options or None,
-        ):
-            self._last_model_used = model_used
-            yield token
+        tokens: list[str] = []
+        try:
+            for token, model_used in client.generate_stream(
+                prompt,
+                model=model,
+                fallback_models=fallbacks or None,
+                options=ollama_options or None,
+            ):
+                self._last_model_used = model_used
+                tokens.append(token)
+                yield token
+        except Exception as exc:
+            logger.warning("agent=%s stream falhou: %s", self.name, exc)
+
+        if not tokens:
+            try:
+                result, model_used = engineering_generate(
+                    prompt,
+                    text=text,
+                    discipline=self.discipline,
+                    client=client,
+                    timeout=timeout,
+                    llm_model=llm_model,
+                )
+                self._last_model_used = model_used
+                if result.strip():
+                    for chunk in iter_text_chunks(result):
+                        yield chunk
+                    return
+            except Exception as exc:
+                logger.warning("agent=%s recovery generate falhou: %s", self.name, exc)
+
+            fallback_msg = (
+                "Não foi possível gerar resposta com o modelo selecionado. "
+                "Tente um modelo menor (ex.: gemma4 ou qwen3:14b) ou aguarde a GPU liberar."
+            )
+            self._last_model_used = model
+            yield fallback_msg
 
     def get_specialty_label(self) -> str:
         return self.discipline

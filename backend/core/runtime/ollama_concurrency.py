@@ -60,6 +60,7 @@ def _active_gpu_jobs() -> list[dict[str, Any]]:
 
 
 _HEAVY_MODEL_MARKERS = (
+    "qwen3.6",
     "gemma4",
     "gemma3:12",
     "deepseek-r1",
@@ -81,18 +82,23 @@ def resolve_llm_stream_config(
     primary_model: str | None = None,
     fallback_models: list[str] | None = None,
     llm_model: str | None = None,
-) -> tuple[int, dict[str, Any], list[str]]:
+) -> tuple[int, dict[str, Any], list[str], str | None, str | None]:
     """
     Timeout e opções Ollama para stream/generate.
 
-    Modelos pesados escolhidos pelo usuário usam timeout estendido e GPU
-    (não força num_gpu=0 quando a VRAM está ocupada).
+    Retorna (timeout, options, fallbacks, aviso_vram, modelo_efetivo).
     """
     from core.llm_override import resolve_llm_model
+    from core.runtime.model_vram import fit_model_to_vram
 
     plan = resolve_chat_runtime()
     override = resolve_llm_model(llm_model)
     effective = override or primary_model or plan.model_override
+    fallbacks = list(fallback_models or [])
+
+    vram_notice: str | None = None
+    if effective:
+        effective, fallbacks, vram_notice = fit_model_to_vram(effective, fallbacks)
 
     opts = dict(plan.ollama_options or {})
     timeout = plan.timeout_sec
@@ -103,19 +109,19 @@ def resolve_llm_stream_config(
         if override or primary_model:
             opts.pop("num_gpu", None)
 
-    fallbacks = list(fallback_models or [])
+    fallbacks = [m for m in fallbacks if m and m != effective]
     if override and not fallbacks:
         try:
             from core.models.model_router import get_model_router
 
             router = get_model_router()
             fallbacks = [
-                router.model_map.get("engineering_secondary", "gemma3:12b"),
+                router.model_map.get("engineering_secondary", "gemma4:latest"),
                 router.model_map.get("engineering_fallback", "qwen2.5-coder:latest"),
                 router.model_map.get("chat_natural", "mistral:7b"),
             ]
         except Exception:
-            fallbacks = ["gemma3:12b", "qwen2.5-coder:latest", "mistral:7b"]
+            fallbacks = ["gemma4:latest", "qwen2.5-coder:latest", "mistral:7b"]
 
     seen: set[str] = set()
     deduped: list[str] = []
@@ -124,7 +130,7 @@ def resolve_llm_stream_config(
             seen.add(name)
             deduped.append(name)
 
-    return timeout, opts, deduped
+    return timeout, opts, deduped, vram_notice, effective
 
 
 def resolve_chat_runtime() -> ChatRuntimePlan:

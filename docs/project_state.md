@@ -6,7 +6,7 @@
 | Campo | Valor |
 |-------|-------|
 | **Versão do sistema** | 1.0.0 |
-| **Última atualização** | 2026-06-20 |
+| **Última atualização** | 2026-06-24 |
 | **Marco atual** | Orçamento `/budget` — Orç. Sintético + Analítico + Busca CPU |
 | **Próximo foco** | Reimport PPD/modelos · ODA/LibreDWG · ICP-Brasil |
 | **Repositório** | [github.com/leysantos/ia-server-santos](https://github.com/leysantos/ia-server-santos) |
@@ -94,9 +94,9 @@ ia-server-santos/
 
 ## Modelos Ollama no WSL (instalados)
 
-`gemma4:latest` · `deepseek-r1:14b` · `qwen3:8b` · `qwen3:14b` · `qwen3-coder` · `gemma3:12b` · `mistral:7b` · `phi3:mini` · `qwen2.5-coder` · `deepseek-coder` · `nomic-embed-text`
+`qwen3.6:latest` · `gemma4:latest` · `deepseek-r1:14b` · `qwen3:8b` · `qwen3:14b` · `qwen3-coder` · `gemma3:12b` · `mistral:7b` · `phi3:mini` · `qwen2.5-coder` · `deepseek-coder` · `nomic-embed-text`
 
-Config padrão: chat=`qwen3:8b`, eng=`qwen3:14b`, fallback=`qwen3-coder`, embed=`nomic-embed-text`.  
+Config padrão: chat=`phi3:mini`/mistral · eng=`qwen3.6:latest` · fallback=`gemma4:latest` · embed=`nomic-embed-text`.  
 `GET /health` retorna lista dinâmica via Ollama; frontend exibe badge **WSL:** no `/chat`.
 
 ## Bloqueio principal
@@ -1246,7 +1246,9 @@ Settings completas: `backend/config/settings.py`
 | 2026-06-20 | **ChatAgent platform_evaluation** | Meta-perguntas sobre arquitetura/fortes/fracos usam `project_state.md` + intent dedicada (não pitch genérico) |
 | 2026-06-20 | **Fix ContextVar no SSE chat stream** | `llm_model_scope` quebrava no thread pool Starlette (`ValueError: Token was created in a different Context`); modelo passado explicitamente em `/chat/stream` |
 | 2026-06-20 | **Fix stream chat com gemma4/deepseek-r1** | Timeout 300s + fallback chain + não força CPU (`num_gpu:0`) quando usuário escolhe modelo pesado; SSE encerra com evento `done` em erro |
-| 2026-06-20 | **Integrar gemma4 + deepseek-r1 no Model Router** | `gemma4:latest` engenharia primária/visão/AED sim; `deepseek-r1:14b` raciocínio (MEDIUM), orquestração, AED eval, WBS alto; cadeia gemma3 → qwen2.5-coder |
+| 2026-06-24 | **Fix qwen3.6 sem resposta no chat** | VRAM fit (23GB→gemma4 em GPU 8GB); stream vazio aciona fallback; recovery generate no agente estrutural |
+| 2026-06-20 | **Model Router — qwen3.6 primário** | `engineering_primary` e `aed_simulation` usam `qwen3.6:latest`; `gemma4` como secundário; rótulo WSL ordena qwen3.6 primeiro |
+| 2026-06-20 | **Integrar gemma4 + deepseek-r1 no Model Router** | `gemma4:latest` engenharia secundária/visão; `deepseek-r1:14b` raciocínio (MEDIUM); cadeia gemma4 → qwen2.5-coder |
 | 2026-06-20 | **Parser CPU SICRO completo** | Seções D/E/F (atividades auxiliares, tempo fixo, transporte, FIC) — códigos 7 dígitos não abrem composição nova · total `custo unitário direto total` |
 | 2026-06-20 | **SICRO sync incremental** | `skip_existing_ufs` no lote — pula `BR-SICRO-{UF}-YYYY-MM` já no banco · UI **Sincronizar UFs faltantes (N)** + **Reimportar todas** · CLI `--skip-existing` |
 | 2026-06-20 | **Download SICRO resiliente** | `download_archive`: streaming 256KB, timeout leitura 600s, 5 retries com backoff, verificação Content-Length · sync lote continua após falha por UF (`synced_ufs` / `failed_ufs`) |

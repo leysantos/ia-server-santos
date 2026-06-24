@@ -56,6 +56,119 @@ _DISCIPLINE_HEAVY = frozenset(
     {"ESTRUTURAL", "GEOTECNIA", "ORÇAMENTO", "INFRAESTRUTURA", "TRANSPORTES"}
 )
 
+# Serviços de orçamento/pricing com alta complexidade técnica (estruturas, fundações, contenções)
+_PRICING_HIGH_KEYWORDS = (
+    # Estruturas gerais e metálicas
+    "estrutura",
+    "estruturas",
+    "metalic",
+    "metálic",
+    "metalica",
+    "metálica",
+    "aço estrutural",
+    "aco estrutural",
+    "galpão",
+    "galpao",
+    "cobertura met",
+    "treliça",
+    "trelica",
+    "perfil estrutural",
+    "pórtico",
+    "portico",
+    # Obras de arte especiais / grandes vãos
+    "passarela",
+    "ponte",
+    "viaduto",
+    "tabuleiro",
+    "taboão",
+    "taboao",
+    # Concreto e pré-moldados
+    "concretagem",
+    "concreto armado",
+    "pré-moldado",
+    "pre-moldado",
+    "premoldado",
+    "pré moldado",
+    "pre moldado",
+    "pré-fabricad",
+    "pre-fabricad",
+    "laje nervurada",
+    "laje pré",
+    "laje pre",
+    # Madeira
+    "madeira",
+    "estrutura de madeira",
+    "compensado estrutural",
+    "mdf estrutural",
+    # Protensão / pós-tensão
+    "protensão",
+    "protensao",
+    "protendido",
+    "protendida",
+    "pós-tensão",
+    "pos-tensao",
+    "postensao",
+    # Fundações
+    "fundacao",
+    "fundação",
+    "fundações",
+    "fundacoes",
+    "fundação rasa",
+    "fundacao rasa",
+    "fundação profunda",
+    "fundacao profunda",
+    "fundação direta",
+    "fundacao direta",
+    "fundação indireta",
+    "fundacao indireta",
+    "radier",
+    "sapata",
+    "sapatas",
+    "bloco de coroamento",
+    "coroamento",
+    "estaca",
+    "estacas",
+    "estaca raiz",
+    "microestaca",
+    "micro estaca",
+    "tubulão",
+    "tubulao",
+    "broca",
+    "helice",
+    "hélice",
+    "cravada",
+    "escavada",
+    "baldrame",
+    "viga baldrame",
+    # Contenção, arrimo e proteção geotécnica
+    "contenção",
+    "contencao",
+    "contenç",
+    "arrimo",
+    "muro de arrimo",
+    "muro de contenção",
+    "muro de contencao",
+    "gabião",
+    "gabiao",
+    "gabiões",
+    "gabioes",
+    "ancoragem",
+    "solo grampeado",
+    "grampeamento",
+    "proteção de talude",
+    "protecao de talude",
+    "proteção de encosta",
+    "protecao de encosta",
+    "escoramento",
+    "escorament",
+    "cortina",
+    "cortina atirantada",
+    "atirantada",
+    "barreira",
+    "barreira de injeção",
+    "barreira de injecao",
+)
+
 
 def estimate_budget_complexity(text: str, intent: dict[str, Any] | None = None) -> str:
     lower = (text or "").lower()
@@ -92,20 +205,7 @@ def estimate_pricing_complexity(
     service_context: str | None = None,
 ) -> str:
     combined = f"{line_name or ''} {query or ''} {service_context or ''}".lower()
-    if any(
-        k in combined
-        for k in (
-            "estrutura",
-            "metalic",
-            "passarela",
-            "ponte",
-            "concretagem",
-            "estaca",
-            "fundacao",
-            "fundação",
-            "tabuleiro",
-        )
-    ):
+    if any(k in combined for k in _PRICING_HIGH_KEYWORDS):
         return "HIGH"
     if len(combined) > 70:
         return "MEDIUM"
@@ -170,15 +270,15 @@ class ModelRouter:
             # Código / fallback rápido
             "code_generation": "deepseek-coder:latest",
             "code_understanding": "qwen2.5-coder:latest",
-            # Engenharia — gemma4 (primário) + deepseek-r1 (raciocínio) + gemma3 (secundário)
-            "engineering_primary": "gemma4:latest",
+            # Engenharia — qwen3.6 (primário) + deepseek-r1 (raciocínio) + gemma4 (secundário)
+            "engineering_primary": "qwen3.6:latest",
             "engineering_reasoning": "deepseek-r1:14b",
-            "engineering_secondary": "gemma3:12b",
+            "engineering_secondary": "gemma4:latest",
             "engineering_fallback": "qwen2.5-coder:latest",
             "rag_embedding": "nomic-embed-text",
             "orchestration_synthesis": "deepseek-r1:14b",
             "platform_evaluation": "deepseek-r1:14b",
-            "aed_simulation": "gemma4:latest",
+            "aed_simulation": "qwen3.6:latest",
             "aed_evaluation": "deepseek-r1:14b",
             # Orçamento WBS / pricing
             "budget_wbs_light": "mistral:7b",
@@ -551,6 +651,12 @@ def routed_generate(
     else:
         model = router.get_model(task_type, ctx)
         fallbacks = router.get_fallback_models(task_type, ctx)
+
+    from core.runtime.model_vram import fit_model_to_vram
+
+    model, fallbacks, vram_notice = fit_model_to_vram(model, fallbacks)
+    if vram_notice:
+        logger.info("routed_generate VRAM: %s", vram_notice)
     fallback_model = fallbacks[0] if fallbacks else None
 
     llm = client or OllamaClient(timeout=timeout or 120)

@@ -27,7 +27,7 @@ def test_resolve_llm_model_explicit_over_contextvar():
 
 
 def test_stream_config_uses_explicit_llm_model():
-    timeout, opts, fallbacks = resolve_llm_stream_config(
+    timeout, opts, fallbacks, _, _effective = resolve_llm_stream_config(
         primary_model="phi3:mini",
         llm_model="gemma4:latest",
     )

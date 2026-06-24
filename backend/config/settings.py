@@ -89,7 +89,7 @@ class AppSettings(BaseSettings):
         default="nomic-embed-text", validation_alias="OLLAMA_EMBED_MODEL"
     )
     ollama_llm_model: str = Field(
-        default="qwen2.5-coder:latest", validation_alias="OLLAMA_LLM_MODEL"
+        default="qwen3.6:latest", validation_alias="OLLAMA_LLM_MODEL"
     )
     ollama_llm_fallback_model: str = Field(
         default="mistral:7b", validation_alias="OLLAMA_LLM_FALLBACK_MODEL"

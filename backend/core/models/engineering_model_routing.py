@@ -40,6 +40,7 @@ def engineering_generate(
     complexity: str | None = None,
     client: Any = None,
     timeout: int | None = None,
+    llm_model: str | None = None,
 ) -> tuple[str, str]:
     from models.ollama_client import OllamaClient
 
@@ -65,16 +66,18 @@ def engineering_generate(
     model = router.get_model(task_type, ctx)
     fallbacks = router.get_fallback_models(task_type, ctx)
 
-    from core.llm_override import get_llm_model_override
+    from core.llm_override import get_llm_model_override, resolve_llm_model
     from core.runtime.ollama_concurrency import resolve_llm_stream_config
 
-    override = get_llm_model_override()
+    override = resolve_llm_model(llm_model) or get_llm_model_override()
     if override:
         model = override
-    stream_timeout, ollama_options, fallbacks = resolve_llm_stream_config(
+    stream_timeout, ollama_options, fallbacks, _, effective = resolve_llm_stream_config(
         primary_model=model,
         fallback_models=fallbacks,
+        llm_model=llm_model,
     )
+    model = effective or model
     effective_timeout = timeout or stream_timeout
     llm = client or OllamaClient(timeout=effective_timeout)
 
