@@ -99,8 +99,6 @@ class KnowledgeService:
 
     def index_budget_model_document(self, document_id: str) -> dict[str, Any]:
         """Extrai WBS e indexa FAISS para documento já no catálogo (ex.: PPD como base de preço)."""
-        from pathlib import Path
-
         from core.knowledge.ingestion import get_ingester
         from core.knowledge.metadata import read_metadata
 

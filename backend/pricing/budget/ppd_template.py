@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-"""Template PPD MC/OR vazio — estrutura municipal padrão SEMINF."""
+"""Template de orçamento vazio — exportação nativa Excel/PDF."""
 
-from pricing.budget.ppd_layout import PPD_TEMPLATE_ID
 from pricing.models.budget_item import BudgetItem
 from pricing.models.budget_metadata import BdiConfig, BudgetProjectMetadata
+
+BUDGET_TEMPLATE_ID = "BUDGET_CUSTOM"
 
 
 def create_empty_ppd_metadata(
@@ -16,19 +17,15 @@ def create_empty_ppd_metadata(
 ) -> BudgetProjectMetadata:
     bdi = BdiConfig.from_obra_type(obra_type)
     return BudgetProjectMetadata(
-        template=PPD_TEMPLATE_ID,
-        orgao="SEMINF",
+        template=BUDGET_TEMPLATE_ID,
+        orgao="",
         projeto=projeto or "NOVO PROJETO",
         objeto=objeto or projeto or "NOVO PROJETO",
         local=local,
         orcamento=orcamento,
         obra_type=obra_type,
         bdi=bdi,
-        base_preco=(
-            "SINAPI/SEMINF (COM DESONERAÇÃO) - "
-            "[Horista: 98,35%] - [Mensalista: 58,20%] - "
-            "[Mês de Referência: 03/2026]"
-        ),
+        base_preco="SINAPI",
     )
 
 

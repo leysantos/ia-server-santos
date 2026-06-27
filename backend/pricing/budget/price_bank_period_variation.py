@@ -56,6 +56,7 @@ def resolve_previous_reference(reference: str) -> str | None:
 
 
 def _pct_change(current: float, previous: float) -> float | None:
+    """Variação percentual só quando ambos os valores são comparáveis (> 0)."""
     if previous <= 0 or current <= 0:
         return None
     return ((current - previous) / previous) * 100.0
@@ -76,9 +77,12 @@ def compute_period_variation_warnings(
     threshold: float = DEFAULT_THRESHOLD,
 ) -> dict[str, Any]:
     """
-    Compara composição atual com o mês anterior importado.
+    Compara composição atual com o período mensal importado imediatamente anterior.
     Retorna avisos quando |variação| > threshold (default 30%).
     """
+    code = str(composition.get("code") or "").strip()
+    use_uf = (uf or composition.get("price_uf") or "SP").upper()
+
     prev_ref = resolve_previous_reference(reference)
     if not prev_ref:
         return {
@@ -87,9 +91,6 @@ def compute_period_variation_warnings(
             "threshold_pct": round(threshold * 100, 1),
             "warnings": [],
         }
-
-    code = str(composition.get("code") or "").strip()
-    use_uf = (uf or composition.get("price_uf") or "SP").upper()
 
     try:
         prev_comp = PriceBankStore.for_reference(prev_ref).get_open_composition(code, uf=use_uf)
@@ -138,41 +139,48 @@ def compute_period_variation_warnings(
     prev_items = {
         str(i.get("code") or "").strip(): i for i in (prev_comp.get("items") or [])
     }
+    item_metric_specs = (
+        ("comd", "unit_price", "unit_price", "ComD", "unitário"),
+        ("semd", "unit_price_sem", "unit_price_sem", "SemD", "unitário"),
+        ("comd", "partial_cost", "partial_cost", "ComD", "parcial"),
+        ("semd", "partial_cost_sem", "partial_cost_sem", "SemD", "parcial"),
+    )
     for item in composition.get("items") or []:
         item_code = str(item.get("code") or "").strip()
         if not item_code or item_code not in prev_items:
             continue
         prev_item = prev_items[item_code]
         desc = _short_desc(str(item.get("description") or prev_item.get("description") or ""))
+        item_type = str(item.get("item_type") or "item")
 
-        for metric, cur_key, prev_key, label in (
-            ("comd", "unit_price", "unit_price", "ComD"),
-            ("semd", "unit_price_sem", "unit_price_sem", "SemD"),
-        ):
+        best_warn: dict[str, Any] | None = None
+        for metric, cur_key, prev_key, label, value_kind in item_metric_specs:
             current = float(item.get(cur_key) or 0)
-            previous = float(prev_item.get(prev_key) or prev_item.get("unit_price") or 0)
+            previous = float(prev_item.get(prev_key) or 0)
             change = _pct_change(current, previous)
             if change is None or abs(change) <= threshold_pct:
                 continue
             sign = "+" if change > 0 else ""
-            item_type = str(item.get("item_type") or "item")
-            warnings.append(
-                {
-                    "kind": "item_unit_price",
-                    "item_type": item_type,
-                    "code": item_code,
-                    "description": desc,
-                    "metric": metric,
-                    "metric_label": label,
-                    "current": round(current, 2),
-                    "previous": round(previous, 2),
-                    "change_pct": round(change, 1),
-                    "message": (
-                        f"Variação {sign}{change:.1f}% em relação a {prev_label} no "
-                        f"{item_type.replace('_', ' ')} {item_code} — {desc} ({label})"
-                    ),
-                }
-            )
+            candidate = {
+                "kind": "item_unit_price",
+                "item_type": item_type,
+                "code": item_code,
+                "description": desc,
+                "metric": metric,
+                "metric_label": label,
+                "current": round(current, 2),
+                "previous": round(previous, 2),
+                "change_pct": round(change, 1),
+                "message": (
+                    f"Variação {sign}{change:.1f}% em relação a {prev_label} no "
+                    f"{item_type.replace('_', ' ')} {item_code} — {desc} "
+                    f"({label}, {value_kind})"
+                ),
+            }
+            if not best_warn or abs(float(candidate["change_pct"])) > abs(float(best_warn["change_pct"])):
+                best_warn = candidate
+        if best_warn:
+            warnings.append(best_warn)
 
     warnings.sort(key=lambda w: abs(float(w.get("change_pct") or 0)), reverse=True)
 

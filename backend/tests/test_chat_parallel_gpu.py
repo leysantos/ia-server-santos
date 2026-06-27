@@ -32,7 +32,7 @@ def test_resolve_chat_runtime_cpu_when_vision_active():
         registry.finish(job.id, status="completed")
 
 
-def test_heavy_model_override_keeps_gpu_and_extends_timeout():
+def test_heavy_model_override_keeps_gpu_and_extends_timeout(no_vram_downgrade):
     from core.llm_override import llm_model_scope
     from core.runtime.ollama_concurrency import is_heavy_llm_model, resolve_llm_stream_config
 

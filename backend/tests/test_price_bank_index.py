@@ -59,6 +59,63 @@ def test_save_bank_keeps_multiple_periods(isolated_price_bank: Path):
     assert (isolated_price_bank / "BR-2026-04" / "manifest.json").is_file()
 
 
+def test_reconcile_with_disk_restores_sicro_and_seminf(isolated_price_bank: Path):
+    for ref, source in (
+        ("BR-SICRO-AM-2026-01", "cicro"),
+        ("BR-DP-SEMINF-2026-04", "dp_seminf"),
+    ):
+        ref_dir = isolated_price_bank / ref
+        ref_dir.mkdir()
+        manifest = {
+            "source": source,
+            "reference": ref,
+            "uf": "AM" if "AM" in ref else "SP",
+            "synced_at": "2026-01-01T00:00:00+00:00",
+            "counts": {"compositions_closed": 10},
+            "metadata": {"year": 2026, "month": 1},
+        }
+        (ref_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (ref_dir / "compositions_closed.json").write_text("[]", encoding="utf-8")
+
+    isolated_price_bank.joinpath("index.json").write_text(
+        json.dumps({"active_reference": "", "references": []}),
+        encoding="utf-8",
+    )
+
+    idx = PriceBankIndex.load()
+    refs = {r.reference for r in idx.references}
+    assert "BR-SICRO-AM-2026-01" in refs
+    assert "BR-DP-SEMINF-2026-04" in refs
+
+
+def test_reconcile_with_disk_removes_orphan_index_entry(isolated_price_bank: Path):
+    isolated_price_bank.joinpath("index.json").write_text(
+        json.dumps(
+            {
+                "active_reference": "BR-SICRO-SP-2026-04",
+                "references": [
+                    {
+                        "reference": "BR-SICRO-SP-2026-04",
+                        "source": "cicro",
+                        "synced_at": "x",
+                        "default_uf": "SP",
+                        "counts": {"compositions_closed": 1},
+                        "metadata": {},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    idx = PriceBankIndex.load()
+    assert any(r.reference == "BR-SICRO-SP-2026-04" for r in idx.references)
+
+    idx.prune_orphan_references()
+    reloaded = PriceBankIndex.load()
+    assert not any(r.reference == "BR-SICRO-SP-2026-04" for r in reloaded.references)
+
+
 def test_reconcile_with_disk_restores_missing_index_entry(isolated_price_bank: Path):
     ref_dir = isolated_price_bank / "BR-2026-03"
     ref_dir.mkdir()

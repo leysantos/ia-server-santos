@@ -312,7 +312,8 @@ def test_validate_seminf_refresh_source_allows_backfill():
     )
 
 
-def test_seminf_refresh_prices_fixture(tmp_path):
+def test_seminf_refresh_prices_fixture(tmp_path, monkeypatch):
+    from pricing.budget import price_bank_index as pbi
     from pricing.sync.connectors import DpSeminfConnector
     from pricing.budget.seminf_open_refresh import (
         apply_seminf_open_refresh,
@@ -320,6 +321,9 @@ def test_seminf_refresh_prices_fixture(tmp_path):
         seminf_root_reference,
     )
     from pricing.budget.price_bank_store import PriceBankStore
+
+    monkeypatch.setattr(pbi, "PRICE_BANK_ROOT", tmp_path / "price_bank")
+    pbi.PRICE_BANK_ROOT.mkdir(parents=True, exist_ok=True)
 
     bundle = _bundle_fixtures()
     if not bundle:

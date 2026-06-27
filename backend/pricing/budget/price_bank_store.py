@@ -99,6 +99,9 @@ class InsumoRecord:
     origin: str = ""  # aba de origem: ISD | ICD
     price_sem_desoneracao: float = 0.0
     regional: dict[str, dict[str, float]] = field(default_factory=dict)
+    regional_as: dict[str, dict[str, float]] = field(
+        default_factory=dict
+    )  # UF → {comd, semd, ise} — preco_regional_as (fórmula Caixa col. L/M/N)
     classificacao: str = ""  # SINAPI: SERVIÇOS, MATERIAL, MAO DE OBRA…
     origem_preco: str = ""  # SINAPI: C, CR…
 
@@ -251,6 +254,43 @@ class PriceBankStore:
             return manifest.metadata["labor_charges_snapshot"]
         return {}
 
+    @staticmethod
+    def _stored_open_items_stale(raw: dict[str, Any], applied: dict[str, Any]) -> bool:
+        """Detecta itens gravados com preço 0 que passam a ter valor após fallback SP (%AS)."""
+        old_by_code = {str(i.get("code") or ""): i for i in (raw.get("items") or [])}
+        for item in applied.get("items") or []:
+            code = str(item.get("code") or "")
+            old = old_by_code.get(code)
+            if not old:
+                continue
+            new_unit = float(item.get("unit_price") or 0)
+            old_unit = float(old.get("unit_price") or 0)
+            if old_unit <= 0 and new_unit > 0:
+                return True
+        return False
+
+    def _patch_stored_open_items(self, code: str, applied_items: list[dict[str, Any]]) -> None:
+        path = self.root / OPEN_NAME
+        if not path.is_file():
+            return
+        raw_open = self.load_open()
+        comp = raw_open.get(code)
+        if not comp:
+            return
+        by_code = {str(i.get("code") or ""): i for i in applied_items}
+        price_keys = ("unit_price", "partial_cost", "unit_price_sem", "partial_cost_sem", "tp2")
+        for item in comp.get("items") or []:
+            src = by_code.get(str(item.get("code") or ""))
+            if not src:
+                continue
+            for key in price_keys:
+                if item.get(key) != src.get(key):
+                    item[key] = src[key]
+        path.write_text(
+            json.dumps(raw_open, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
     def get_open_composition(
         self,
         code: str,
@@ -306,13 +346,16 @@ class PriceBankStore:
             result["analytical_total_sem"] = analytical_sem
             return result
 
-        return apply_uf_to_open_composition(
+        result = apply_uf_to_open_composition(
             raw,
             uf=use_uf,
             closed_rows=closed,
             insumo_rows=insumos,
             labor_charges=self.load_labor_charges(),
         )
+        if use_uf == default_uf and self._stored_open_items_stale(raw, result):
+            self._patch_stored_open_items(key, result.get("items") or [])
+        return result
 
     def closed_as_provider_rows(self, uf: str | None = None) -> list[dict[str, Any]]:
         """Linhas tabulares para SINAPI provider (composições fechadas)."""

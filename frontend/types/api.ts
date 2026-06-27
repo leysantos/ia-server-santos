@@ -58,6 +58,46 @@ export interface OrchestrateResponse {
   orchestrator_log_id?: string;
 }
 
+export interface CopilotRequest {
+  text: string;
+  use_rag?: boolean;
+  persist?: boolean;
+}
+
+export interface CopilotResponse {
+  input: string;
+  intent: string;
+  intent_confidence: number;
+  matched_categories: string[];
+  plan: Record<string, unknown>[];
+  disciplines: string[];
+  result: Record<string, unknown>;
+  evaluation: Record<string, unknown>;
+  evaluation_v2?: Record<string, unknown>;
+  context_graph?: Record<string, unknown>;
+  conversation_id?: string;
+}
+
+export interface AedRequest {
+  text: string;
+  use_rag?: boolean;
+  persist?: boolean;
+}
+
+export interface AedResponse {
+  input: string;
+  conversation_id?: string;
+  understanding: Record<string, unknown>;
+  structural_selection?: Record<string, unknown>;
+  designs: Record<string, unknown>[];
+  simulations: Record<string, unknown>[];
+  comparison: Record<string, unknown>;
+  selection: Record<string, unknown>;
+  report: Record<string, unknown>;
+  use_rag?: boolean;
+  aed_run_id?: string;
+}
+
 export interface AgentResult {
   agent?: string;
   discipline?: string;
@@ -484,6 +524,157 @@ export interface SystemBenchmarkResponse {
   memory?: SystemBenchmarkMetric;
   gpu?: SystemBenchmarkMetric;
   vram?: SystemBenchmarkMetric;
+}
+
+export interface CompanyProfile {
+  razao_social: string;
+  nome_fantasia: string;
+  cnpj: string;
+  endereco: string;
+  numero: string;
+  complemento: string;
+  bairro: string;
+  cidade: string;
+  uf: string;
+  cep: string;
+  telefone: string;
+  email: string;
+  site: string;
+  responsavel_tecnico: string;
+  rt_profissao: string;
+  rt_crea: string;
+  rt_email: string;
+  rt_telefone: string;
+  has_logo?: boolean;
+  has_brasao?: boolean;
+}
+
+export interface ExportBrandingConfig {
+  header_title?: string;
+  header_line1?: string;
+  header_line2?: string;
+  header_line3?: string;
+  footer_line1?: string;
+  footer_line2?: string;
+  show_logo?: boolean;
+  show_brasao?: boolean;
+  has_logo?: boolean;
+  has_brasao?: boolean;
+}
+
+export type UserRole = string;
+
+export interface ModulePermission {
+  hidden: boolean;
+  blocked: boolean;
+}
+
+export type ModulePermissionsMap = Record<string, ModulePermission>;
+
+export interface UserRoleDefinition {
+  slug: string;
+  label: string;
+  module_permissions: ModulePermissionsMap;
+  is_system: boolean;
+  created_at?: string;
+}
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  email: string | null;
+  full_name: string | null;
+  role: UserRole;
+  role_label?: string;
+  module_permissions?: ModulePermissionsMap;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface AuthStatusResponse {
+  auth_enabled: boolean;
+  token_expire_minutes?: number;
+}
+
+export interface AuthMeResponse {
+  auth_enabled: boolean;
+  user: AuthUser | null;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+  user: AuthUser;
+}
+
+export interface UsersListResponse {
+  users: AuthUser[];
+}
+
+export interface UserRolesListResponse {
+  roles: UserRoleDefinition[];
+}
+
+export interface SystemModulesResponse {
+  modules: { id: string; label: string; description: string }[];
+}
+
+export interface InternalNetworkConfig {
+  enabled: boolean;
+  host_ip: string;
+  api_port: number;
+  frontend_port: number;
+  api_base_url: string;
+  frontend_url: string;
+  allowed_cidrs: string[];
+  bind_api_all_interfaces: boolean;
+  notes: string;
+}
+
+export interface CloudflareAccessConfig {
+  enabled: boolean;
+  tunnel_name: string;
+  tunnel_id: string;
+  tunnel_token?: string;
+  tunnel_token_configured?: boolean;
+  tunnel_token_hint?: string;
+  account_id: string;
+  zone_id: string;
+  public_hostname: string;
+  public_api_url: string;
+  public_frontend_url: string;
+  access_application_name: string;
+  access_policy: string;
+  warp_required: boolean;
+  notes: string;
+}
+
+export interface QuickTunnelStatus {
+  cloudflared_installed: boolean;
+  running: boolean;
+  status: "running" | "stopped" | string;
+  api_url: string;
+  frontend_url: string;
+  api_pid?: number | null;
+  frontend_pid?: number | null;
+  started_at?: string | null;
+  restart_hint?: string;
+  env_hint?: string;
+  message?: string;
+}
+
+export interface NetworkAccessConfig {
+  internal: InternalNetworkConfig;
+  cloudflare: CloudflareAccessConfig;
+  cors_extra_origins: string[];
+  suggested_cors_origins: string[];
+  env_cors_origins?: string[];
+  auth_enabled?: boolean;
+  effective_access_mode?: string;
+  quick_tunnel?: QuickTunnelStatus;
+  restart_hint?: string;
+  saved?: boolean;
 }
 
 export interface KnowledgeOptionItem {
@@ -1262,6 +1453,25 @@ export interface TechSpecDocument {
 export interface TechSpecStreamEvent {
   type: "status" | "log" | "token" | "preview" | "done" | "error" | string;
   data: Record<string, unknown>;
+}
+
+export interface BudgetSkeletonSubEtapa {
+  name: string;
+}
+
+export interface BudgetSkeletonEtapa {
+  name: string;
+  sub_etapas: BudgetSkeletonSubEtapa[];
+}
+
+export interface BudgetSkeleton {
+  id: string;
+  name: string;
+  description: string;
+  obra_type: string;
+  etapas: BudgetSkeletonEtapa[];
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface BudgetSummary {

@@ -116,6 +116,28 @@ def test_sinapi_metadata_columns_imported():
 
 
 @pytest.mark.skipif(_fixture_path() is None, reason="Planilha local nao presente")
+def test_composition_95995_cbuq_1518_am_uses_sp_when_no_local_coleta():
+    """03/2026: insumo 1518 sem preço AM na ISD usa SP (512,50); 05/2026 usa AM (815)."""
+    parse_fn = getattr(sp, "parse_sinapi_full_workbook")
+    path = _fixture_path()
+    bank_mar = parse_fn(
+        Path(__file__).resolve().parents[1]
+        / "knowledge"
+        / "sync"
+        / "price_bases"
+        / "sinapi"
+        / "SINAPI_Referência_2026_03.xlsx",
+        uf="AM",
+    )
+    item_mar = next(i for i in bank_mar["open"]["95995"].items if i.code == "1518")
+    assert item_mar.unit_price == pytest.approx(512.5, abs=0.02)
+
+    bank_may = parse_fn(path, uf="AM")
+    item_may = next(i for i in bank_may["open"]["95995"].items if i.code == "1518")
+    assert item_may.unit_price == pytest.approx(815.0, abs=0.02)
+
+
+@pytest.mark.skipif(_fixture_path() is None, reason="Planilha local nao presente")
 def test_sinapi_labor_charges_am():
     bank = sp.parse_sinapi_full_workbook(_fixture_path(), uf="AM")
     labor = bank.get("labor_charges") or {}

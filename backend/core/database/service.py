@@ -11,6 +11,7 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from core.database.connection import is_db_enabled, session_scope
+from core.database.conversation_access import user_owns_conversation
 from core.database.repository import DatabaseRepository
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ def save_conversation(
     db: Optional[Session] = None,
     title: Optional[str] = None,
     project_id: Optional[str | uuid.UUID] = None,
+    user_id: Optional[uuid.UUID] = None,
 ) -> Optional[dict[str, Any]]:
     """
     Persiste uma conversa e retorna representação serializada.
@@ -49,6 +51,7 @@ def save_conversation(
                 mode=mode,
                 title=title,
                 project_id=proj_id,
+                user_id=user_id,
             )
             db.commit()
             return DatabaseRepository.serialize_conversation_summary(conversation)
@@ -60,6 +63,7 @@ def save_conversation(
                 mode=mode,
                 title=title,
                 project_id=proj_id,
+                user_id=user_id,
             )
             return DatabaseRepository.serialize_conversation_summary(conversation)
     except Exception as exc:
@@ -72,6 +76,7 @@ def ensure_conversation(
     mode: str = "single",
     conversation_id: Optional[str | uuid.UUID] = None,
     project_id: Optional[str | uuid.UUID] = None,
+    user_id: Optional[uuid.UUID] = None,
     db: Optional[Session] = None,
 ) -> Optional[dict[str, Any]]:
     """
@@ -88,6 +93,8 @@ def ensure_conversation(
         if conv_id:
             conversation = repo.get_conversation(conv_id)
             if conversation:
+                if not user_owns_conversation(conversation, user_id):
+                    return None
                 if proj_id and conversation.project_id != proj_id:
                     repo.update_conversation(conversation, project_id=proj_id)
                 return DatabaseRepository.serialize_conversation_summary(conversation)
@@ -95,6 +102,7 @@ def ensure_conversation(
             input_text=text,
             mode=mode,
             project_id=proj_id,
+            user_id=user_id,
         )
         return DatabaseRepository.serialize_conversation_summary(conversation)
 
@@ -115,6 +123,7 @@ def append_conversation_messages(
     user_text: str,
     assistant_text: str,
     assistant_meta: Optional[dict] = None,
+    user_id: Optional[uuid.UUID] = None,
     db: Optional[Session] = None,
 ) -> bool:
     """Persiste par user/assistant na conversa."""
@@ -128,7 +137,7 @@ def append_conversation_messages(
     def _run(session: Session) -> bool:
         repo = DatabaseRepository(session)
         conversation = repo.get_conversation(conv_id)
-        if not conversation:
+        if not conversation or not user_owns_conversation(conversation, user_id):
             return False
         repo.create_message(conv_id, "user", user_text)
         repo.create_message(conv_id, "assistant", assistant_text, meta=assistant_meta)
@@ -149,6 +158,7 @@ def append_conversation_messages(
 def build_thread_context(
     conversation_id: str | uuid.UUID,
     limit: int = 12,
+    user_id: Optional[uuid.UUID] = None,
     db: Optional[Session] = None,
 ) -> str:
     """Monta histórico textual para continuidade multi-turn."""
@@ -162,10 +172,16 @@ def build_thread_context(
     try:
         if db is not None:
             repo = DatabaseRepository(db)
+            conversation = repo.get_conversation(conv_id)
+            if not conversation or not user_owns_conversation(conversation, user_id):
+                return ""
             messages = repo.list_messages(conv_id, limit=limit)
         else:
             with session_scope() as session:
                 repo = DatabaseRepository(session)
+                conversation = repo.get_conversation(conv_id)
+                if not conversation or not user_owns_conversation(conversation, user_id):
+                    return ""
                 messages = repo.list_messages(conv_id, limit=limit)
 
         if not messages:
@@ -187,6 +203,7 @@ def list_conversations(
     limit: int = 50,
     project_id: Optional[str | uuid.UUID] = None,
     unassigned_only: bool = False,
+    user_id: Optional[uuid.UUID] = None,
     db: Optional[Session] = None,
 ) -> list[dict[str, Any]]:
     if not is_db_enabled():
@@ -201,6 +218,7 @@ def list_conversations(
                 limit=limit,
                 project_id=proj_id,
                 unassigned_only=unassigned_only,
+                user_id=user_id,
             )
             return [DatabaseRepository.serialize_conversation_summary(c) for c in rows]
 
@@ -210,6 +228,7 @@ def list_conversations(
                 limit=limit,
                 project_id=proj_id,
                 unassigned_only=unassigned_only,
+                user_id=user_id,
             )
             return [DatabaseRepository.serialize_conversation_summary(c) for c in rows]
     except Exception as exc:
@@ -219,6 +238,7 @@ def list_conversations(
 
 def get_conversation_detail(
     conversation_id: str | uuid.UUID,
+    user_id: Optional[uuid.UUID] = None,
     db: Optional[Session] = None,
 ) -> Optional[dict[str, Any]]:
     if not is_db_enabled():
@@ -232,14 +252,14 @@ def get_conversation_detail(
         if db is not None:
             repo = DatabaseRepository(db)
             conversation = repo.get_conversation_detail(conv_id)
-            if not conversation:
+            if not conversation or not user_owns_conversation(conversation, user_id):
                 return None
             return DatabaseRepository.serialize_conversation(conversation)
 
         with session_scope() as session:
             repo = DatabaseRepository(session)
             conversation = repo.get_conversation_detail(conv_id)
-            if not conversation:
+            if not conversation or not user_owns_conversation(conversation, user_id):
                 return None
             return DatabaseRepository.serialize_conversation(conversation)
     except Exception as exc:
@@ -252,6 +272,7 @@ def update_conversation_record(
     *,
     title: Optional[str] = None,
     project_id: Optional[str | uuid.UUID | None] = _SENTINEL,  # noqa: ANN001
+    user_id: Optional[uuid.UUID] = None,
     db: Optional[Session] = None,
 ) -> Optional[dict[str, Any]]:
     if not is_db_enabled():
@@ -271,7 +292,7 @@ def update_conversation_record(
         if db is not None:
             repo = DatabaseRepository(db)
             conversation = repo.get_conversation(conv_id)
-            if not conversation:
+            if not conversation or not user_owns_conversation(conversation, user_id):
                 return None
             repo.update_conversation(conversation, **fields)
             db.commit()
@@ -280,7 +301,7 @@ def update_conversation_record(
         with session_scope() as session:
             repo = DatabaseRepository(session)
             conversation = repo.get_conversation(conv_id)
-            if not conversation:
+            if not conversation or not user_owns_conversation(conversation, user_id):
                 return None
             repo.update_conversation(conversation, **fields)
             return DatabaseRepository.serialize_conversation_summary(conversation)
@@ -291,6 +312,7 @@ def update_conversation_record(
 
 def delete_conversation_record(
     conversation_id: str | uuid.UUID,
+    user_id: Optional[uuid.UUID] = None,
     db: Optional[Session] = None,
 ) -> bool:
     if not is_db_enabled():
@@ -303,11 +325,17 @@ def delete_conversation_record(
     try:
         if db is not None:
             repo = DatabaseRepository(db)
+            conversation = repo.get_conversation(conv_id)
+            if not conversation or not user_owns_conversation(conversation, user_id):
+                return False
             ok = repo.delete_conversation(conv_id)
             db.commit()
             return ok
         with session_scope() as session:
             repo = DatabaseRepository(session)
+            conversation = repo.get_conversation(conv_id)
+            if not conversation or not user_owns_conversation(conversation, user_id):
+                return False
             return repo.delete_conversation(conv_id)
     except Exception as exc:
         logger.warning("Falha ao deletar conversation: %s", exc)
@@ -317,6 +345,7 @@ def delete_conversation_record(
 def search_workspace(
     query: str,
     limit: int = 30,
+    user_id: Optional[uuid.UUID] = None,
     db: Optional[Session] = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Busca projetos e conversas por título, texto ou mensagens."""
@@ -331,7 +360,7 @@ def search_workspace(
         if db is not None:
             repo = DatabaseRepository(db)
             projects = repo.search_projects(q, limit=proj_limit)
-            conversations = repo.search_conversations(q, limit=conv_limit)
+            conversations = repo.search_conversations(q, limit=conv_limit, user_id=user_id)
             return {
                 "projects": [DatabaseRepository.serialize_project(p) for p in projects],
                 "conversations": [
@@ -342,7 +371,7 @@ def search_workspace(
         with session_scope() as session:
             repo = DatabaseRepository(session)
             projects = repo.search_projects(q, limit=proj_limit)
-            conversations = repo.search_conversations(q, limit=conv_limit)
+            conversations = repo.search_conversations(q, limit=conv_limit, user_id=user_id)
             return {
                 "projects": [DatabaseRepository.serialize_project(p) for p in projects],
                 "conversations": [
@@ -399,6 +428,7 @@ def create_project_record(
 
 def get_project_detail(
     project_id: str | uuid.UUID,
+    user_id: Optional[uuid.UUID] = None,
     db: Optional[Session] = None,
 ) -> Optional[dict[str, Any]]:
     if not is_db_enabled():
@@ -414,14 +444,18 @@ def get_project_detail(
             project = repo.get_project_detail(pid)
             if not project:
                 return None
-            return DatabaseRepository.serialize_project(project, include_children=True)
+            return DatabaseRepository.serialize_project(
+                project, include_children=True, user_id=user_id
+            )
 
         with session_scope() as session:
             repo = DatabaseRepository(session)
             project = repo.get_project_detail(pid)
             if not project:
                 return None
-            return DatabaseRepository.serialize_project(project, include_children=True)
+            return DatabaseRepository.serialize_project(
+                project, include_children=True, user_id=user_id
+            )
     except Exception as exc:
         logger.warning("Falha ao obter project: %s", exc)
         return None
@@ -690,6 +724,7 @@ def save_agent_run(
 def get_history(
     limit: int = 50,
     conversation_id: Optional[str | uuid.UUID] = None,
+    user_id: Optional[uuid.UUID] = None,
     db: Optional[Session] = None,
 ) -> list[dict[str, Any]]:
     """Retorna histórico de conversas com logs e execuções de agentes."""
@@ -703,9 +738,12 @@ def get_history(
             repo = DatabaseRepository(db)
             if conv_id:
                 conversation = repo.get_conversation_detail(conv_id)
-                if conversation:
+                if conversation and user_owns_conversation(conversation, user_id):
                     return [DatabaseRepository.serialize_conversation(conversation)]
-            conversations = repo.get_history(limit=limit, conversation_id=conv_id)
+                return []
+            conversations = repo.get_history(
+                limit=limit, conversation_id=conv_id, user_id=user_id
+            )
             return [
                 DatabaseRepository.serialize_conversation(c, include_audit=True)
                 for c in conversations
@@ -715,9 +753,12 @@ def get_history(
             repo = DatabaseRepository(session)
             if conv_id:
                 conversation = repo.get_conversation_detail(conv_id)
-                if conversation:
+                if conversation and user_owns_conversation(conversation, user_id):
                     return [DatabaseRepository.serialize_conversation(conversation)]
-            conversations = repo.get_history(limit=limit, conversation_id=conv_id)
+                return []
+            conversations = repo.get_history(
+                limit=limit, conversation_id=conv_id, user_id=user_id
+            )
             return [
                 DatabaseRepository.serialize_conversation(c, include_audit=True)
                 for c in conversations

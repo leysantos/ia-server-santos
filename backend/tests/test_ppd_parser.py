@@ -3,15 +3,19 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-PPD_PATH = Path(__file__).resolve().parents[2] / "planilhas-exemplos" / "19_PPD_MC_OR_R01-Nivel-1-2-Marco2026-14-05-2026.xlsm"
+from tests.conftest import PPD_EXAMPLE_PATH, requires_ppd_example
+
+PPD_PATH = PPD_EXAMPLE_PATH
 
 
+@requires_ppd_example
 def test_ppd_parse_example_workbook():
     from pricing.budget.ppd_parser import parse_ppd_workbook
 
-    assert PPD_PATH.exists(), f"Planilha exemplo não encontrada: {PPD_PATH}"
     metadata, items, info = parse_ppd_workbook(PPD_PATH)
 
     assert metadata.projeto
@@ -21,6 +25,7 @@ def test_ppd_parse_example_workbook():
     assert metadata.bdi.rate_com_desoneracao > 0
 
 
+@requires_ppd_example
 def test_ppd_parse_has_etapas_and_services():
     from pricing.budget.ppd_parser import parse_ppd_workbook
 
@@ -37,6 +42,7 @@ def test_ppd_parse_has_etapas_and_services():
     assert any(s.total_price > 0 for s in services)
 
 
+@requires_ppd_example
 def test_ppd_extract_price_base():
     from pricing.budget.ppd_parser import extract_price_base_rows
 
@@ -46,6 +52,7 @@ def test_ppd_extract_price_base():
     assert rows[0]["price"] > 0
 
 
+@requires_ppd_example
 def test_ppd_extract_price_base_includes_seminf_and_container():
     from pricing.budget.ppd_parser import extract_price_base_rows
 
@@ -55,6 +62,7 @@ def test_ppd_extract_price_base_includes_seminf_and_container():
     assert any("container" in r["description"].lower() for r in rows)
 
 
+@requires_ppd_example
 def test_ppd_seminf_services_use_dp_seminf_source_base():
     from pricing.budget.ppd_parser import parse_ppd_workbook
 
@@ -74,6 +82,7 @@ def test_ppd_seminf_services_use_dp_seminf_source_base():
         assert svc.source_base.replace("-", "").upper() in ("DPSEMINF", "SEMINF", "PPDSEMINF")
 
 
+@requires_ppd_example
 def test_ppd_export_roundtrip():
     from pricing.budget.ppd_exporter import export_ppd_xlsx
     from pricing.budget.ppd_parser import parse_ppd_workbook
@@ -84,6 +93,7 @@ def test_ppd_export_roundtrip():
     assert len(xlsx) > 5000
 
 
+@requires_ppd_example
 def test_import_ppd_api():
     from app.routes.pricing import import_ppd_from_path
     from pricing.budget.budget_session import SESSION_STORE

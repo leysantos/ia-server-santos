@@ -1595,13 +1595,13 @@ export default function SettingsPriceBasesPage() {
                 </ul>
               </div>
             )}
-            <table className="w-full text-left text-xs text-slate-400">
+            <table className="w-full table-fixed text-left text-xs text-slate-400">
               <thead>
                 <tr className="border-b border-slate-700 text-slate-500">
-                  <th className="py-2 pr-2">Tipo</th>
-                  <th className="py-2 pr-2">Classif.</th>
-                  <th className="py-2 pr-2">Código</th>
-                  <th className="py-2 pr-2">Descrição</th>
+                  <th className="w-[4.5rem] py-2 pr-2">Tipo</th>
+                  <th className="w-[4rem] py-2 pr-2">Classif.</th>
+                  <th className="w-[4.5rem] py-2 pr-2">Código</th>
+                  <th className="w-[38%] py-2 pr-2">Descrição</th>
                   <th className="py-2 pr-2">Und</th>
                   <th className="py-2 pr-2 text-right">Coef.</th>
                   <th className="py-2 pr-2" title="Origem de preço SINAPI (C, CR…)">
@@ -1633,7 +1633,9 @@ export default function SettingsPriceBasesPage() {
                       <td className="py-1.5 pr-2 text-cyan-400/90">{cpuItemTypeLabel(item.item_type)}</td>
                       <td className="py-1.5 pr-2 text-slate-400">{item.classificacao || "—"}</td>
                       <td className="py-1.5 pr-2 font-mono">{item.code}</td>
-                      <td className="py-1.5 pr-2">{item.description}</td>
+                      <td className="whitespace-normal break-words py-1.5 pr-2 align-top leading-snug">
+                        {item.description}
+                      </td>
                       <td className="py-1.5 pr-2">{item.unit}</td>
                       <td className="py-1.5 pr-2 text-right tabular-nums">{item.coefficient}</td>
                       <td className="py-1.5 pr-2 font-mono text-slate-400">{item.origem_preco || "—"}</td>

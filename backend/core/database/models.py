@@ -125,6 +125,9 @@ class Conversation(Base):
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True
     )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -136,6 +139,7 @@ class Conversation(Base):
     )
 
     project: Mapped["Project | None"] = relationship(back_populates="conversations")
+    owner: Mapped["User | None"] = relationship(back_populates="conversations")
     messages: Mapped[list["ConversationMessage"]] = relationship(
         back_populates="conversation",
         cascade="all, delete-orphan",
@@ -760,3 +764,77 @@ class ProjectDecision(Base):
     )
 
     project: Mapped["Project | None"] = relationship(back_populates="decisions")
+
+
+class User(Base):
+    """Usuário do sistema — autenticação JWT e controle de acesso."""
+
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    username: Mapped[str] = mapped_column(String(80), nullable=False, unique=True, index=True)
+    email: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    full_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    password_hash: Mapped[str] = mapped_column(String(200), nullable=False)
+    role: Mapped[str] = mapped_column(String(40), nullable=False, default="dev_user", index=True)
+    module_permissions: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    conversations: Mapped[list["Conversation"]] = relationship(back_populates="owner")
+
+    def to_dict(
+        self,
+        *,
+        include_timestamps: bool = True,
+        module_permissions: dict | None = None,
+        role_label: str | None = None,
+    ) -> dict:
+        data = {
+            "id": str(self.id),
+            "username": self.username,
+            "email": self.email,
+            "full_name": self.full_name,
+            "role": self.role,
+            "role_label": role_label or self.role,
+            "is_active": self.is_active,
+        }
+        if module_permissions is not None:
+            data["module_permissions"] = module_permissions
+        if include_timestamps:
+            data["created_at"] = self.created_at.isoformat() if self.created_at else None
+            data["updated_at"] = self.updated_at.isoformat() if self.updated_at else None
+        return data
+
+
+class UserRoleDefinition(Base):
+    """Tipo de usuário — papéis customizáveis com permissões por módulo."""
+
+    __tablename__ = "user_role_definitions"
+
+    slug: Mapped[str] = mapped_column(String(40), primary_key=True)
+    label: Mapped[str] = mapped_column(String(120), nullable=False)
+    module_permissions: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "slug": self.slug,
+            "label": self.label,
+            "module_permissions": self.module_permissions,
+            "is_system": self.is_system,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

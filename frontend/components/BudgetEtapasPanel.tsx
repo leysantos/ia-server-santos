@@ -375,7 +375,7 @@ function GroupSection({
             rows={Math.min(12, Math.max(3, prompt.split("\n").length + 1))}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder={"base sicro\n(500 m²) pavimentação, (150 m²) pintura de ligação\n\nOu: (6 mes) engenheiro civil"}
+            placeholder={"base sicro\n94295 10 m2\n93567; 6 mes\n(500 m²) pavimentação, (150 m²) pintura"}
             className={cn(budgetTextarea, "font-mono leading-relaxed")}
           />
           <div className="flex w-full flex-col gap-2 md:flex-row md:items-stretch">
@@ -757,7 +757,7 @@ export default function BudgetEtapasPanel({ session, loading, onUpdate, onError,
 
       {etapas.length === 0 && (
         <p className="text-center text-sm text-slate-500 py-8">
-          Adicione etapas ou importe um template de modelo.
+          Adicione etapas ou use um modelo WBS em Cadastrar modelo de orçamento.
         </p>
       )}
 

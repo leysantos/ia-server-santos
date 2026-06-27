@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 
 interface ActionDialogProps {
@@ -94,7 +95,12 @@ export default function ActionDialog({
   onCancel,
 }: ActionDialogProps) {
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const [mounted, setMounted] = useState(false);
   const styles = VARIANT_STYLES[variant];
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -115,7 +121,7 @@ export default function ActionDialog({
     };
   }, [open, onCancel]);
 
-  if (!open) return null;
+  if (!open || !mounted) return null;
 
   const isConfirm = variant === "confirm";
 
@@ -133,9 +139,9 @@ export default function ActionDialog({
     onCancel();
   };
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-sm"
       role="presentation"
       onClick={onCancel}
     >
@@ -145,7 +151,7 @@ export default function ActionDialog({
         aria-labelledby="action-dialog-title"
         aria-describedby="action-dialog-message"
         className={cn(
-          "w-full max-w-md rounded-2xl bg-slate-900 p-6 shadow-2xl ring-1",
+          "w-full max-w-md rounded-2xl bg-slate-900 p-6 shadow-2xl ring-1 transition-all duration-200",
           styles.ring
         )}
         onClick={(e) => e.stopPropagation()}
@@ -188,6 +194,7 @@ export default function ActionDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

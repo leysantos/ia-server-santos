@@ -101,9 +101,14 @@ def test_resolve_archive_on_page_amazonas():
 
 
 def test_list_imported_sicro_ufs_filters_period(tmp_path, monkeypatch):
+    from pricing.budget import price_bank_index as pbi
     from pricing.budget.price_bank_index import PriceBankIndex, PriceBankReferenceEntry
     from pricing.budget.price_bank_store import CLOSED_NAME, PriceBankStore
     from pricing.sync.sicro_portal_resolver import list_imported_sicro_ufs, sicro_reference_key
+
+    bank_root = tmp_path / "price_bank"
+    monkeypatch.setattr(pbi, "PRICE_BANK_ROOT", bank_root)
+    bank_root.mkdir(parents=True, exist_ok=True)
 
     ref_am = sicro_reference_key("AM", 2026, 1)
     ref_sp = sicro_reference_key("SP", 2026, 4)

@@ -12,13 +12,14 @@ from core.database.service import build_thread_context
 def compose_thread_input(
     text: str,
     conversation_id: Optional[str] = None,
+    user_id=None,
     db: Optional[Session] = None,
 ) -> str:
     """Injeta histórico recente antes da nova mensagem."""
     if not conversation_id:
         return text
 
-    thread = build_thread_context(conversation_id, limit=12, db=db)
+    thread = build_thread_context(conversation_id, limit=12, user_id=user_id, db=db)
     if not thread:
         return text
 

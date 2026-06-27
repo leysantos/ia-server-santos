@@ -28,6 +28,8 @@ def migrate_workspace(engine) -> None:
         alters.append("ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0")
     if "project_id" not in existing_cols:
         alters.append("ADD COLUMN project_id UUID")
+    if "user_id" not in existing_cols:
+        alters.append("ADD COLUMN user_id UUID")
 
     if alters:
         ddl = "ALTER TABLE conversations " + ", ".join(alters)
@@ -50,11 +52,30 @@ def migrate_workspace(engine) -> None:
         except Exception:
             pass
 
+    inspector = inspect(engine)
+    if "conversations" in inspector.get_table_names():
+        existing_cols = {c["name"] for c in inspector.get_columns("conversations")}
+        if "user_id" in existing_cols and "users" in inspector.get_table_names():
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "UPDATE conversations SET user_id = ("
+                        "SELECT id FROM users WHERE username = 'admin' "
+                        "ORDER BY created_at LIMIT 1"
+                        ") WHERE user_id IS NULL"
+                    )
+                )
+
     # Título derivado para conversas legadas
+    dialect = engine.dialect.name
+    if dialect == "sqlite":
+        title_expr = "SUBSTR(input_text, 1, 80)"
+    else:
+        title_expr = "LEFT(input_text, 80)"
     with engine.begin() as conn:
         conn.execute(
             text(
-                "UPDATE conversations SET title = LEFT(input_text, 80) "
+                f"UPDATE conversations SET title = {title_expr} "
                 "WHERE title IS NULL AND input_text IS NOT NULL"
             )
         )

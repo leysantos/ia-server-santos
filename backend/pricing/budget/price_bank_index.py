@@ -15,6 +15,8 @@ from config.settings import KNOWLEDGE_DIR
 PRICE_BANK_ROOT = KNOWLEDGE_DIR / "price_bank"
 INDEX_NAME = "index.json"
 REF_PATTERN = re.compile(r"^BR-(\d{4})-(\d{2})$", re.I)
+# Pastas BR-* com manifest (SINAPI, SICRO, SEMINF, …)
+BANK_DIR_PATTERN = re.compile(r"^BR-.+$", re.I)
 
 
 @dataclass
@@ -59,20 +61,18 @@ class PriceBankIndex:
         idx.reconcile_with_disk()
         return idx
 
-    def reconcile_with_disk(self) -> bool:
+    def reconcile_with_disk(self, *, prune_orphans: bool = False) -> bool:
         """
-        Garante que pastas BR-YYYY-MM no disco apareçam no index.json.
-        Recupera períodos importados antes da correção de índice multi-período.
+        Sincroniza index.json com pastas BR-* no disco (manifest.json).
+        - Adiciona referências presentes no disco mas ausentes do índice.
+        - Atualiza contagens/metadados quando o manifest no disco mudou.
+        - Com prune_orphans=True, remove entradas sem pasta correspondente.
         """
         if not PRICE_BANK_ROOT.is_dir():
             return False
-        known = {r.reference for r in self.references}
-        changed = False
+        disk_refs: dict[str, PriceBankReferenceEntry] = {}
         for child in sorted(PRICE_BANK_ROOT.iterdir()):
-            if not child.is_dir() or not REF_PATTERN.match(child.name):
-                continue
-            ref = child.name.upper()
-            if ref in known:
+            if not child.is_dir() or not BANK_DIR_PATTERN.match(child.name):
                 continue
             manifest_path = child / "manifest.json"
             if not manifest_path.is_file():
@@ -81,18 +81,47 @@ class PriceBankIndex:
                 data = json.loads(manifest_path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 continue
-            self.references.append(
-                PriceBankReferenceEntry(
-                    reference=ref,
-                    source=str(data.get("source") or "sinapi"),
-                    synced_at=str(data.get("synced_at") or ""),
-                    default_uf=str(data.get("uf") or "SP").upper(),
-                    counts=dict(data.get("counts") or {}),
-                    metadata=dict(data.get("metadata") or {}),
-                )
+            ref = child.name.upper()
+            disk_refs[ref] = PriceBankReferenceEntry(
+                reference=ref,
+                source=str(data.get("source") or "sinapi"),
+                synced_at=str(data.get("synced_at") or ""),
+                default_uf=str(data.get("uf") or "SP").upper(),
+                counts=dict(data.get("counts") or {}),
+                metadata=dict(data.get("metadata") or {}),
             )
-            known.add(ref)
-            changed = True
+
+        changed = False
+        by_ref = {r.reference: r for r in self.references}
+        for ref, entry in disk_refs.items():
+            existing = by_ref.get(ref)
+            if existing is None:
+                self.references.append(entry)
+                by_ref[ref] = entry
+                changed = True
+            elif (
+                existing.source != entry.source
+                or existing.synced_at != entry.synced_at
+                or existing.default_uf != entry.default_uf
+                or existing.counts != entry.counts
+                or existing.metadata != entry.metadata
+            ):
+                existing.source = entry.source
+                existing.synced_at = entry.synced_at
+                existing.default_uf = entry.default_uf
+                existing.counts = entry.counts
+                existing.metadata = entry.metadata
+                changed = True
+
+        if prune_orphans:
+            before = len(self.references)
+            self.references = [r for r in self.references if r.reference in disk_refs]
+            if len(self.references) != before:
+                changed = True
+            if self.active_reference and self.active_reference not in disk_refs:
+                self.active_reference = self.references[0].reference if self.references else ""
+                changed = True
+
         if not changed:
             return False
         self.references.sort(
@@ -101,6 +130,10 @@ class PriceBankIndex:
         )
         self.save()
         return True
+
+    def prune_orphan_references(self) -> bool:
+        """Remove do índice referências sem pasta/manifest no disco."""
+        return self.reconcile_with_disk(prune_orphans=True)
 
     def save(self) -> None:
         PRICE_BANK_ROOT.mkdir(parents=True, exist_ok=True)

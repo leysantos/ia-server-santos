@@ -3,12 +3,15 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import ShellHeader, { ShellFooter } from "@/components/ShellHeader";
+import BudgetSidebarNav from "@/components/BudgetSidebarNav";
 import SystemBenchmarkPanel from "@/components/SystemBenchmarkPanel";
+import { useAuth } from "@/context/AuthContext";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   {
     href: "/chat",
+    moduleId: "chat",
     label: "Chat IA",
     description: "Single-domain",
     icon: (
@@ -18,17 +21,8 @@ const navItems = [
     ),
   },
   {
-    href: "/budget",
-    label: "Orçamento",
-    description: "Pricing Engine",
-    icon: (
-      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-      </svg>
-    ),
-  },
-  {
     href: "/orchestrate",
+    moduleId: "orchestrate",
     label: "Orquestrador",
     description: "Multi-disciplinar",
     icon: (
@@ -38,7 +32,30 @@ const navItems = [
     ),
   },
   {
+    href: "/copilot",
+    moduleId: "copilot",
+    label: "Copilot",
+    description: "Planejamento IA",
+    icon: (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+      </svg>
+    ),
+  },
+  {
+    href: "/aed",
+    moduleId: "aed",
+    label: "AED",
+    description: "Design autônomo",
+    icon: (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+      </svg>
+    ),
+  },
+  {
     href: "/projects",
+    moduleId: "projects",
     label: "Projetos",
     description: "Workspace",
     icon: (
@@ -49,6 +66,7 @@ const navItems = [
   },
   {
     href: "/console",
+    moduleId: "console",
     label: "Console",
     description: "Ops · GPU · Live",
     icon: (
@@ -59,6 +77,7 @@ const navItems = [
   },
   {
     href: "/history",
+    moduleId: "history",
     label: "Histórico",
     description: "PostgreSQL",
     icon: (
@@ -69,6 +88,7 @@ const navItems = [
   },
   {
     href: "/settings",
+    moduleId: "settings",
     label: "Configurações",
     description: "Base de conhecimento",
     icon: (
@@ -82,6 +102,8 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { user, authEnabled, logout, canAccessModule } = useAuth();
+  const initials = (user?.full_name || user?.username || "U").slice(0, 1).toUpperCase();
 
   return (
     <aside className="flex h-full w-56 shrink-0 flex-col border-r border-white/5 bg-surface/90 backdrop-blur-xl md:w-64">
@@ -100,24 +122,42 @@ export default function Sidebar() {
       </ShellHeader>
 
       <nav className="flex-1 space-y-1 overflow-y-auto p-3">
+        <BudgetSidebarNav />
         {navItems.map((item) => {
+          const access = canAccessModule(item.moduleId);
+          if (!access.visible) return null;
           const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                "flex items-center gap-3 rounded-xl px-3 py-3 transition-all",
-                active
-                  ? "bg-brand-500/10 text-brand-300 ring-1 ring-brand-500/30"
-                  : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
-              )}
-            >
-              <span className={active ? "text-brand-400" : "text-slate-500"}>{item.icon}</span>
+          const className = cn(
+            "flex items-center gap-3 rounded-xl px-3 py-3 transition-all",
+            access.blocked
+              ? "cursor-not-allowed text-slate-600 opacity-60"
+              : active
+                ? "bg-brand-500/10 text-brand-300 ring-1 ring-brand-500/30"
+                : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+          );
+          const inner = (
+            <>
+              <span className={active && !access.blocked ? "text-brand-400" : "text-slate-500"}>
+                {item.icon}
+              </span>
               <div className="min-w-0">
                 <p className="text-sm font-medium">{item.label}</p>
-                <p className="text-xs opacity-60">{item.description}</p>
+                <p className="text-xs opacity-60">
+                  {access.blocked ? "Acesso bloqueado" : item.description}
+                </p>
               </div>
+            </>
+          );
+          if (access.blocked) {
+            return (
+              <div key={item.href} className={className} title="Módulo visível, acesso bloqueado">
+                {inner}
+              </div>
+            );
+          }
+          return (
+            <Link key={item.href} href={item.href} className={className}>
+              {inner}
             </Link>
           );
         })}
@@ -131,12 +171,26 @@ export default function Sidebar() {
         <div className="app-card w-full p-3">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface-elevated text-xs font-medium text-slate-300 ring-1 ring-white/10">
-              U
+              {initials}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-slate-200">Usuário Demo</p>
-              <p className="truncate text-xs text-slate-500">Auth em breve</p>
+              <p className="truncate text-sm font-medium text-slate-200">
+                {user?.full_name || user?.username || "Convidado"}
+              </p>
+              <p className="truncate text-xs text-slate-500">
+                {authEnabled ? user?.role_label || user?.role || "—" : "Auth desabilitada"}
+              </p>
             </div>
+            {authEnabled && user ? (
+              <button
+                type="button"
+                onClick={logout}
+                className="shrink-0 text-xs text-slate-500 hover:text-slate-300"
+                title="Sair"
+              >
+                Sair
+              </button>
+            ) : null}
           </div>
         </div>
       </ShellFooter>

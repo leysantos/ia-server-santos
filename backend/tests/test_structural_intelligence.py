@@ -90,7 +90,12 @@ def test_engine_full_pipeline():
     assert "NBR 8800 trechos relevantes" in prompt
 
 
-def test_dispatch_adapter_success():
+def test_dispatch_adapter_success(monkeypatch):
+    from config import settings
+
+    monkeypatch.setattr(settings, "USE_MODEL_ROUTER", False)
+    monkeypatch.setattr(settings, "USE_MODEL_EVALUATION", False)
+
     agent = MagicMock()
     agent.use_rag = False
     agent.retrieve_context.return_value = ""

@@ -2,6 +2,8 @@ from typing import Generator, Optional
 
 from config.settings import USE_INTENT_LAYER
 from core.conversation_context import build_assistant_meta, compose_thread_input
+from core.database.conversation_access import conversation_user_id
+from core.database.models import User
 from core.project_rag import resolve_project_id
 from core.database.service import append_conversation_messages, ensure_conversation
 from core.intent_layer import iter_intent_events
@@ -20,6 +22,7 @@ class ChatStreamService:
         conversation_id: Optional[str] = None,
         project_id: Optional[str] = None,
         llm_model: Optional[str] = None,
+        user: Optional[User] = None,
     ) -> Generator[str, None, None]:
         yield format_sse(
             "status",
@@ -34,6 +37,7 @@ class ChatStreamService:
                 conversation_id=conversation_id,
                 project_id=project_id,
                 llm_model=llm_model,
+                user=user,
             )
         except Exception as exc:
             import logging
@@ -60,7 +64,9 @@ class ChatStreamService:
         conversation_id: Optional[str],
         project_id: Optional[str],
         llm_model: Optional[str] = None,
+        user: Optional[User] = None,
     ) -> Generator[str, None, None]:
+        user_id = conversation_user_id(user)
         active_conversation_id = conversation_id
         if persist:
             conversation = ensure_conversation(
@@ -68,7 +74,12 @@ class ChatStreamService:
                 mode="single",
                 conversation_id=conversation_id,
                 project_id=project_id,
+                user_id=user_id,
             )
+            if conversation_id and not conversation:
+                yield format_sse("error", {"message": "Conversa não encontrada", "phase": "error"})
+                yield format_sse("done", {"error": True, "response": "Conversa não encontrada"})
+                return
             if conversation:
                 active_conversation_id = conversation.get("id")
 
@@ -82,7 +93,7 @@ class ChatStreamService:
             yield format_sse("error", {"message": "Streaming requer USE_INTENT_LAYER=true"})
             return
 
-        agent_input = compose_thread_input(text, active_conversation_id)
+        agent_input = compose_thread_input(text, active_conversation_id, user_id=user_id)
         final_output: dict | None = None
 
         with track_stream_job(
@@ -145,4 +156,5 @@ class ChatStreamService:
                 user_text=text,
                 assistant_text=result_text,
                 assistant_meta=build_assistant_meta(final_output),
+                user_id=user_id,
             )

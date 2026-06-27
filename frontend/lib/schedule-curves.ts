@@ -224,6 +224,32 @@ function rowForTask(rows: BudgetRow[], task: ScheduleTask): BudgetRow | undefine
   return rows.find((r) => r.row_id === task.budget_row_id);
 }
 
+function leafTaskForService(schedule: ProjectSchedule, rowId: string): ScheduleTask | undefined {
+  return schedule.tasks.find(
+    (t) => t.budget_row_id === rowId && !t.is_summary && t.early_start && t.early_finish
+  );
+}
+
+function servicePhysicalWeight(row: BudgetRow): number {
+  const qty = Math.max(0, row.quantity ?? 1);
+  return qty > 0 ? qty : 1;
+}
+
+function serviceFinancialCost(row: BudgetRow): number {
+  return row.total_effective ?? row.total_price ?? 0;
+}
+
+/** Serviços (S) sem tarefa folha com datas no cronograma */
+export function unscheduledServiceRows(
+  schedule: ProjectSchedule,
+  rows: BudgetRow[]
+): BudgetRow[] {
+  return rows.filter(
+    (r) =>
+      r.row_type === "S" && !r.is_memory_row && !leafTaskForService(schedule, r.row_id)
+  );
+}
+
 function leafTasksForCurve(
   schedule: ProjectSchedule,
   visibleTasks?: ScheduleTask[]
@@ -360,11 +386,23 @@ export function buildScheduleCurvesByMonth(
     totalPhysicalWeight += weight;
     totalFinancial += cost;
   }
-  if (totalPhysicalWeight <= 0) totalPhysicalWeight = leaves.length || 1;
+
+  const orphans = unscheduledServiceRows(schedule, rows);
+  let orphanWeight = 0;
+  let orphanCost = 0;
+  for (const row of orphans) {
+    orphanWeight += servicePhysicalWeight(row);
+    orphanCost += serviceFinancialCost(row);
+  }
+  totalPhysicalWeight += orphanWeight;
+  totalFinancial += orphanCost;
+
+  if (totalPhysicalWeight <= 0) totalPhysicalWeight = leaves.length || orphans.length || 1;
 
   const months: MonthBucket[] = [];
   let physicalCum = 0;
   let financialCum = 0;
+  let orphansAllocated = false;
 
   for (let m = 0; m < monthCount; m++) {
     const mStart = monthStartDate(projectStart, m);
@@ -389,6 +427,12 @@ export function buildScheduleCurvesByMonth(
       if (overlap <= 0) continue;
       physicalMonth += (weight * overlap) / dur;
       financialMonth += (cost * overlap) / dur;
+    }
+
+    if (!orphansAllocated && (orphanWeight > 0 || orphanCost > 0)) {
+      physicalMonth += orphanWeight;
+      financialMonth += orphanCost;
+      orphansAllocated = true;
     }
 
     const physicalMonthlyPct = (physicalMonth / totalPhysicalWeight) * 100;

@@ -3,9 +3,13 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-PPD_PATH = Path(__file__).resolve().parents[2] / "planilhas-exemplos" / "19_PPD_MC_OR_R01-Nivel-1-2-Marco2026-14-05-2026.xlsm"
+from tests.conftest import PPD_EXAMPLE_PATH, requires_ppd_example
+
+PPD_PATH = PPD_EXAMPLE_PATH
 
 
 def test_bdi_table_rates():
@@ -39,6 +43,7 @@ def test_detect_obra_type():
     assert detect_obra_type(text="edificação comercial") == "ED"
 
 
+@requires_ppd_example
 def test_ppd_import_detects_rf():
     from pricing.budget.ppd_parser import parse_ppd_workbook
 

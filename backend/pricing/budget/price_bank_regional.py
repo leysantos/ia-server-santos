@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from pricing.budget.sinapi_caixa_pricing import (
+    regional_as_from_merged_regional,
+    resolve_composicao_unit_price_caixa,
+    resolve_insumo_unit_price_caixa,
+)
 from pricing.budget.tp2_as import apply_tp2_to_items, merge_tp2
 
 
@@ -13,16 +18,26 @@ def _classify_composicao(code: str, item_type: str) -> bool:
 
 
 def _uf_price(reg: dict[str, Any], uf: str, *, sem: bool, fallback: float = 0.0) -> float:
-    """Lê preço de regional[UF] = {comd, semd}; fallback se UF ausente."""
-    entry = reg.get(uf)
-    if isinstance(entry, dict):
-        key = "semd" if sem else "comd"
-        val = entry.get(key) or entry.get("sem" if sem else "com")
-        if val is not None:
-            return float(val)
-    elif isinstance(entry, (int, float)):
-        return float(entry)
-    return float(fallback or 0)
+    """Total sintético fechado — preço CSD/CCD da UF (sem fallback SP)."""
+    return resolve_composicao_unit_price_caixa(reg, uf, sem=sem, fallback=fallback)
+
+
+def resolve_insumo_unit_price(
+    regional: dict[str, Any],
+    uf: str,
+    *,
+    sem: bool,
+    regional_as: dict[str, dict[str, float]] | None = None,
+    fallback: float = 0.0,
+) -> float:
+    """Preço unitário de insumo — fórmula Caixa (UF → regional_as → SP)."""
+    return resolve_insumo_unit_price_caixa(
+        regional,
+        uf,
+        sem=sem,
+        regional_as=regional_as,
+        fallback=fallback,
+    )
 
 
 def _uf_pct_as(reg: dict[str, Any], uf: str, *, sem: bool) -> float:
@@ -75,28 +90,25 @@ def apply_uf_to_open_composition(
             row = closed_by_code.get(code)
             if row:
                 reg = row.get("regional") or {}
-                if uf in reg:
-                    return _uf_price(
-                        reg,
-                        uf,
-                        sem=sem,
-                        fallback=float(row.get("price_sem_desoneracao" if sem else "price") or 0),
-                    )
-                return float(
-                    row.get("price_sem_desoneracao" if sem else "price") or 0
+                fallback = float(row.get("price_sem_desoneracao" if sem else "price") or 0)
+                return resolve_composicao_unit_price_caixa(
+                    reg, uf, sem=sem, fallback=fallback
                 )
             return 0.0
         row = insumo_by_code.get(code)
         if row:
             reg = row.get("regional") or {}
-            if uf in reg:
-                return _uf_price(
-                    reg,
-                    uf,
-                    sem=sem,
-                    fallback=float(row.get("price_sem_desoneracao" if sem else "price") or 0),
-                )
-            return float(row.get("price_sem_desoneracao" if sem else "price") or 0)
+            fallback = float(row.get("price_sem_desoneracao" if sem else "price") or 0)
+            regional_as = row.get("regional_as")
+            if not regional_as and reg:
+                regional_as = regional_as_from_merged_regional(reg)
+            return resolve_insumo_unit_price(
+                reg,
+                uf,
+                sem=sem,
+                regional_as=regional_as,
+                fallback=fallback,
+            )
         return 0.0
 
     items_out: list[dict[str, Any]] = []

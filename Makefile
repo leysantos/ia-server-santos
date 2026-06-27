@@ -1,4 +1,4 @@
-.PHONY: setup setup-backend setup-frontend api db-init index-nbrs index-knowledge backup-app restore test test-backend frontend docker-up auto-tune agent-generation workflow-worker workflow-infra
+.PHONY: setup setup-backend setup-frontend api db-init index-nbrs index-knowledge index-price-bases backup-app restore test test-backend test-cov test-project-rag smoke-e2e validate-project-rag validate-price-bases frontend docker-up auto-tune agent-generation workflow-worker workflow-infra libreoffice validate-lan cloudflare-setup cloudflare-run cloudflare-service cloudflare-quick
 
 BACKEND_DIR := backend
 FRONTEND_DIR := frontend
@@ -30,6 +30,12 @@ index-nbrs:
 index-knowledge:
 	cd $(BACKEND_DIR) && $(BACKEND_PYTHON) scripts/index_knowledge_bases.py
 
+index-price-bases:
+	cd $(BACKEND_DIR) && $(BACKEND_PYTHON) scripts/index_price_bases.py --force
+
+validate-price-bases:
+	@bash scripts/validate_price_bases.sh $(API_BASE)
+
 backup-app:
 	bash scripts/maintenance/run_backup.sh app,database,knowledge,faiss
 
@@ -42,6 +48,23 @@ endif
 
 test test-backend:
 	cd $(BACKEND_DIR) && $(BACKEND_PYTHON) -m pytest tests/ -v
+
+test-cov:
+	cd $(BACKEND_DIR) && $(BACKEND_PYTHON) -m pytest tests/ -v \
+		--cov=core --cov=app/services \
+		--cov-report=term-missing:skip-covered \
+		--cov-report=html:htmlcov \
+		--cov-fail-under=0
+	@echo "Relatório HTML: backend/htmlcov/index.html (meta sugerida: 60% em core/ e app/services/)"
+
+smoke-e2e:
+	@bash scripts/smoke_e2e.sh $(API_BASE)
+
+test-project-rag:
+	cd $(BACKEND_DIR) && $(BACKEND_PYTHON) -m pytest tests/test_project_rag_e2e.py tests/test_project_file_extractors.py -v
+
+validate-project-rag:
+	@bash scripts/validate_project_rag.sh $(API_BASE)
 
 frontend:
 	cd $(FRONTEND_DIR) && npm run dev
@@ -60,3 +83,21 @@ auto-tune:
 
 agent-generation:
 	cd $(BACKEND_DIR) && $(BACKEND_PYTHON) scripts/run_agent_generation.py $(ARGS)
+
+libreoffice:
+	@bash scripts/install_libreoffice_wsl.sh
+
+validate-lan:
+	@bash scripts/validate_lan_access.sh $(HOST)
+
+cloudflare-setup:
+	@bash scripts/cloudflare/setup_tunnel.sh
+
+cloudflare-run:
+	@bash scripts/cloudflare/run_tunnel.sh
+
+cloudflare-service:
+	@bash scripts/cloudflare/install_service.sh
+
+cloudflare-quick:
+	@bash scripts/cloudflare/quick_tunnel.sh

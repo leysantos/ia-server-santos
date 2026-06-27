@@ -17,7 +17,9 @@ from app.schemas.workspace import (
     WorkspaceSearchResponse,
 )
 from app.services.workspace_service import WorkspaceService
+from core.auth.dependencies import get_current_user
 from core.database import get_db
+from core.database.models import User
 
 router = APIRouter(tags=["Workspace"])
 workspace_service = WorkspaceService()
@@ -28,8 +30,9 @@ def search_workspace(
     q: str = Query(..., min_length=1, max_length=200),
     limit: int = Query(default=30, ge=1, le=100),
     db: Session = Depends(get_db),
+    user: User | None = Depends(get_current_user),
 ):
-    return WorkspaceSearchResponse(**workspace_service.search(q, limit=limit, db=db))
+    return WorkspaceSearchResponse(**workspace_service.search(q, limit=limit, db=db, user=user))
 
 
 @router.get("/projects/formats")
@@ -57,8 +60,12 @@ def create_project(
 
 
 @router.get("/projects/{project_id}", response_model=ProjectDetail)
-def get_project(project_id: str, db: Session = Depends(get_db)):
-    return ProjectDetail(**workspace_service.get_project(project_id, db=db))
+def get_project(
+    project_id: str,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_current_user),
+):
+    return ProjectDetail(**workspace_service.get_project(project_id, db=db, user=user))
 
 
 @router.patch("/projects/{project_id}", response_model=ProjectSummary)
@@ -131,6 +138,7 @@ def list_conversations(
     project_id: Optional[str] = Query(default=None),
     unassigned_only: bool = Query(default=False),
     db: Session = Depends(get_db),
+    user: User | None = Depends(get_current_user),
 ):
     return ConversationListResponse(
         **workspace_service.list_conversations(
@@ -138,13 +146,20 @@ def list_conversations(
             project_id=project_id,
             unassigned_only=unassigned_only,
             db=db,
+            user=user,
         )
     )
 
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationDetail)
-def get_conversation(conversation_id: str, db: Session = Depends(get_db)):
-    return ConversationDetail(**workspace_service.get_conversation(conversation_id, db=db))
+def get_conversation(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_current_user),
+):
+    return ConversationDetail(
+        **workspace_service.get_conversation(conversation_id, db=db, user=user)
+    )
 
 
 @router.patch("/conversations/{conversation_id}", response_model=ConversationSummary)
@@ -152,6 +167,7 @@ def update_conversation(
     conversation_id: str,
     body: ConversationUpdateRequest,
     db: Session = Depends(get_db),
+    user: User | None = Depends(get_current_user),
 ):
     unset = "project_id" in body.model_fields_set
     return ConversationSummary(
@@ -161,13 +177,18 @@ def update_conversation(
             project_id=body.project_id,
             update_project=unset,
             db=db,
+            user=user,
         )
     )
 
 
 @router.delete("/conversations/{conversation_id}")
-def delete_conversation(conversation_id: str, db: Session = Depends(get_db)):
-    return workspace_service.delete_conversation(conversation_id, db=db)
+def delete_conversation(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_current_user),
+):
+    return workspace_service.delete_conversation(conversation_id, db=db, user=user)
 
 
 @router.get("/projects/{project_id}/activity")

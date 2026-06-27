@@ -55,6 +55,40 @@ def test_apply_uf_uses_nested_regional_prices_not_top_level_keys():
     assert sp["items"][0]["unit_price"] == 100.0
 
 
+def test_apply_uf_falls_back_to_sp_when_uf_price_missing():
+    """Insumo sem coleta na UF (tp2/%AS) usa preço SP — ex. CBUQ 1518 em AM."""
+    insumos = [
+        {
+            "code": "1518",
+            "description": "CBUQ",
+            "unit": "T",
+            "price": 512.5,
+            "regional": {
+                "SP": {"comd": 512.5, "semd": 512.5},
+                "AM": {"comd": 0.0, "semd": 0.0},
+            },
+        }
+    ]
+    raw = {
+        "code": "95995",
+        "items": [
+            {
+                "code": "1518",
+                "item_type": "insumo",
+                "coefficient": 2.5663714,
+                "unit_price": 0.0,
+                "partial_cost": 0.0,
+                "tp2": "AS",
+            }
+        ],
+    }
+    result = apply_uf_to_open_composition(
+        raw, uf="AM", closed_rows=[], insumo_rows=insumos
+    )
+    assert result["items"][0]["unit_price"] == pytest.approx(512.5, abs=0.01)
+    assert result["items"][0]["partial_cost"] == pytest.approx(1315.26, abs=0.5)
+
+
 def test_apply_uf_keeps_stored_item_prices_when_insumo_missing():
     """SEMINF: CPUs com itens SINAPI sem catálogo de insumos na base regional."""
     closed = [

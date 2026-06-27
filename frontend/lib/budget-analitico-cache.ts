@@ -1,4 +1,5 @@
 import type { OpenCompositionDetail } from "@/types/api";
+import { invalidateAllHistogramCaches } from "@/lib/budget-histogram-cache";
 
 export type CachedCompositionEntry =
   | { status: "loaded"; detail: OpenCompositionDetail }
@@ -50,6 +51,8 @@ export function invalidateCompositionReference(reference: string): void {
       compositionCache.delete(key);
     }
   }
+  // Bundles/modelo do histograma dependem das CPUs — limpar cache derivado
+  invalidateAllHistogramCaches();
 }
 
 export async function loadBankReferencesCached(

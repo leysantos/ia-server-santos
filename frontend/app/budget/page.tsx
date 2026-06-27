@@ -6,6 +6,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import ActionDialog from "@/components/ActionDialog";
 import BudgetAnaliticoTab from "@/components/BudgetAnaliticoTab";
 import BudgetCpuSearchTab from "@/components/BudgetCpuSearchTab";
+import BudgetCurvaAbcTab from "@/components/BudgetCurvaAbcTab";
+import BudgetCurvaSTab from "@/components/BudgetCurvaSTab";
+import BudgetHistogramaTab from "@/components/BudgetHistogramaTab";
 import BudgetDadosTab from "@/components/BudgetDadosTab";
 import BudgetEtapasPanel from "@/components/BudgetEtapasPanel";
 import BudgetHistoricoTab from "@/components/BudgetHistoricoTab";
@@ -14,18 +17,21 @@ import BudgetSchedulePanel from "@/components/BudgetSchedulePanel";
 import BudgetTechSpecPanel from "@/components/BudgetTechSpecPanel";
 import BudgetSpreadsheet from "@/components/BudgetSpreadsheet";
 import BudgetToolbar from "@/components/BudgetToolbar";
+import BudgetNewModal from "@/components/BudgetNewModal";
 import type { ProjectFormValues } from "@/components/BudgetProjectForm";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ShellHeader from "@/components/ShellHeader";
 import { useActivity } from "@/context/ActivityContext";
-import { api, BUDGET_SESSION_RESTORED, formatApiError, restoreBudgetSessionFromStorage, syncBudgetSessionSnapshot } from "@/services/api";
+import { api, BUDGET_SESSION_RESTORED, downloadApiFile, formatApiError, restoreBudgetSessionFromStorage, syncBudgetSessionSnapshot } from "@/services/api";
 import type {
   BdiObraType,
   BudgetPriceBaseSelection,
   BudgetSessionResponse,
+  BudgetSkeleton,
   BudgetSummary,
 } from "@/types/api";
 import { cn } from "@/lib/utils";
+import { prefetchBudgetServiceCompositions } from "@/hooks/useBudgetServiceCompositions";
 
 type BudgetTabId =
   | "dados"
@@ -35,6 +41,9 @@ type BudgetTabId =
   | "busca_cpu"
   | "memoria"
   | "cronograma"
+  | "curva_abc"
+  | "curva_s"
+  | "histograma"
   | "especificacao"
   | "historico";
 
@@ -54,6 +63,9 @@ const BUDGET_TABS: { id: BudgetTabId; label: string }[] = [
   { id: "busca_cpu", label: "Busca CPU" },
   { id: "memoria", label: "Memória de cálculo" },
   { id: "cronograma", label: "Cronograma" },
+  { id: "curva_abc", label: "Curva ABC" },
+  { id: "curva_s", label: "Curva S" },
+  { id: "histograma", label: "Histograma" },
   { id: "especificacao", label: "Especificação técnica" },
   { id: "historico", label: "Histórico" },
 ];
@@ -142,6 +154,8 @@ function BudgetPageContent() {
   const [projectName, setProjectName] = useState<string | null>(null);
   const projectDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { pushActivity } = useActivity();
+  const [showNewModal, setShowNewModal] = useState(false);
+  const actionParam = searchParams.get("action");
 
   const setActiveTab = useCallback(
     (tab: BudgetTabId) => {
@@ -161,6 +175,19 @@ function BudgetPageContent() {
   useEffect(() => {
     setActiveTabState(parseBudgetTab(searchParams.get("tab")));
   }, [searchParams]);
+
+  useEffect(() => {
+    syncBudgetSessionSnapshot(session);
+  }, [session]);
+
+  /** Pré-carrega CPUs do histograma em background quando há cronograma. */
+  useEffect(() => {
+    if (!session?.session_id || !session.schedule?.project_start) return;
+    const timer = window.setTimeout(() => {
+      void prefetchBudgetServiceCompositions(session);
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [session]);
 
   useEffect(() => {
     let cancelled = false;
@@ -222,8 +249,50 @@ function BudgetPageContent() {
   }, [projectId]);
 
   useEffect(() => {
-    syncBudgetSessionSnapshot(session);
-  }, [session]);
+    if (restoringSession) return;
+    if (actionParam === "new") {
+      setShowNewModal(true);
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("action");
+      const qs = params.toString();
+      router.replace(qs ? `/budget?${qs}` : "/budget", { scroll: false });
+    }
+  }, [actionParam, restoringSession, router, searchParams]);
+
+  const applyDefaultPriceBases = useCallback(async (result: BudgetSessionResponse) => {
+    try {
+      const refs = await api.pricingSyncBankReferences();
+      const first = refs.references?.[0];
+      if (first?.reference) {
+        return api.pricingUpdateProject(result.session_id, {
+          price_bases: [
+            {
+              source: "sinapi",
+              label: "SINAPI",
+              enabled: true,
+              uf: "SP",
+              reference: first.reference,
+            },
+          ],
+        });
+      }
+    } catch {
+      /* aplica depois na UI */
+    }
+    return result;
+  }, []);
+
+  const finalizeNewSession = useCallback(
+    async (result: BudgetSessionResponse, tab: BudgetTabId = "dados") => {
+      const nextSession = await applyDefaultPriceBases(result);
+      setSession(nextSession);
+      if (nextSession.project?.obra_type) setObraType(nextSession.project.obra_type);
+      setActiveTab(tab);
+      setShowNewModal(false);
+    },
+    [applyDefaultPriceBases, setActiveTab]
+  );
+
 
   useEffect(() => {
     const onRestored = (event: Event) => {
@@ -323,34 +392,49 @@ function BudgetPageContent() {
     }
   };
 
-  const handleNew = async () => {
+  const handleExportPdf = async (docKey: string, label: string) => {
+    if (!session) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await downloadApiFile(
+        `/pricing/budget/${session.session_id}/export/pdf/${docKey}`,
+        `${docKey.toUpperCase()}_${session.session_id.slice(0, 8)}.pdf`
+      );
+    } catch (err) {
+      showActionError(err, `Falha ao gerar PDF ${label}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleExportExcel = async (docKey: string, label: string) => {
+    if (!session) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await downloadApiFile(
+        `/pricing/budget/${session.session_id}/export/xlsx/${docKey}`,
+        `${docKey.toUpperCase()}_${session.session_id.slice(0, 8)}.xlsx`
+      );
+    } catch (err) {
+      showActionError(err, `Falha ao gerar Excel ${label}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleNew = () => {
+    setShowNewModal(true);
+  };
+
+  const handleNewBlank = async () => {
     setLoading(true);
     setError(null);
     setActiveDbId(null);
     try {
       const result = await api.pricingNewTemplate(obraType);
-      let nextSession = result;
-      try {
-        const refs = await api.pricingSyncBankReferences();
-        const first = refs.references?.[0];
-        if (first?.reference) {
-          nextSession = await api.pricingUpdateProject(result.session_id, {
-            price_bases: [
-              {
-                source: "sinapi",
-                label: "SINAPI",
-                enabled: true,
-                uf: "SP",
-                reference: first.reference,
-              },
-            ],
-          });
-        }
-      } catch {
-        /* aplica depois na UI */
-      }
-      setSession(nextSession);
-      setActiveTab("dados");
+      await finalizeNewSession(result, "dados");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao criar orçamento");
     } finally {
@@ -358,36 +442,23 @@ function BudgetPageContent() {
     }
   };
 
-  const handleImportTemplate = async (file: File) => {
+  const handleNewFromSkeleton = async (skeleton: BudgetSkeleton, projeto: string) => {
     setLoading(true);
     setError(null);
+    setActiveDbId(null);
     try {
-      let result = await api.pricingImportModelTemplate(file, session?.session_id);
-      setSession(result);
-      if (result.project?.obra_type) setObraType(result.project.obra_type);
-      setActiveTab("etapas");
+      const result = await api.pricingNewFromSkeleton(skeleton.id, {
+        projeto: projeto || skeleton.name,
+        obraType: skeleton.obra_type || obraType,
+      });
+      await finalizeNewSession(result, "etapas");
     } catch (err) {
-      if (
-        session &&
-        formatApiError(err instanceof Error ? err.message : String(err)).includes("Sessão não encontrada")
-      ) {
-        try {
-          syncBudgetSessionSnapshot(session);
-          const result = await api.pricingImportModelTemplate(file);
-          setSession(result);
-          if (result.project?.obra_type) setObraType(result.project.obra_type);
-          setActiveTab("etapas");
-          return;
-        } catch (retryErr) {
-          setError(formatApiError(retryErr instanceof Error ? retryErr.message : String(retryErr)));
-          return;
-        }
-      }
-      setError(formatApiError(err instanceof Error ? err.message : String(err)));
+      setError(err instanceof Error ? err.message : "Erro ao criar orçamento");
     } finally {
       setLoading(false);
     }
   };
+
 
   const handleCellEdit = useCallback(
     async (rowId: string, field: string, value: number | string, code?: string) => {
@@ -543,7 +614,7 @@ function BudgetPageContent() {
           <h1 className="text-lg font-semibold text-white">Orçamento de Obra</h1>
           {!isFullHeightView && (
             <p className="text-sm text-slate-500">
-              Dados da obra · etapas · sintético · analítico · histórico
+              Dados da obra · etapas · sintético · analítico · curvas · histórico
             </p>
           )}
           {projectId && (
@@ -573,12 +644,10 @@ function BudgetPageContent() {
             hasSession={!!session}
             loading={loading}
             onNew={handleNew}
-            onImportTemplate={handleImportTemplate}
             onSave={session ? handleSave : undefined}
             onRenumber={session ? handleRenumberItemization : undefined}
-            onExport={
-              session ? () => window.open(api.pricingExportUrl(session.session_id), "_blank") : undefined
-            }
+            onExportExcel={session ? (key, label) => void handleExportExcel(key, label) : undefined}
+            onExportPdf={session ? (key, label) => void handleExportPdf(key, label) : undefined}
           />
 
           {error && (
@@ -619,7 +688,6 @@ function BudgetPageContent() {
             <BudgetHistoricoTab
               savedItems={savedItems}
               activeId={activeDbId}
-              projectId={linkedProjectId}
               projectFilterLabel={projectId ? projectName ?? "Projeto selecionado" : null}
               onOpen={handleOpenSaved}
               onDelete={handleDeleteSaved}
@@ -634,9 +702,60 @@ function BudgetPageContent() {
             </div>
           )}
 
+          {session && (
+            <div className={cn(activeTab !== "curva_abc" && "hidden")}>
+              <BudgetCurvaAbcTab
+                session={session}
+                onExportPdf={handleExportPdf}
+                onExportExcel={handleExportExcel}
+                exportDisabled={loading}
+              />
+            </div>
+          )}
+
+          {session && (
+            <div className={cn(activeTab !== "curva_s" && "hidden")}>
+              <BudgetCurvaSTab
+                session={session}
+                onExportPdf={handleExportPdf}
+                onExportExcel={handleExportExcel}
+                exportDisabled={loading}
+              />
+            </div>
+          )}
+
+          {session && (
+            <div className={cn(activeTab !== "histograma" && "hidden")}>
+              <BudgetHistogramaTab
+                session={session}
+                onExportPdf={handleExportPdf}
+                onExportExcel={handleExportExcel}
+                exportDisabled={loading}
+              />
+            </div>
+          )}
+
           {activeTab === "analitico" && !session && !loading && !restoringSession && (
             <p className="text-center text-sm text-slate-500 py-8">
               Abra ou crie um orçamento para ver o espelho analítico dos serviços lançados.
+            </p>
+          )}
+
+          {activeTab === "curva_abc" && !session && !loading && !restoringSession && (
+            <p className="text-center text-sm text-slate-500 py-8">
+              Abra ou crie um orçamento para ver a curva ABC.
+            </p>
+          )}
+
+          {activeTab === "curva_s" && !session && !loading && !restoringSession && (
+            <p className="text-center text-sm text-slate-500 py-8">
+              Abra ou crie um orçamento para ver a curva S.
+            </p>
+          )}
+
+          {activeTab === "histograma" && !session && !loading && !restoringSession && (
+            <p className="text-center text-sm text-slate-500 py-8">
+              Abra ou crie um orçamento para ver o histograma de demanda mensal.
             </p>
           )}
 
@@ -644,7 +763,7 @@ function BudgetPageContent() {
             <BudgetCpuSearchTab priceBases={sessionPriceBases} />
           )}
 
-          {session && activeTab !== "historico" && activeTab !== "analitico" && activeTab !== "busca_cpu" && (
+          {session && activeTab !== "historico" && activeTab !== "analitico" && activeTab !== "busca_cpu" && activeTab !== "curva_abc" && activeTab !== "curva_s" && activeTab !== "histograma" && (
             <div className={cn("relative", isFullHeightView ? "flex min-h-0 flex-1 flex-col gap-2" : "space-y-4")}>
               {loading && (
                 <div className="absolute inset-0 z-10 flex items-start justify-center rounded-xl bg-slate-950/60 pt-24 backdrop-blur-sm">
@@ -750,6 +869,15 @@ function BudgetPageContent() {
           )}
         </div>
       </div>
+
+      <BudgetNewModal
+        open={showNewModal}
+        obraType={obraType}
+        loading={loading}
+        onClose={() => setShowNewModal(false)}
+        onSelectBlank={() => void handleNewBlank()}
+        onSelectSkeleton={(sk, projeto) => void handleNewFromSkeleton(sk, projeto)}
+      />
 
       <ActionDialog
         open={dialog.open}

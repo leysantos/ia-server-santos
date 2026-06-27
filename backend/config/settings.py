@@ -70,6 +70,22 @@ class AppSettings(BaseSettings):
     db_enabled: bool = Field(default=True, validation_alias="DB_ENABLED")
     database_url: str | None = Field(default=None, validation_alias="DATABASE_URL")
 
+    # --- Auth JWT ---
+    auth_enabled: bool = Field(default=True, validation_alias="AUTH_ENABLED")
+    jwt_secret: str = Field(
+        default="change-me-jwt-secret-in-production",
+        validation_alias="JWT_SECRET",
+    )
+    jwt_expire_minutes: int = Field(default=480, validation_alias="JWT_EXPIRE_MINUTES")
+    auth_seed_admin_password: str = Field(
+        default="Admin@2026!",
+        validation_alias="AUTH_SEED_ADMIN_PASSWORD",
+    )
+    auth_seed_dev_password: str = Field(
+        default="Dev@2026!",
+        validation_alias="AUTH_SEED_DEV_PASSWORD",
+    )
+
     # --- CORS ---
     cors_allowed_origins: list[str] = Field(
         default_factory=lambda: [
@@ -222,6 +238,11 @@ _LEGACY_FIELD_MAP: dict[str, str] = {
     "DB_USER": "db_user",
     "DB_PASSWORD": "db_password",
     "DB_ENABLED": "db_enabled",
+    "AUTH_ENABLED": "auth_enabled",
+    "JWT_SECRET": "jwt_secret",
+    "JWT_EXPIRE_MINUTES": "jwt_expire_minutes",
+    "AUTH_SEED_ADMIN_PASSWORD": "auth_seed_admin_password",
+    "AUTH_SEED_DEV_PASSWORD": "auth_seed_dev_password",
     "CORS_ALLOWED_ORIGINS": "cors_allowed_origins",
     "OLLAMA_BASE_URL": "ollama_base_url",
     "OLLAMA_EMBED_MODEL": "ollama_embed_model",

@@ -70,6 +70,7 @@ def _get_budget_engine() -> BudgetEngineV2:
     return _budget_engine
 
 
+
 def _get_orchestrator() -> BudgetOrchestrator:
     global _orchestrator
     if _orchestrator is None:
@@ -176,6 +177,29 @@ class ProjectUpdateRequest(BaseModel):
 
 class EtapaCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
+
+
+class BudgetSkeletonSubEtapaInput(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+
+
+class BudgetSkeletonEtapaInput(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    sub_etapas: list[BudgetSkeletonSubEtapaInput] = Field(default_factory=list)
+
+
+class BudgetSkeletonCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    obra_type: str = Field(default="RF", max_length=16)
+    etapas: list[BudgetSkeletonEtapaInput] = Field(default_factory=list)
+
+
+class BudgetSkeletonUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    obra_type: Optional[str] = Field(default=None, max_length=16)
+    etapas: Optional[list[BudgetSkeletonEtapaInput]] = None
 
 
 class SubEtapaCreateRequest(BaseModel):
@@ -553,6 +577,86 @@ def create_ppd_template(
         roots=roots,
         title=meta.projeto,
         intent={"template": True},
+        project=meta,
+    )
+    return session.to_dict()
+
+
+@router.get("/budget/skeletons")
+def list_budget_skeletons_route():
+    """Lista esqueletos de orçamento cadastrados (etapas/sub-etapas)."""
+    from pricing.budget.budget_skeleton_store import list_budget_skeletons
+
+    items = list_budget_skeletons()
+    return {"items": items, "count": len(items)}
+
+
+@router.get("/budget/skeletons/{skeleton_id}")
+def get_budget_skeleton_route(skeleton_id: str):
+    from pricing.budget.budget_skeleton_store import get_budget_skeleton
+
+    sk = get_budget_skeleton(skeleton_id)
+    if not sk:
+        raise HTTPException(status_code=404, detail="Esqueleto não encontrado")
+    return sk
+
+
+@router.post("/budget/skeletons")
+def create_budget_skeleton_route(body: BudgetSkeletonCreateRequest):
+    from pricing.budget.budget_skeleton_store import create_budget_skeleton
+
+    try:
+        return create_budget_skeleton(body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/budget/skeletons/{skeleton_id}")
+def update_budget_skeleton_route(skeleton_id: str, body: BudgetSkeletonUpdateRequest):
+    from pricing.budget.budget_skeleton_store import update_budget_skeleton
+
+    try:
+        return update_budget_skeleton(skeleton_id, body.model_dump(exclude_unset=True))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Esqueleto não encontrado") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/budget/skeletons/{skeleton_id}")
+def delete_budget_skeleton_route(skeleton_id: str):
+    from pricing.budget.budget_skeleton_store import delete_budget_skeleton
+
+    try:
+        delete_budget_skeleton(skeleton_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Esqueleto não encontrado") from None
+    return {"deleted": skeleton_id}
+
+
+@router.post("/budget/new-from-skeleton")
+def create_budget_from_skeleton_route(
+    skeleton_id: str = Query(..., min_length=1),
+    projeto: str = Query(default=""),
+    obra_type: Optional[str] = Query(default=None),
+):
+    """Cria sessão de orçamento a partir de esqueleto cadastrado."""
+    from pricing.budget.budget_skeleton_store import (
+        build_budget_tree_from_skeleton,
+        get_budget_skeleton,
+    )
+
+    skeleton = get_budget_skeleton(skeleton_id)
+    if not skeleton:
+        raise HTTPException(status_code=404, detail="Esqueleto não encontrado")
+
+    meta, roots = build_budget_tree_from_skeleton(
+        skeleton, projeto=projeto, obra_type=obra_type
+    )
+    session = SESSION_STORE.create(
+        roots=roots,
+        title=meta.projeto,
+        intent={"template": True, "skeleton_id": skeleton_id},
         project=meta,
     )
     return session.to_dict()
@@ -1942,16 +2046,133 @@ def update_budget_cell(session_id: str, body: CellUpdateRequest):
 
 
 @router.get("/budget/{session_id}/export")
-def export_budget_excel(session_id: str, format: str = Query(default="ppd")):
+def export_budget_excel_legacy(session_id: str):
+    from pricing.budget.budget_export_service import export_session_workbook_xlsx
+
     engine = _get_budget_engine()
-    session = engine.get_session(session_id)
-    if not session:
+    if not engine.get_session(session_id):
         raise HTTPException(status_code=404, detail="Sessão não encontrada")
-    content = session.export_xlsx(format=format)
-    filename = f"PPD_OR_{session_id[:8]}.xlsx"
+    try:
+        content = export_session_workbook_xlsx(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
+    filename = f"Orcamento_{session_id[:8]}.xlsx"
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/budget/{session_id}/export/xlsx/{doc_type}")
+def export_budget_excel(session_id: str, doc_type: str):
+    from pricing.budget.budget_export_branding import EXPORT_DOC_TYPES
+    from pricing.budget.budget_export_service import export_session_xlsx
+
+    key = doc_type.strip().lower()
+    if key not in EXPORT_DOC_TYPES:
+        raise HTTPException(status_code=400, detail=f"Tipo inválido. Use: {', '.join(EXPORT_DOC_TYPES)}")
+    engine = _get_budget_engine()
+    if not engine.get_session(session_id):
+        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+    try:
+        content = export_session_xlsx(session_id, key)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    filename = f"{key.upper()}_{session_id[:8]}.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+class ExportBrandingUpdateRequest(BaseModel):
+    header_title: str | None = None
+    header_line1: str | None = None
+    header_line2: str | None = None
+    header_line3: str | None = None
+    footer_line1: str | None = None
+    footer_line2: str | None = None
+    show_logo: bool | None = None
+    show_brasao: bool | None = None
+
+
+@router.get("/budget/{session_id}/export/branding")
+def get_export_branding(session_id: str):
+    from core.system.company_profile import load_company_logo
+    from pricing.budget.budget_export_service import get_export_branding as _get_branding
+
+    engine = _get_budget_engine()
+    if not engine.get_session(session_id):
+        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+    branding = _get_branding(session_id)
+    return {**branding.to_dict(), "has_logo": load_company_logo() is not None}
+
+
+@router.patch("/budget/{session_id}/export/branding")
+def update_export_branding(session_id: str, body: ExportBrandingUpdateRequest):
+    from pricing.budget.budget_export_service import update_export_branding as _update
+
+    engine = _get_budget_engine()
+    if not engine.get_session(session_id):
+        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+    branding = _update(session_id, body.model_dump(exclude_unset=True))
+    return {"export_branding": branding.to_dict(), "session": engine.get_session(session_id).to_dict()}
+
+
+@router.post("/budget/{session_id}/export/logo")
+async def upload_export_logo(session_id: str, file: UploadFile = File(...)):
+    from core.system.company_profile import save_company_logo
+
+    engine = _get_budget_engine()
+    if not engine.get_session(session_id):
+        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Arquivo vazio")
+    content_type = file.content_type or "image/png"
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Envie uma imagem (PNG, JPG, etc.)")
+    save_company_logo(content, content_type=content_type)
+    from pricing.budget.budget_export_service import get_export_branding_status
+
+    return {"export_branding": get_export_branding_status(), "session": engine.get_session(session_id).to_dict()}
+
+
+@router.get("/budget/{session_id}/export/logo")
+def get_export_logo(session_id: str):
+    from core.system.company_profile import load_company_logo
+
+    engine = _get_budget_engine()
+    if not engine.get_session(session_id):
+        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+    logo = load_company_logo()
+    if not logo:
+        raise HTTPException(status_code=404, detail="Logo não configurada")
+    return Response(content=logo, media_type="image/png")
+
+
+@router.get("/budget/{session_id}/export/pdf/{doc_type}")
+def export_budget_pdf(session_id: str, doc_type: str):
+    from pricing.budget.budget_export_branding import EXPORT_DOC_TYPES
+    from pricing.budget.budget_export_service import export_session_pdf
+
+    key = doc_type.strip().lower()
+    if key not in EXPORT_DOC_TYPES:
+        raise HTTPException(status_code=400, detail=f"Tipo inválido. Use: {', '.join(EXPORT_DOC_TYPES)}")
+    try:
+        content = export_session_pdf(session_id, key)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    filename = f"{key.upper()}_{session_id[:8]}.pdf"
+    return Response(
+        content=content,
+        media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 

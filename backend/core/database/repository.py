@@ -41,6 +41,7 @@ class DatabaseRepository:
         mode: str = "single",
         title: Optional[str] = None,
         project_id: Optional[uuid.UUID] = None,
+        user_id: Optional[uuid.UUID] = None,
     ) -> Conversation:
         derived_title = title or (input_text[:80] + ("…" if len(input_text) > 80 else ""))
         conversation = Conversation(
@@ -48,6 +49,7 @@ class DatabaseRepository:
             mode=mode,
             title=derived_title,
             project_id=project_id,
+            user_id=user_id,
             message_count=0,
         )
         self.db.add(conversation)
@@ -67,8 +69,11 @@ class DatabaseRepository:
         limit: int = 50,
         project_id: Optional[uuid.UUID] = None,
         unassigned_only: bool = False,
+        user_id: Optional[uuid.UUID] = None,
     ) -> list[Conversation]:
         stmt = select(Conversation).order_by(desc(Conversation.updated_at)).limit(limit)
+        if user_id is not None:
+            stmt = stmt.where(Conversation.user_id == user_id)
         if project_id:
             stmt = stmt.where(Conversation.project_id == project_id)
         elif unassigned_only:
@@ -228,6 +233,7 @@ class DatabaseRepository:
         query: str,
         limit: int = 30,
         project_id: Optional[uuid.UUID] = None,
+        user_id: Optional[uuid.UUID] = None,
     ) -> list[Conversation]:
         pattern = f"%{query.strip()}%"
         msg_subq = (
@@ -247,6 +253,8 @@ class DatabaseRepository:
             .order_by(desc(Conversation.updated_at))
             .limit(limit)
         )
+        if user_id is not None:
+            stmt = stmt.where(Conversation.user_id == user_id)
         if project_id:
             stmt = stmt.where(Conversation.project_id == project_id)
         return list(self.db.scalars(stmt).all())
@@ -1056,12 +1064,15 @@ class DatabaseRepository:
         self,
         limit: int = 50,
         conversation_id: Optional[uuid.UUID] = None,
+        user_id: Optional[uuid.UUID] = None,
     ) -> list[Conversation]:
         stmt = (
             select(Conversation)
             .order_by(desc(Conversation.created_at))
             .limit(limit)
         )
+        if user_id is not None:
+            stmt = stmt.where(Conversation.user_id == user_id)
         if conversation_id:
             stmt = stmt.where(Conversation.id == conversation_id)
         return list(self.db.scalars(stmt).all())
@@ -1078,7 +1089,12 @@ class DatabaseRepository:
         }
 
     @staticmethod
-    def serialize_project(project: Project, *, include_children: bool = False) -> dict[str, Any]:
+    def serialize_project(
+        project: Project,
+        *,
+        include_children: bool = False,
+        user_id: Optional[uuid.UUID] = None,
+    ) -> dict[str, Any]:
         data: dict[str, Any] = {
             "id": str(project.id),
             "name": project.name,
@@ -1097,10 +1113,13 @@ class DatabaseRepository:
             "file_count": len(project.files) if project.files else 0,
         }
         if include_children:
+            convs = project.conversations or []
+            if user_id is not None:
+                convs = [c for c in convs if c.user_id == user_id]
             data["conversations"] = [
                 DatabaseRepository.serialize_conversation_summary(c)
                 for c in sorted(
-                    project.conversations,
+                    convs,
                     key=lambda x: x.updated_at or x.created_at,
                     reverse=True,
                 )

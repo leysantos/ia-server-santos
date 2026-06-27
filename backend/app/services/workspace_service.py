@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import time
-import uuid
 from pathlib import Path
+import uuid
 from typing import Optional
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.orm import Session
+
+from core.database.conversation_access import conversation_user_id
+from core.database.models import User
 
 from core.database.service import (
     add_project_file_record,
@@ -27,6 +31,8 @@ from core.database.service import (
 )
 
 PROJECTS_DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "projects"
+
+logger = logging.getLogger(__name__)
 
 
 class WorkspaceService:
@@ -54,8 +60,13 @@ class WorkspaceService:
                 pass
         return project
 
-    def get_project(self, project_id: str, db: Optional[Session] = None) -> dict:
-        project = get_project_detail(project_id, db=db)
+    def get_project(
+        self,
+        project_id: str,
+        db: Optional[Session] = None,
+        user: Optional[User] = None,
+    ) -> dict:
+        project = get_project_detail(project_id, user_id=conversation_user_id(user), db=db)
         if not project:
             raise HTTPException(status_code=404, detail="Projeto não encontrado")
         return project
@@ -92,17 +103,28 @@ class WorkspaceService:
         project_id: Optional[str] = None,
         unassigned_only: bool = False,
         db: Optional[Session] = None,
+        user: Optional[User] = None,
     ) -> dict:
         items = list_conversations(
             limit=limit,
             project_id=project_id,
             unassigned_only=unassigned_only,
+            user_id=conversation_user_id(user),
             db=db,
         )
         return {"total": len(items), "items": items}
 
-    def get_conversation(self, conversation_id: str, db: Optional[Session] = None) -> dict:
-        conversation = get_conversation_detail(conversation_id, db=db)
+    def get_conversation(
+        self,
+        conversation_id: str,
+        db: Optional[Session] = None,
+        user: Optional[User] = None,
+    ) -> dict:
+        conversation = get_conversation_detail(
+            conversation_id,
+            user_id=conversation_user_id(user),
+            db=db,
+        )
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversa não encontrada")
         return conversation
@@ -115,6 +137,7 @@ class WorkspaceService:
         project_id: Optional[str | None] = None,
         update_project: bool = False,
         db: Optional[Session] = None,
+        user: Optional[User] = None,
     ) -> dict:
         from core.database.service import _SENTINEL, update_conversation_record
 
@@ -122,14 +145,24 @@ class WorkspaceService:
             conversation_id,
             title=title,
             project_id=project_id if update_project else _SENTINEL,
+            user_id=conversation_user_id(user),
             db=db,
         )
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversa não encontrada")
         return conversation
 
-    def delete_conversation(self, conversation_id: str, db: Optional[Session] = None) -> dict:
-        if not delete_conversation_record(conversation_id, db=db):
+    def delete_conversation(
+        self,
+        conversation_id: str,
+        db: Optional[Session] = None,
+        user: Optional[User] = None,
+    ) -> dict:
+        if not delete_conversation_record(
+            conversation_id,
+            user_id=conversation_user_id(user),
+            db=db,
+        ):
             raise HTTPException(status_code=404, detail="Conversa não encontrada")
         return {"deleted": True, "id": conversation_id}
 
@@ -202,8 +235,6 @@ class WorkspaceService:
 
         if saved:
             try:
-                from pathlib import Path
-
                 from config.settings import get_settings
                 from app.services.workflow_service import WorkflowService
 
@@ -248,8 +279,14 @@ class WorkspaceService:
             raise HTTPException(status_code=404, detail="Projeto não encontrado")
         return reindex_project(project_id, project.get("files") or [], force=True)
 
-    def search(self, query: str, limit: int = 30, db: Optional[Session] = None) -> dict:
-        result = search_workspace(query, limit=limit, db=db)
+    def search(
+        self,
+        query: str,
+        limit: int = 30,
+        db: Optional[Session] = None,
+        user: Optional[User] = None,
+    ) -> dict:
+        result = search_workspace(query, limit=limit, user_id=conversation_user_id(user), db=db)
         return {
             "query": query.strip(),
             "projects": result["projects"],

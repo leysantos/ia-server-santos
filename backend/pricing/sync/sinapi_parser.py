@@ -520,6 +520,7 @@ def _parse_national_workbook(wb: Any, *, uf: str) -> dict[str, Any]:
     ccd = _matrix("ccd")
     isd = _matrix("isd")
     icd = _matrix("icd")
+    ise = _matrix("ise")
     analitico = _matrix("analítico") or _matrix("analitico")
 
     if not _is_national_matrix(csd):
@@ -563,18 +564,33 @@ def _parse_national_workbook(wb: Any, *, uf: str) -> dict[str, Any]:
 
     isd_all = _parse_insumos_national_all_ufs(isd, origin="ISD") if isd else []
     icd_all = _parse_insumos_national_all_ufs(icd, origin="ICD") if icd else []
+    ise_all = _parse_insumos_national_all_ufs(ise, origin="ISE") if ise else []
     icd_by_code = {code: reg for code, _, _, _, _, reg in icd_all}
+    ise_by_code = {code: reg for code, _, _, _, _, reg in ise_all}
     insumo_meta: dict[str, dict[str, str]] = {}
+
+    from pricing.budget.sinapi_caixa_pricing import (
+        build_insumo_regional_as,
+        resolve_insumo_unit_price_caixa,
+    )
 
     insumos: list[InsumoRecord] = []
     for code, desc, unit, classificacao, origem_preco, sem_reg in isd_all:
         com_reg = icd_by_code.get(code, sem_reg)
+        ise_reg = ise_by_code.get(code, sem_reg)
         merged = {
             u: {"comd": com_reg.get(u, sem_reg.get(u, 0.0)), "semd": sem_reg.get(u, 0.0)}
-            for u in set(com_reg) | set(sem_reg)
+            for u in set(com_reg) | set(sem_reg) | set(ise_reg)
         }
-        price_com = merged.get(primary, {}).get("comd", 0.0)
-        price_sem = merged.get(primary, {}).get("semd", price_com)
+        regional_as = build_insumo_regional_as(
+            isd_reg=sem_reg, icd_reg=com_reg, ise_reg=ise_reg
+        )
+        price_com = resolve_insumo_unit_price_caixa(
+            merged, primary, sem=False, regional_as=regional_as
+        )
+        price_sem = resolve_insumo_unit_price_caixa(
+            merged, primary, sem=True, regional_as=regional_as
+        )
         insumo_meta[code] = {
             "classificacao": classificacao,
             "origem_preco": origem_preco,
@@ -588,6 +604,7 @@ def _parse_national_workbook(wb: Any, *, uf: str) -> dict[str, Any]:
                 price_sem_desoneracao=price_sem,
                 origin="ICD" if code in icd_by_code else "ISD",
                 regional=merged,
+                regional_as=regional_as,
                 classificacao=classificacao,
                 origem_preco=origem_preco,
             )

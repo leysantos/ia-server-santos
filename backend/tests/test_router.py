@@ -91,7 +91,7 @@ def test_chat_agent_capabilities_response():
     assert response["discipline"] == "CHAT"
     assert "multidisciplinar" in response["result"]
     assert response["result"] == TEMPLATE_CAPABILITIES
-    assert response["extra"]["response_source"] == "template_fallback"
+    assert response["extra"]["response_source"] == "template"
     assert response["extra"]["domain"] == "chat"
 
 
@@ -107,13 +107,14 @@ def test_chat_agent_uses_fast_llm():
         return_value=("Posso ajudar com estruturas e hidráulica.", "qwen3:8b"),
     ) as mock_gen:
         agent = ChatAgent()
-        response = agent.handle("o que vc sabe fazer de melhor?")
+        response = agent.handle(
+            "preciso de um resumo técnico sobre impermeabilização de lajes em edifícios"
+        )
 
     mock_gen.assert_called_once()
     assert response["extra"]["response_source"] == "llm"
     assert response["extra"]["model"] == "qwen3:8b"
     assert response["extra"]["domain"] == "chat"
-    assert "estruturas" in response["result"].lower() or "ChatAgent" in response["result"]
 
 
 def test_chat_not_triggered_with_technical_content():

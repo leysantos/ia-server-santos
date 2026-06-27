@@ -26,7 +26,7 @@ def test_resolve_llm_model_explicit_over_contextvar():
         assert resolve_llm_model(None) == "mistral:7b"
 
 
-def test_stream_config_uses_explicit_llm_model():
+def test_stream_config_uses_explicit_llm_model(no_vram_downgrade):
     timeout, opts, fallbacks, _, _effective = resolve_llm_stream_config(
         primary_model="phi3:mini",
         llm_model="gemma4:latest",
@@ -36,7 +36,7 @@ def test_stream_config_uses_explicit_llm_model():
     assert len(fallbacks) >= 2
 
 
-def test_chat_agent_iter_tokens_receives_llm_model():
+def test_chat_agent_iter_tokens_receives_llm_model(no_vram_downgrade):
     from agents.chat import ChatAgent
 
     agent = ChatAgent(use_llm=True)

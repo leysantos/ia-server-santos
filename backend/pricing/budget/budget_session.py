@@ -6,8 +6,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from pricing.budget.budget_calculator import BudgetCalculator
-from pricing.budget.budget_excel import export_budget_xlsx
-from pricing.budget.ppd_exporter import export_ppd_xlsx
 from pricing.models.budget_item import BudgetItem
 from pricing.models.budget_metadata import BudgetProjectMetadata
 from pricing.schedule.schedule_models import ProjectSchedule
@@ -80,6 +78,8 @@ class BudgetSession:
         return "comd"
 
     def to_dict(self) -> dict[str, Any]:
+        for root in self.roots:
+            root.recompute_total()
         calc = BudgetCalculator()
         rows: list[dict[str, Any]] = []
         for root in self.roots:
@@ -106,16 +106,20 @@ class BudgetSession:
         }
 
     def export_xlsx(self, format: str = "ppd") -> bytes:
-        if format == "ppd" or self.project.template == "PPD_MC_OR":
-            return export_ppd_xlsx(self.roots, self.project)
-        return export_budget_xlsx(
+        from core.system.company_profile import get_company_profile, load_company_logo
+        from core.system.export_branding_store import get_global_export_branding
+        from pricing.budget.budget_xlsx_builder import export_budget_workbook_xlsx
+
+        branding = get_global_export_branding()
+        logo = load_company_logo() if branding.show_logo else None
+        return export_budget_workbook_xlsx(
             self.roots,
-            title=self.title,
-            metadata={
-                "session_id": self.id,
-                "grand_total": self.grand_total,
-                "source_priority": self.source_priority,
-            },
+            self.project,
+            branding=branding,
+            schedule=self.schedule,
+            tech_spec=self.tech_spec,
+            logo_bytes=logo,
+            company_profile=get_company_profile(),
         )
 
 

@@ -26,14 +26,14 @@ export default function OpenCompositionItemsTable({
   }
 
   return (
-    <div className={cn("overflow-x-auto", className)}>
-      <table className="w-full text-left text-xs text-slate-400">
+    <div className={className}>
+      <table className="w-full table-fixed text-left text-xs text-slate-400">
         <thead>
           <tr className="border-b border-slate-700/80 text-slate-500">
-            <th className="px-3 py-2">Tipo</th>
-            {!compact && <th className="px-3 py-2">Classif.</th>}
-            <th className="px-3 py-2">Código</th>
-            <th className="px-3 py-2">Descrição</th>
+            <th className="w-[4.5rem] px-3 py-2">Tipo</th>
+            {!compact && <th className="w-[4rem] px-3 py-2">Classif.</th>}
+            <th className="w-[4.5rem] px-3 py-2">Código</th>
+            <th className="w-[38%] px-3 py-2">Descrição</th>
             <th className="px-3 py-2">Und</th>
             <th className="px-3 py-2 text-right">Coef.</th>
             {!compact && <th className="px-3 py-2">Origem</th>}
@@ -57,7 +57,7 @@ export default function OpenCompositionItemsTable({
                 <td className="px-3 py-1.5 text-cyan-400/90">{cpuItemTypeLabel(item.item_type)}</td>
                 {!compact && <td className="px-3 py-1.5">{item.classificacao || "—"}</td>}
                 <td className="px-3 py-1.5 font-mono text-slate-300">{item.code}</td>
-                <td className="max-w-[min(100%,280px)] truncate px-3 py-1.5" title={item.description}>
+                <td className="whitespace-normal break-words px-3 py-1.5 align-top leading-snug">
                   {item.description}
                 </td>
                 <td className="px-3 py-1.5">{item.unit}</td>

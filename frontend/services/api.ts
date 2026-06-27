@@ -24,6 +24,8 @@ import type {
   BudgetGenerateRequest,
   BudgetPriceBaseSelection,
   BudgetSessionResponse,
+  BudgetSkeleton,
+  BudgetSkeletonEtapa,
   BudgetStreamEvent,
   BudgetSummary,
   TechSpecDocument,
@@ -32,6 +34,10 @@ import type {
   PricingProvidersResponse,
   OrchestrateRequest,
   OrchestrateResponse,
+  CopilotRequest,
+  CopilotResponse,
+  AedRequest,
+  AedResponse,
   PriceBaseActiveStatus,
   PriceBaseInfo,
   PriceBankReference,
@@ -74,6 +80,20 @@ import type {
   WorkflowProjectState,
   ActivityListResponse,
   DecisionListResponse,
+  CompanyProfile,
+  ExportBrandingConfig,
+  AuthUser,
+  AuthStatusResponse,
+  AuthMeResponse,
+  LoginResponse,
+  UsersListResponse,
+  UserRolesListResponse,
+  SystemModulesResponse,
+  ModulePermissionsMap,
+  UserRoleDefinition,
+  NetworkAccessConfig,
+  QuickTunnelStatus,
+  UserRole,
   ConsoleLogsResponse,
   ConsoleStatsResponse,
   ConsoleLiveResponse,
@@ -91,9 +111,30 @@ import type {
   ShellHistoryItem,
 } from "@/types/api";
 import { seminfBundleFilesWithBasenames } from "@/lib/seminf-bundle";
+import { getApiBaseUrl } from "@/lib/api-base";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+function networkErrorMessage(err: unknown): string {
+  const base = getApiBaseUrl();
+  const raw = err instanceof Error ? err.message : String(err);
+  if (/failed to fetch|networkerror|load failed/i.test(raw)) {
+    const viaProxy = base.includes("/api-backend");
+    return (
+      `Não foi possível conectar à API (${base}). ` +
+      (viaProxy
+        ? "Confirme que `make api` está rodando no servidor e reinicie o frontend (`npm run dev`) após alterar next.config."
+        : "Confirme que `make api` está rodando, o portproxy Windows está ativo e que você acessa o sistema pelo mesmo IP da rede (ex.: http://172.22.3.234:3000).")
+    );
+  }
+  return raw;
+}
+
+async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (err) {
+    throw new Error(networkErrorMessage(err));
+  }
+}
 
 /** Headers para JSON — inclui Content-Type */
 function getAuthHeaders(): HeadersInit {
@@ -151,7 +192,7 @@ async function parseFetchError(response: Response): Promise<string> {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await apiFetch(`${getApiBaseUrl()}${path}`, {
     ...options,
     headers: {
       ...getAuthHeaders(),
@@ -161,6 +202,18 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const errorText = await response.text();
+    if (
+      response.status === 401 &&
+      typeof window !== "undefined" &&
+      !path.startsWith("/auth/login") &&
+      !path.startsWith("/auth/status")
+    ) {
+      localStorage.removeItem("ia_auth_token");
+      const next = encodeURIComponent(window.location.pathname + window.location.search);
+      if (!window.location.pathname.startsWith("/login")) {
+        window.location.href = `/login?next=${next}`;
+      }
+    }
     throw new Error(formatApiError(errorText, response.status));
   }
 
@@ -192,7 +245,7 @@ export function formatApiError(errorText: string, status?: number): string {
 
 /** Download de arquivo (CSV, etc.) com headers de auth. */
 export async function downloadApiFile(path: string, fallbackFilename: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await apiFetch(`${getApiBaseUrl()}${path}`, {
     headers: getMultipartAuthHeaders(),
   });
   if (!response.ok) {
@@ -325,7 +378,7 @@ export async function* chatStream(
   body: ChatRequest,
   signal?: AbortSignal
 ): AsyncGenerator<ChatStreamEvent> {
-  const response = await fetch(`${API_BASE_URL}/chat/stream`, {
+  const response = await apiFetch(`${getApiBaseUrl()}/chat/stream`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify(body),
@@ -369,7 +422,7 @@ export async function* budgetGenerateStream(
   body: BudgetGenerateRequest,
   signal?: AbortSignal
 ): AsyncGenerator<BudgetStreamEvent> {
-  const response = await fetch(`${API_BASE_URL}/pricing/budget/generate/stream`, {
+  const response = await apiFetch(`${getApiBaseUrl()}/pricing/budget/generate/stream`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify(body),
@@ -416,7 +469,7 @@ export async function* knowledgeIngestWebStream(
   },
   signal?: AbortSignal
 ): AsyncGenerator<{ type: string; data: unknown }> {
-  const response = await fetch(`${API_BASE_URL}/knowledge/ingest-web/stream`, {
+  const response = await apiFetch(`${getApiBaseUrl()}/knowledge/ingest-web/stream`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify(body),
@@ -539,7 +592,7 @@ export async function* knowledgeIngestNormsStream(
   formData.append("mark_edition_outdated", body.mark_edition_outdated ? "true" : "false");
   formData.append("auto_index", body.auto_index !== false ? "true" : "false");
 
-  const response = await fetch(`${API_BASE_URL}/knowledge/ingest-norms/stream`, {
+  const response = await apiFetch(`${getApiBaseUrl()}/knowledge/ingest-norms/stream`, {
     method: "POST",
     headers: getMultipartAuthHeaders(),
     body: formData,
@@ -752,8 +805,8 @@ export async function* techSpecComposeStream(
   },
   signal?: AbortSignal
 ): AsyncGenerator<TechSpecStreamEvent> {
-  const response = await fetch(
-    `${API_BASE_URL}/pricing/budget/${sessionId}/tech-spec/compose/stream`,
+  const response = await apiFetch(
+    `${getApiBaseUrl()}/pricing/budget/${sessionId}/tech-spec/compose/stream`,
     {
       method: "POST",
       headers: getAuthHeaders(),
@@ -806,6 +859,20 @@ export const api = {
 
   orchestrate(body: OrchestrateRequest): Promise<OrchestrateResponse> {
     return request<OrchestrateResponse>("/orchestrate", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  copilot(body: CopilotRequest): Promise<CopilotResponse> {
+    return request<CopilotResponse>("/copilot", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  aed(body: AedRequest): Promise<AedResponse> {
+    return request<AedResponse>("/aed", {
       method: "POST",
       body: JSON.stringify(body),
     });
@@ -893,14 +960,14 @@ export const api = {
   }> {
     const formData = new FormData();
     files.forEach((f) => formData.append("files", f));
-    const response = await fetch(`${API_BASE_URL}/projects/${projectId}/files`, {
+    const response = await apiFetch(`${getApiBaseUrl()}/projects/${projectId}/files`, {
       method: "POST",
       headers: getMultipartAuthHeaders(),
       body: formData,
     });
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(errorText || `Erro HTTP ${response.status}`);
+      throw new Error(formatApiError(errorText, response.status));
     }
     return response.json();
   },
@@ -944,7 +1011,7 @@ export const api = {
   },
 
   exportReviewReport(projectId: string, reviewId: string, reportType: string): string {
-    return `${API_BASE_URL}/projects/${projectId}/review/${reviewId}/export/${reportType}`;
+    return `${getApiBaseUrl()}/projects/${projectId}/review/${reviewId}/export/${reportType}`;
   },
 
   visionStatus(): Promise<VisionStatusResponse> {
@@ -983,8 +1050,8 @@ export const api = {
   },
 
   async fetchProjectFilePreview(projectId: string, fileId: string): Promise<Blob> {
-    const response = await fetch(
-      `${API_BASE_URL}/projects/${projectId}/files/${fileId}/preview`,
+    const response = await apiFetch(
+      `${getApiBaseUrl()}/projects/${projectId}/files/${fileId}/preview`,
       { headers: getAuthHeaders() }
     );
     if (!response.ok) {
@@ -1005,7 +1072,7 @@ export const api = {
     onFileDone?: (item: VisionAnalysisItem) => void,
     signal?: AbortSignal
   ): Promise<VisionAnalyzeResponse> {
-    const response = await fetch(`${API_BASE_URL}/projects/${projectId}/vision/analyze/stream`, {
+    const response = await apiFetch(`${getApiBaseUrl()}/projects/${projectId}/vision/analyze/stream`, {
       method: "POST",
       headers: getAuthHeaders(),
       body: JSON.stringify(body),
@@ -1070,7 +1137,7 @@ export const api = {
   },
 
   async exportVisionReport(projectId: string, body: VisionReportRequest): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/projects/${projectId}/vision/report`, {
+    const response = await apiFetch(`${getApiBaseUrl()}/projects/${projectId}/vision/report`, {
       method: "POST",
       headers: getAuthHeaders(),
       body: JSON.stringify(body),
@@ -1106,12 +1173,194 @@ export const api = {
     return request<HealthResponse>("/health");
   },
 
+  authStatus(): Promise<AuthStatusResponse> {
+    return request<AuthStatusResponse>("/auth/status");
+  },
+
+  async authLogin(username: string, password: string): Promise<LoginResponse> {
+    const response = await apiFetch(`${getApiBaseUrl()}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(formatApiError(errorText, response.status));
+    }
+    return response.json() as Promise<LoginResponse>;
+  },
+
+  authMe(): Promise<AuthMeResponse> {
+    return request<AuthMeResponse>("/auth/me");
+  },
+
+  authUsers(): Promise<UsersListResponse> {
+    return request<UsersListResponse>("/auth/users");
+  },
+
+  authRoles(): Promise<UserRolesListResponse> {
+    return request<UserRolesListResponse>("/auth/roles");
+  },
+
+  authModules(): Promise<SystemModulesResponse> {
+    return request<SystemModulesResponse>("/auth/modules");
+  },
+
+  authCreateRole(body: {
+    slug: string;
+    label: string;
+    module_permissions?: ModulePermissionsMap;
+  }): Promise<{ role: UserRoleDefinition }> {
+    return request("/auth/roles", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  authCreateUser(body: {
+    username: string;
+    password: string;
+    email?: string;
+    full_name?: string;
+    role?: UserRole;
+    is_active?: boolean;
+    module_permissions?: ModulePermissionsMap;
+  }): Promise<{ user: AuthUser }> {
+    return request("/auth/users", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  authUpdateUser(
+    userId: string,
+    body: Partial<{
+      email: string;
+      full_name: string;
+      role: UserRole;
+      is_active: boolean;
+      password: string;
+      module_permissions: ModulePermissionsMap;
+    }>
+  ): Promise<{ user: AuthUser }> {
+    return request(`/auth/users/${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  },
+
+  authDeactivateUser(userId: string): Promise<{ ok: boolean; user: AuthUser }> {
+    return request(`/auth/users/${encodeURIComponent(userId)}`, {
+      method: "DELETE",
+    });
+  },
+
+  systemNetworkAccess(): Promise<NetworkAccessConfig> {
+    return request<NetworkAccessConfig>("/system/network-access");
+  },
+
+  systemUpdateNetworkAccess(body: Partial<{
+    internal: Partial<NetworkAccessConfig["internal"]>;
+    cloudflare: Partial<NetworkAccessConfig["cloudflare"]> & { tunnel_token?: string };
+    cors_extra_origins: string[];
+  }>): Promise<NetworkAccessConfig> {
+    return request<NetworkAccessConfig>("/system/network-access", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  },
+
+  systemQuickTunnelStatus(): Promise<QuickTunnelStatus> {
+    return request<QuickTunnelStatus>("/system/network-access/quick-tunnel");
+  },
+
+  systemStartQuickTunnel(): Promise<QuickTunnelStatus> {
+    return request<QuickTunnelStatus>("/system/network-access/quick-tunnel/start", {
+      method: "POST",
+    });
+  },
+
+  systemStopQuickTunnel(): Promise<QuickTunnelStatus> {
+    return request<QuickTunnelStatus>("/system/network-access/quick-tunnel/stop", {
+      method: "POST",
+    });
+  },
+
   modelsStatus(): Promise<ModelsStatusResponse> {
     return request<ModelsStatusResponse>("/models/status");
   },
 
   systemBenchmark(): Promise<SystemBenchmarkResponse> {
     return request<SystemBenchmarkResponse>("/system/benchmark");
+  },
+
+  systemCompanyProfile(): Promise<CompanyProfile> {
+    return request<CompanyProfile>("/system/company-profile");
+  },
+
+  systemUpdateCompanyProfile(body: Partial<CompanyProfile>): Promise<CompanyProfile> {
+    return request<CompanyProfile>("/system/company-profile", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  },
+
+  systemCompanyLogoUrl(): string {
+    return `${getApiBaseUrl()}/system/company-profile/logo`;
+  },
+
+  systemCompanyBrasaoUrl(): string {
+    return `${getApiBaseUrl()}/system/company-profile/brasao`;
+  },
+
+  async systemUploadCompanyLogo(file: File): Promise<CompanyProfile> {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await apiFetch(`${getApiBaseUrl()}/system/company-profile/logo`, {
+      method: "POST",
+      headers: getMultipartAuthHeaders(),
+      body: formData,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `HTTP ${response.status}`);
+    }
+    return response.json();
+  },
+
+  async systemUploadCompanyBrasao(file: File): Promise<CompanyProfile> {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await apiFetch(`${getApiBaseUrl()}/system/company-profile/brasao`, {
+      method: "POST",
+      headers: getMultipartAuthHeaders(),
+      body: formData,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `HTTP ${response.status}`);
+    }
+    return response.json();
+  },
+
+  async systemExportBranding(): Promise<ExportBrandingConfig> {
+    return request<ExportBrandingConfig>("/system/export-branding");
+  },
+
+  async systemUpdateExportBranding(body: {
+    header_title?: string;
+    header_line1?: string;
+    header_line2?: string;
+    header_line3?: string;
+    footer_line1?: string;
+    footer_line2?: string;
+    show_logo?: boolean;
+    show_brasao?: boolean;
+  }): Promise<ExportBrandingConfig> {
+    return request<ExportBrandingConfig>("/system/export-branding", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
   },
 
   knowledgeOptions(): Promise<KnowledgeOptionsResponse> {
@@ -1163,7 +1412,7 @@ export const api = {
   },
 
   async knowledgeIngest(formData: FormData): Promise<KnowledgeIngestResponse> {
-    const response = await fetch(`${API_BASE_URL}/knowledge/ingest`, {
+    const response = await apiFetch(`${getApiBaseUrl()}/knowledge/ingest`, {
       method: "POST",
       headers: getMultipartAuthHeaders(),
       body: formData,
@@ -1340,13 +1589,76 @@ export const api = {
   },
 
   pricingExportUrl(sessionId: string): string {
-    return `${API_BASE_URL}/pricing/budget/${sessionId}/export`;
+    return `${getApiBaseUrl()}/pricing/budget/${sessionId}/export`;
+  },
+
+  pricingExportXlsxUrl(sessionId: string, docType: string): string {
+    return `${getApiBaseUrl()}/pricing/budget/${sessionId}/export/xlsx/${docType}`;
+  },
+
+  pricingExportPdfUrl(sessionId: string, docType: string): string {
+    return `${getApiBaseUrl()}/pricing/budget/${sessionId}/export/pdf/${docType}`;
+  },
+
+  pricingExportLogoUrl(sessionId: string): string {
+    return `${getApiBaseUrl()}/pricing/budget/${sessionId}/export/logo`;
+  },
+
+  async pricingExportBranding(sessionId: string): Promise<{
+    header_title?: string;
+    header_line1?: string;
+    header_line2?: string;
+    header_line3?: string;
+    footer_line1?: string;
+    footer_line2?: string;
+    show_logo?: boolean;
+    has_logo?: boolean;
+  }> {
+    return request(`/pricing/budget/${sessionId}/export/branding`);
+  },
+
+  async pricingUpdateExportBranding(
+    sessionId: string,
+    body: {
+      header_title?: string;
+      header_line1?: string;
+      header_line2?: string;
+      header_line3?: string;
+      footer_line1?: string;
+      footer_line2?: string;
+      show_logo?: boolean;
+    }
+  ): Promise<{ export_branding: Record<string, unknown>; session: BudgetSessionResponse }> {
+    return withBudgetSessionRecovery(sessionId, (sid) =>
+      request(`/pricing/budget/${sid}/export/branding`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      })
+    );
+  },
+
+  async pricingUploadExportLogo(
+    sessionId: string,
+    file: File
+  ): Promise<{ export_branding: Record<string, unknown>; session: BudgetSessionResponse }> {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await apiFetch(`${getApiBaseUrl()}/pricing/budget/${sessionId}/export/logo`, {
+      method: "POST",
+      headers: getMultipartAuthHeaders(),
+      body: formData,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `HTTP ${response.status}`);
+    }
+    return response.json();
   },
 
   async pricingUploadBase(provider: string, file: File): Promise<Record<string, unknown>> {
     const formData = new FormData();
     formData.append("file", file);
-    const response = await fetch(`${API_BASE_URL}/pricing/providers/${provider}/upload`, {
+    const response = await apiFetch(`${getApiBaseUrl()}/pricing/providers/${provider}/upload`, {
       method: "POST",
       headers: getMultipartAuthHeaders(),
       body: formData,
@@ -1513,8 +1825,8 @@ export const api = {
     onProgress: (progress: WebIngestProgress) => void,
     signal?: AbortSignal
   ): Promise<PriceSyncResult> {
-    const response = await fetch(
-      `${API_BASE_URL}/pricing/sync/${encodeURIComponent(source)}/stream`,
+    const response = await apiFetch(
+      `${getApiBaseUrl()}/pricing/sync/${encodeURIComponent(source)}/stream`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
@@ -1576,8 +1888,8 @@ export const api = {
       total: 3,
       message: "Enviando planilhas…",
     });
-    const response = await fetch(
-      `${API_BASE_URL}/pricing/sync/${encodeURIComponent(source)}/upload/bundle/stream${qs ? `?${qs}` : ""}`,
+    const response = await apiFetch(
+      `${getApiBaseUrl()}/pricing/sync/${encodeURIComponent(source)}/upload/bundle/stream${qs ? `?${qs}` : ""}`,
       {
         method: "POST",
         headers: getMultipartAuthHeaders(),
@@ -1652,8 +1964,8 @@ export const api = {
     const qs = params.toString();
     const formData = new FormData();
     formData.append("file", file);
-    const response = await fetch(
-      `${API_BASE_URL}/pricing/sync/${encodeURIComponent(source)}/upload/stream${qs ? `?${qs}` : ""}`,
+    const response = await apiFetch(
+      `${getApiBaseUrl()}/pricing/sync/${encodeURIComponent(source)}/upload/stream${qs ? `?${qs}` : ""}`,
       {
         method: "POST",
         headers: getMultipartAuthHeaders(),
@@ -1695,8 +2007,8 @@ export const api = {
     const qs = params.toString();
     const formData = new FormData();
     formData.append("file", file);
-    const response = await fetch(
-      `${API_BASE_URL}/pricing/sync/${encodeURIComponent(source)}/upload${qs ? `?${qs}` : ""}`,
+    const response = await apiFetch(
+      `${getApiBaseUrl()}/pricing/sync/${encodeURIComponent(source)}/upload${qs ? `?${qs}` : ""}`,
       {
         method: "POST",
         headers: getMultipartAuthHeaders(),
@@ -1726,7 +2038,7 @@ export const api = {
     if (file) {
       const formData = new FormData();
       formData.append("file", file);
-      return fetch(`${API_BASE_URL}/pricing/budget/import-ppd`, {
+      return apiFetch(`${getApiBaseUrl()}/pricing/budget/import-ppd`, {
         method: "POST",
         headers: getMultipartAuthHeaders(),
         body: formData,
@@ -1749,8 +2061,8 @@ export const api = {
   async pricingImportBase(name: string, file: File): Promise<{ base: PriceBaseInfo; loaded: number }> {
     const formData = new FormData();
     formData.append("file", file);
-    const response = await fetch(
-      `${API_BASE_URL}/pricing/bases/import?name=${encodeURIComponent(name)}`,
+    const response = await apiFetch(
+      `${getApiBaseUrl()}/pricing/bases/import?name=${encodeURIComponent(name)}`,
       { method: "POST", headers: getMultipartAuthHeaders(), body: formData }
     );
     if (!response.ok) throw new Error(await response.text());
@@ -1775,6 +2087,55 @@ export const api = {
     return request(`/pricing/budget/new-template?${params}`, { method: "POST" });
   },
 
+  pricingListSkeletons(): Promise<{ items: BudgetSkeleton[]; count: number }> {
+    return request("/pricing/budget/skeletons");
+  },
+
+  pricingGetSkeleton(id: string): Promise<BudgetSkeleton> {
+    return request(`/pricing/budget/skeletons/${encodeURIComponent(id)}`);
+  },
+
+  pricingCreateSkeleton(body: {
+    name: string;
+    description?: string;
+    obra_type?: string;
+    etapas?: BudgetSkeletonEtapa[];
+  }): Promise<BudgetSkeleton> {
+    return request("/pricing/budget/skeletons", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  pricingUpdateSkeleton(
+    id: string,
+    body: Partial<{
+      name: string;
+      description: string;
+      obra_type: string;
+      etapas: BudgetSkeletonEtapa[];
+    }>
+  ): Promise<BudgetSkeleton> {
+    return request(`/pricing/budget/skeletons/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+  },
+
+  pricingDeleteSkeleton(id: string): Promise<{ deleted: string }> {
+    return request(`/pricing/budget/skeletons/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  pricingNewFromSkeleton(
+    skeletonId: string,
+    options?: { projeto?: string; obraType?: string }
+  ): Promise<BudgetSessionResponse> {
+    const params = new URLSearchParams({ skeleton_id: skeletonId });
+    if (options?.projeto) params.set("projeto", options.projeto);
+    if (options?.obraType) params.set("obra_type", options.obraType);
+    return request(`/pricing/budget/new-from-skeleton?${params}`, { method: "POST" });
+  },
+
   async pricingImportProject(
     file: File,
     useLlm = true,
@@ -1784,8 +2145,8 @@ export const api = {
     formData.append("file", file);
     const params = new URLSearchParams({ use_llm: String(useLlm) });
     if (obraType) params.set("obra_type", obraType);
-    const response = await fetch(
-      `${API_BASE_URL}/pricing/budget/import-project?${params}`,
+    const response = await apiFetch(
+      `${getApiBaseUrl()}/pricing/budget/import-project?${params}`,
       { method: "POST", headers: getMultipartAuthHeaders(), body: formData }
     );
     if (!response.ok) throw new Error(await response.text());
@@ -2136,11 +2497,11 @@ export const api = {
   },
 
   pricingExportTechSpecUrl(sessionId: string): string {
-    return `${API_BASE_URL}/pricing/budget/${sessionId}/tech-spec/export`;
+    return `${getApiBaseUrl()}/pricing/budget/${sessionId}/tech-spec/export`;
   },
 
   pricingExportTechSpecPdfUrl(sessionId: string): string {
-    return `${API_BASE_URL}/pricing/budget/${sessionId}/tech-spec/export/pdf`;
+    return `${getApiBaseUrl()}/pricing/budget/${sessionId}/tech-spec/export/pdf`;
   },
 
   async pricingImportModelTemplate(file: File, sessionId?: string): Promise<BudgetSessionResponse & { imported_etapas?: number }> {
@@ -2149,8 +2510,8 @@ export const api = {
     const params = new URLSearchParams();
     if (sessionId) params.set("session_id", sessionId);
     const qs = params.toString();
-    const response = await fetch(
-      `${API_BASE_URL}/pricing/budget/import-model-template${qs ? `?${qs}` : ""}`,
+    const response = await apiFetch(
+      `${getApiBaseUrl()}/pricing/budget/import-model-template${qs ? `?${qs}` : ""}`,
       { method: "POST", headers: getMultipartAuthHeaders(), body: form }
     );
     if (!response.ok) {
@@ -2173,7 +2534,7 @@ export const api = {
   },
 
   async *consoleLiveStream(signal?: AbortSignal): AsyncGenerator<ConsoleLiveResponse> {
-    const response = await fetch(`${API_BASE_URL}/console/live/stream`, {
+    const response = await apiFetch(`${getApiBaseUrl()}/console/live/stream`, {
       headers: getAuthHeaders(),
       signal,
     });
@@ -2242,9 +2603,9 @@ export const api = {
       return pathOrKey;
     }
     if (pathOrKey.startsWith("/workflow/")) {
-      return `${API_BASE_URL}${pathOrKey}`;
+      return `${getApiBaseUrl()}${pathOrKey}`;
     }
-    return `${API_BASE_URL}/workflow/artifacts/download?key=${encodeURIComponent(pathOrKey)}`;
+    return `${getApiBaseUrl()}/workflow/artifacts/download?key=${encodeURIComponent(pathOrKey)}`;
   },
 
   // --- Wizard de Entrega (Fase 3) ---
@@ -2331,7 +2692,7 @@ export const api = {
   },
 
   workflowArtifactDownloadUrl(storageKey: string): string {
-    return `${API_BASE_URL}/workflow/artifacts/download?key=${encodeURIComponent(storageKey)}`;
+    return `${getApiBaseUrl()}/workflow/artifacts/download?key=${encodeURIComponent(storageKey)}`;
   },
 
   maintenanceStatus(): Promise<MaintenanceStatusResponse> {
@@ -2420,4 +2781,4 @@ export const api = {
   },
 };
 
-export { API_BASE_URL, BUDGET_SESSION_RESTORED };
+export { getApiBaseUrl, BUDGET_SESSION_RESTORED };

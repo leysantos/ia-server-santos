@@ -1,25 +1,39 @@
 """Testes da API FastAPI."""
 
-import sys
-from pathlib import Path
+from __future__ import annotations
+
+import os
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
+import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
+os.environ.setdefault("AUTH_ENABLED", "false")
+os.environ.setdefault("DB_ENABLED", "false")
 
-client = TestClient(app)
+
+@pytest.fixture
+def client(monkeypatch):
+    """Cliente com auth desligado — foco em lógica de rota, não em JWT."""
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    monkeypatch.setenv("DB_ENABLED", "false")
+
+    from config.settings import reload_settings
+
+    reload_settings()
+
+    from app.main import app
+
+    return TestClient(app)
 
 
-def test_root():
+def test_root(client):
     response = client.get("/")
     assert response.status_code == 200
     assert response.json()["service"] == "IA Server Santos"
 
 
-def test_health():
+def test_health(client):
     with patch("app.services.health_service.requests.get") as mock_get:
         mock_get.return_value.ok = True
         response = client.get("/health")
@@ -36,7 +50,7 @@ def test_health():
     "generate",
     return_value=("Resposta técnica LLM", "qwen3:14b"),
 )
-def test_chat(mock_generate):
+def test_chat(mock_generate, client):
     response = client.post(
         "/chat",
         json={"text": "dimensionar viga de concreto", "use_rag": False, "persist": False},
@@ -54,7 +68,7 @@ def test_chat(mock_generate):
     return_value=("Relatório técnico LLM", "qwen3:14b"),
 )
 @patch("core.orchestrator.decompose_problem")
-def test_orchestrate(mock_decompose, mock_generate):
+def test_orchestrate(mock_decompose, mock_generate, client):
     mock_decompose.return_value = ["ESTRUTURAL", "HIDROSSANITÁRIO", "INCÊNDIO", "ORÇAMENTO"]
     response = client.post(
         "/orchestrate",
@@ -70,18 +84,9 @@ def test_orchestrate(mock_decompose, mock_generate):
     assert body["final_report"]
 
 
-def test_history():
+def test_history(client):
     response = client.get("/history?limit=5")
     assert response.status_code == 200
     body = response.json()
     assert "total" in body
     assert "items" in body
-
-
-if __name__ == "__main__":
-    test_root()
-    test_health()
-    test_chat()
-    test_orchestrate()
-    test_history()
-    print("OK: testes API passaram")

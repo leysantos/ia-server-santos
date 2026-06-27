@@ -58,6 +58,8 @@ def session_scope() -> Generator[Session, None, None]:
 
 def init_db() -> None:
     """Cria todas as tabelas definidas nos models."""
+    from core.database.migrate_auth import migrate_auth
+    from core.database.migrate_user_roles import migrate_user_roles
     from core.database.migrate_audit_fks import migrate_audit_fks
     from core.database.migrate_project_memory import migrate_project_memory
     from core.database.migrate_project_review import migrate_project_review
@@ -72,6 +74,8 @@ def init_db() -> None:
     migrate_project_review(engine)
     migrate_project_memory(engine)
     migrate_workflow(engine)
+    migrate_auth(engine)
+    migrate_user_roles(engine)
 
 
 def is_db_enabled() -> bool:

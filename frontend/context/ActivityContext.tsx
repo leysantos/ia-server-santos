@@ -12,6 +12,8 @@ import {
 export type ActivitySource =
   | "chat"
   | "orchestrator"
+  | "copilot"
+  | "aed"
   | "vision"
   | "budget"
   | "upload"

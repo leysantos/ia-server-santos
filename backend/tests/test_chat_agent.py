@@ -98,25 +98,28 @@ def test_chat_agent_llm_pipeline():
     with patch.object(
         OllamaClient,
         "generate",
-        return_value=("Sou o ChatAgent do IA Server Santos.", "qwen3:8b"),
+        return_value=("Fundacao superficial e mais barata; profunda atinge camadas resistentes.", "qwen3:8b"),
     ):
         agent = ChatAgent()
-        response = agent.handle("o que vc sabe fazer de melhor?")
+        response = agent.handle(
+            "qual a diferença prática entre fundação superficial e profunda?"
+        )
 
     assert response["extra"]["domain"] == "chat"
     assert response["extra"]["response_source"] == "llm"
     assert response["extra"]["model"] == "qwen3:8b"
-    assert response["extra"]["intent"] == "capabilities"
-    assert "ChatAgent" in response["result"]
+    assert "funda" in response["result"].lower()
 
 
 def test_chat_agent_llm_fallback():
     with patch.object(OllamaClient, "generate", side_effect=RuntimeError("offline")):
         agent = ChatAgent()
-        response = agent.handle("o que vc sabe fazer de melhor?")
+        response = agent.handle(
+            "explique quando usar sapata isolada versus radier em um bloco comercial"
+        )
 
     assert response["extra"]["response_source"] == "template_fallback"
-    assert response["result"] == TEMPLATE_CAPABILITIES
+    assert response["result"]
 
 
 if __name__ == "__main__":

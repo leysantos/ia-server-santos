@@ -2,6 +2,9 @@ import type { ReactNode } from "react";
 
 export type SettingsModuleId =
   | "overview"
+  | "company"
+  | "users"
+  | "access"
   | "document-types"
   | "imports"
   | "norm-packs"
@@ -35,6 +38,27 @@ export const SETTINGS_MODULES: SettingsModule[] = [
     label: "Visão geral",
     description: "Resumo da base de conhecimento e índices FAISS",
     icon: <Icon d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />,
+  },
+  {
+    id: "company",
+    href: "/settings/company",
+    label: "Empresa",
+    description: "Cadastro da empresa, logo, brasão, cabeçalho/rodapé de exportação",
+    icon: <Icon d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />,
+  },
+  {
+    id: "users",
+    href: "/settings/users",
+    label: "Usuários",
+    description: "Cadastro, tipos de usuário customizados e permissões por módulo",
+    icon: <Icon d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />,
+  },
+  {
+    id: "access",
+    href: "/settings/access",
+    label: "Acesso e rede",
+    description: "Rede interna LAN e Cloudflare Tunnel para acesso externo",
+    icon: <Icon d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />,
   },
   {
     id: "document-types",

@@ -92,6 +92,14 @@ def _is_numeric_token(raw: str) -> bool:
 _QTY_BRACKET_RE = re.compile(r"^\[([\d.,]+)\]\s*")
 _QTY_X_RE = re.compile(r"\s*[x×]\s*([\d.,]+)\s*$", re.IGNORECASE)
 _QTY_COLON_RE = re.compile(r":\s*([\d.,]+)\s*$")
+_CODE_QTY_UNIT_RE = re.compile(
+    r"^(?P<code>[\d][\w./-]*(?:\.SEMINF)?)"
+    r"(?:\s*[,;]\s*|\s+)"
+    r"(?P<qty>[\d.,]+)"
+    r"(?:\s+(?P<unit>.+))?$",
+    re.IGNORECASE,
+)
+_CODE_ONLY_RE = re.compile(r"^[\d][\w./-]*(?:\.SEMINF)?$", re.IGNORECASE)
 
 
 def _parse_paren_qty_unit(content: str) -> tuple[float | None, str | None]:
@@ -189,6 +197,60 @@ def parse_term_hints(raw: str) -> tuple[str, str | None, float | None]:
         text = text[: m.start()].strip()
 
     return text.strip(), unit, quantity
+
+
+def parse_code_quantity_term(
+    raw: str,
+) -> tuple[str | None, str, float | None, str | None]:
+    """
+    Interpreta linhas de composição por código de CPU:
+    ``94295 10 m2``, ``94295; 10 m²``, ``94295`` ou ``107071.1.9.SEMINF 1 un``.
+    Retorna (código, query_restante, quantidade, unidade).
+    """
+    text = raw.strip()
+    if not text:
+        return None, "", None, None
+
+    semi = text.split(";", 1)
+    if len(semi) == 2 and _CODE_ONLY_RE.match(semi[0].strip()):
+        code = semi[0].strip()
+        rest = semi[1].strip()
+        qty_unit = re.match(r"^([\d.,]+)\s*(.*)$", rest)
+        if qty_unit:
+            qty = _parse_float_br(qty_unit.group(1))
+            unit_raw = qty_unit.group(2).strip()
+            unit = normalize_unit_hint(unit_raw) if unit_raw else None
+            return code, "", qty, unit
+        rest_query, unit, qty = parse_term_hints(rest)
+        return code, rest_query, qty, unit
+
+    m = _CODE_QTY_UNIT_RE.match(text)
+    if m:
+        code = m.group("code").strip()
+        qty = _parse_float_br(m.group("qty"))
+        unit_raw = (m.group("unit") or "").strip()
+        unit = normalize_unit_hint(unit_raw) if unit_raw else None
+        return code, "", qty, unit
+
+    if _CODE_ONLY_RE.match(text):
+        return text, "", None, None
+
+    return None, text, None, None
+
+
+def resolve_price_by_code(
+    engine: PricingEngine,
+    code: str,
+    source_priority: list[str],
+) -> PriceItem | None:
+    normalized = code.strip()
+    if not normalized:
+        return None
+    for source in source_priority:
+        item = engine.get_by_code(source, normalized)
+        if item:
+            return item
+    return None
 
 
 def _next_etapa_code(roots: list[BudgetItem]) -> str:
@@ -649,25 +711,46 @@ def compose_group_from_prompt(
     priority = source_priority or ["sinapi"]
 
     for raw_term, term_priority in parse_composition_prompt_with_bases(prompt, default_priority=priority):
-        query, unit_hint, term_qty = parse_term_hints(raw_term)
-        if len(query) < 2:
+        code_hint, query, code_qty, code_unit = parse_code_quantity_term(raw_term)
+        _, unit_hint, term_qty = parse_term_hints(query if query else raw_term)
+        if code_unit and not unit_hint:
+            unit_hint = code_unit
+        if code_qty is not None and term_qty is None:
+            term_qty = code_qty
+        if len(query) < 2 and not code_hint:
             continue
         resolved_qty = term_qty if term_qty is not None else default_quantity
         if resolved_qty is None:
             resolved_qty = 0.0
         effective_priority = term_priority or priority
-        request = build_price_request(
-            query,
-            unit=unit_hint,
-            source_priority=effective_priority,
-            limit=8,
-        )
-        results = engine.resolve_many(request, best_only=False)
-        if not results:
+
+        price: PriceItem | None = None
+        if code_hint:
+            price = resolve_price_by_code(engine, code_hint, effective_priority)
+
+        if price is None:
+            search_query = query if len(query) >= 2 else raw_term
+            request = build_price_request(
+                search_query,
+                unit=unit_hint,
+                source_priority=effective_priority,
+                limit=8,
+            )
+            results = engine.resolve_many(request, best_only=False)
+            if results:
+                price = results[0]
+                if unit_hint and price.unit and price.unit.upper() != unit_hint:
+                    for candidate in results:
+                        if candidate.unit and candidate.unit.upper() == unit_hint:
+                            price = candidate
+                            break
+
+        if not price:
             log.append(
                 {
                     "term": raw_term,
-                    "query": query,
+                    "query": query or code_hint or raw_term,
+                    "code_hint": code_hint,
                     "unit_hint": unit_hint,
                     "source_priority": effective_priority,
                     "resolved": False,
@@ -676,13 +759,6 @@ def compose_group_from_prompt(
             )
             continue
 
-        price = results[0]
-        if unit_hint and price.unit and price.unit.upper() != unit_hint:
-            for candidate in results:
-                if candidate.unit and candidate.unit.upper() == unit_hint:
-                    price = candidate
-                    break
-
         code = _next_service_code(container)
         svc = service_from_price_item(
             price,
@@ -690,7 +766,7 @@ def compose_group_from_prompt(
             code=code,
             bdi_calc=bdi_calc,
             quantity=resolved_qty,
-            pricing_query=query,
+            pricing_query=query or code_hint or raw_term,
             unit_hint=unit_hint,
         )
         container.children.append(svc)
@@ -698,11 +774,16 @@ def compose_group_from_prompt(
         log.append(
             {
                 "term": raw_term,
-                "query": query,
+                "query": query or code_hint or raw_term,
+                "code_hint": code_hint,
                 "unit_hint": unit_hint,
                 "source_priority": effective_priority,
                 "quantity": resolved_qty,
-                "quantity_source": "term" if term_qty is not None else ("default" if default_quantity is not None else "none"),
+                "quantity_source": (
+                    "code"
+                    if code_qty is not None
+                    else ("term" if term_qty is not None else ("default" if default_quantity is not None else "none"))
+                ),
                 "resolved": True,
                 "code": price.code,
                 "description": price.description[:120],

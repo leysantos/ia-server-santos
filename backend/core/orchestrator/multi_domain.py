@@ -306,6 +306,7 @@ def process_multi_domain_request(
     use_rag: bool = True,
     rag_engine: Optional[RAGEngine] = None,
     persist: bool = True,
+    user_id=None,
 ) -> dict:
     """Pipeline principal: decompose → execute agents → synthesize."""
     from core.database.service import save_conversation, save_orchestrator_log
@@ -323,7 +324,7 @@ def process_multi_domain_request(
         conversation = None
         conversation_id = None
         if persist:
-            conversation = save_conversation(input_text=text, mode="multi")
+            conversation = save_conversation(input_text=text, mode="multi", user_id=user_id)
             if conversation:
                 conversation_id = conversation.get("id")
 

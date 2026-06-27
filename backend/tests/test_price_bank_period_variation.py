@@ -91,11 +91,11 @@ def test_variation_warning_on_large_jump(isolated_price_bank: Path):
                 "code": "1518",
                 "description": "CONCRETO BETUMINOSO USINADO A QUENTE (CBUQ)",
                 "unit": "T",
-                "coefficient": 2.5,
-                "unit_price": 512.5,
-                "partial_cost": 1281.25,
-                "unit_price_sem": 515.0,
-                "partial_cost_sem": 1287.5,
+                "coefficient": 2.5663714,
+                "unit_price": 0.0,
+                "partial_cost": 0.0,
+                "unit_price_sem": 0.0,
+                "partial_cost_sem": 0.0,
             }
         ],
     )
@@ -109,11 +109,11 @@ def test_variation_warning_on_large_jump(isolated_price_bank: Path):
                 "code": "1518",
                 "description": "CONCRETO BETUMINOSO USINADO A QUENTE (CBUQ)",
                 "unit": "T",
-                "coefficient": 2.5,
+                "coefficient": 2.5663714,
                 "unit_price": 815.0,
-                "partial_cost": 2037.5,
-                "unit_price_sem": 818.0,
-                "partial_cost_sem": 2045.0,
+                "partial_cost": 2091.59,
+                "unit_price_sem": 815.0,
+                "partial_cost_sem": 2091.59,
             }
         ],
     )
@@ -123,13 +123,11 @@ def test_variation_warning_on_large_jump(isolated_price_bank: Path):
 
     assert result["previous_reference"] == "BR-2026-03"
     assert result["previous_label"] == "03/2026"
-    assert any(w["kind"] == "composition_total" for w in result["warnings"])
-    total_warn = next(w for w in result["warnings"] if w["kind"] == "composition_total")
-    assert total_warn["change_pct"] > 30
-    item_warns = [w for w in result["warnings"] if w.get("code") == "1518"]
-    # Itens exigem insumos no banco para preços regionais; total já cobre o salto.
-    if item_warns:
-        assert item_warns[0]["change_pct"] > 30
+    total_warns = [w for w in result["warnings"] if w["kind"] == "composition_total"]
+    assert total_warns
+    assert total_warns[0]["change_pct"] >= 30
+    # Insumo com preço zero no mês anterior não gera % artificial (+100%).
+    assert not any(w.get("code") == "1518" for w in result["warnings"])
 
 
 def test_no_warning_when_stable(isolated_price_bank: Path):
@@ -138,4 +136,26 @@ def test_no_warning_when_stable(isolated_price_bank: Path):
     _save_minimal("BR-2026-05", code, 105.0)
     comp = PriceBankStore.for_reference("BR-2026-05").get_open_composition(code, uf="AM")
     result = compute_period_variation_warnings(comp, uf="AM", reference="BR-2026-05")
+    assert result["warnings"] == []
+
+
+def test_no_false_item_warning_when_prices_unchanged(isolated_price_bank: Path):
+    """04→05: insumo com mesmo preço não deve gerar alerta de item."""
+    code = "95995"
+    item = {
+        "item_type": "insumo",
+        "code": "1518",
+        "description": "CONCRETO BETUMINOSO USINADO A QUENTE (CBUQ)",
+        "unit": "T",
+        "coefficient": 2.5663714,
+        "unit_price": 815.0,
+        "partial_cost": 2091.59,
+        "unit_price_sem": 815.0,
+        "partial_cost_sem": 2091.59,
+    }
+    _save_minimal("BR-2026-04", code, 2246.7, items=[item])
+    _save_minimal("BR-2026-05", code, 2245.79, items=[item])
+    comp = PriceBankStore.for_reference("BR-2026-05").get_open_composition(code, uf="AM")
+    result = compute_period_variation_warnings(comp, uf="AM", reference="BR-2026-05")
+    assert result["previous_reference"] == "BR-2026-04"
     assert result["warnings"] == []
