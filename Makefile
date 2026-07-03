@@ -1,4 +1,4 @@
-.PHONY: setup setup-backend setup-frontend api db-init index-nbrs index-knowledge index-price-bases backup-app restore test test-backend test-cov test-project-rag smoke-e2e validate-project-rag validate-price-bases frontend docker-up auto-tune agent-generation workflow-worker workflow-infra libreoffice validate-lan cloudflare-setup cloudflare-run cloudflare-service cloudflare-quick
+.PHONY: setup setup-backend setup-frontend api db-init index-nbrs index-knowledge index-price-bases backup-app restore test test-backend test-cov test-ci test-ci-backend test-project-rag smoke-e2e test-budget-e2e test-budget-e2e-live test-budget-pilot validate-budget-pilot validate-budget-pilot-ui build-ppd-seminf-2026 validate-project-rag validate-price-bases frontend docker-up auto-tune agent-generation workflow-worker workflow-infra libreoffice validate-lan cloudflare-setup cloudflare-run cloudflare-service cloudflare-quick
 
 BACKEND_DIR := backend
 FRONTEND_DIR := frontend
@@ -57,8 +57,34 @@ test-cov:
 		--cov-fail-under=0
 	@echo "Relatório HTML: backend/htmlcov/index.html (meta sugerida: 60% em core/ e app/services/)"
 
+test-ci-backend:
+	@bash scripts/ci_backend.sh -q
+
+test-ci: test-ci-backend test-budget-e2e
+	@echo "CI local OK (backend subset + Playwright orçamento)"
+
 smoke-e2e:
 	@bash scripts/smoke_e2e.sh $(API_BASE)
+
+test-budget-e2e:
+	cd $(FRONTEND_DIR) && npm run playwright:install
+	cd $(FRONTEND_DIR) && npm run test:e2e:budget
+
+test-budget-e2e-live:
+	cd $(FRONTEND_DIR) && npm run playwright:install
+	cd $(FRONTEND_DIR) && RUN_E2E_REAL_BACKEND=1 npm run test:e2e:budget-live
+
+test-budget-pilot:
+	cd $(BACKEND_DIR) && $(BACKEND_PYTHON) -m pytest tests/test_budget_pilot_flow.py -v
+
+validate-budget-pilot:
+	@bash scripts/validate_budget_pilot.sh $(API_BASE)
+
+validate-budget-pilot-ui:
+	@bash scripts/validate_budget_pilot_ui.sh $(API_BASE)
+
+build-ppd-seminf-2026:
+	@$(VENV_PYTHON) scripts/build_ppd_seminf_abril_2026.py --force
 
 test-project-rag:
 	cd $(BACKEND_DIR) && $(BACKEND_PYTHON) -m pytest tests/test_project_rag_e2e.py tests/test_project_file_extractors.py -v
@@ -68,6 +94,9 @@ validate-project-rag:
 
 frontend:
 	cd $(FRONTEND_DIR) && npm run dev
+
+frontend-clean:
+	@bash scripts/restart-frontend-dev.sh
 
 docker-up:
 	cd infra/docker && docker compose up -d

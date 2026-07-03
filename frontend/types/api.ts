@@ -5,6 +5,23 @@ export interface ChatRequest {
   conversation_id?: string;
   project_id?: string;
   llm_model?: string | null;
+  attachment_ids?: string[];
+}
+
+export interface ChatAttachmentItem {
+  id: string;
+  filename: string;
+  size_bytes: number;
+  format: string;
+  model_hint?: string | null;
+  preview?: string;
+  error?: string | null;
+  meta?: Record<string, unknown>;
+}
+
+export interface ChatAttachmentsUploadResponse {
+  items: ChatAttachmentItem[];
+  model_hint?: string | null;
 }
 
 export interface ChatResponse {
@@ -43,6 +60,7 @@ export interface OrchestrateRequest {
   use_rag?: boolean;
   persist?: boolean;
   llm_model?: string | null;
+  attachment_ids?: string[];
 }
 
 export interface OrchestrateResponse {
@@ -62,6 +80,7 @@ export interface CopilotRequest {
   text: string;
   use_rag?: boolean;
   persist?: boolean;
+  attachment_ids?: string[];
 }
 
 export interface CopilotResponse {
@@ -82,6 +101,7 @@ export interface AedRequest {
   text: string;
   use_rag?: boolean;
   persist?: boolean;
+  attachment_ids?: string[];
 }
 
 export interface AedResponse {
@@ -1131,8 +1151,14 @@ export interface BudgetProjectInfo {
     rate_com_desoneracao: number;
     rate_sem_desoneracao: number;
     label?: string;
+    source?: string;
+    profile_id?: string | null;
+    components_comd?: BdiTcuComponents;
+    components_semd?: BdiTcuComponents;
   };
   template?: string;
+  commercial_margin_pct?: number;
+  commercial_client?: string;
 }
 
 export interface ScheduleLink {
@@ -1174,6 +1200,83 @@ export interface BdiObraType {
   label: string;
   rate_com_desoneracao: number;
   rate_sem_desoneracao: number;
+}
+
+export interface BdiTcuComponents {
+  administracao_central: number;
+  garantias_seguros: number;
+  riscos: number;
+  despesas_financeiras: number;
+  lucro: number;
+  tributos: number;
+}
+
+export interface BdiEditalProfile {
+  id: string;
+  label: string;
+  description: string;
+  source: string;
+  obra_type?: string | null;
+  components_comd: BdiTcuComponents;
+  components_semd: BdiTcuComponents;
+  rate_com_desoneracao: number;
+  rate_sem_desoneracao: number;
+  max_rate_comd?: number | null;
+  max_rate_semd?: number | null;
+}
+
+export interface BdiValidationIssue {
+  code: string;
+  message: string;
+  severity: "warning" | "error" | string;
+  field?: string | null;
+}
+
+export interface BdiValidationResult {
+  status: "ok" | "warning" | "error" | string;
+  profile_id: string;
+  profile_label?: string | null;
+  applied_rates: { com_desoneracao: number; sem_desoneracao: number };
+  reference_rates: { com_desoneracao: number | null; sem_desoneracao: number | null };
+  issue_count: number;
+  error_count: number;
+  warning_count: number;
+  issues: BdiValidationIssue[];
+  valid_for_edital: boolean;
+}
+
+export interface ComplianceChecklistItem {
+  id: string;
+  item: string;
+  status: string;
+}
+
+export interface CompliancePackPreview {
+  session_id: string;
+  title?: string;
+  projeto?: string;
+  bdi_validation_status?: string;
+  checklist_lei_14133: ComplianceChecklistItem[];
+  export_official_xlsm?: boolean;
+  nota?: string;
+}
+
+export interface BudgetAuditEntry {
+  id?: string;
+  action: string;
+  session_id?: string;
+  row_code?: string | null;
+  row_id?: string | null;
+  field?: string | null;
+  old_value?: unknown;
+  new_value?: unknown;
+  meta?: Record<string, unknown>;
+  created_at?: string | null;
+  at?: string;
+  old_rate_comd?: number;
+  new_rate_comd?: number;
+  old_rate_semd?: number;
+  new_rate_semd?: number;
 }
 
 export interface PriceBaseInfo {
@@ -1479,12 +1582,37 @@ export interface BudgetSummary {
   title: string;
   orcamento?: string;
   project_id?: string | null;
+  user_id?: string | null;
+  version?: number;
   session_id: string;
   grand_total: number;
   obra_type: string;
   input_text?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  baseline_document_id?: string | null;
+  revision_number?: number;
+  revision_label?: string | null;
+  baseline_frozen?: boolean;
+  baseline_frozen_at?: string | null;
+}
+
+export interface BudgetRevisionItem extends BudgetSummary {}
+
+export interface BudgetBaselineCompare {
+  baseline_grand_total: number;
+  current_grand_total: number;
+  delta_grand_total: number;
+  delta_pct: number | null;
+  lines_changed: number;
+  line_diffs: Array<{
+    code: string;
+    name: string;
+    baseline_total: number;
+    current_total: number;
+    delta: number;
+    status: string;
+  }>;
 }
 
 export interface BudgetSessionResponse {
@@ -1520,7 +1648,14 @@ export interface BudgetSessionResponse {
   };
   input_text?: string;
   db_id?: string;
+  document_version?: number;
+  user_id?: string | null;
   project_id?: string | null;
+  baseline_document_id?: string | null;
+  revision_number?: number;
+  revision_label?: string | null;
+  baseline_frozen?: boolean;
+  baseline_frozen_at?: string | null;
   created_at: string;
   updated_at: string;
 }

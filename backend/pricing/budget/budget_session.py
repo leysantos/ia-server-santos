@@ -7,6 +7,7 @@ from typing import Any
 
 from pricing.budget.budget_calculator import BudgetCalculator
 from pricing.models.budget_item import BudgetItem
+from pricing.budget.budget_audit import append_audit, audit_entry, service_snapshot
 from pricing.models.budget_metadata import BudgetProjectMetadata
 from pricing.schedule.schedule_models import ProjectSchedule
 
@@ -53,6 +54,8 @@ class BudgetSession:
     calculation_memory: list[dict[str, Any]] = field(default_factory=list)
     schedule: ProjectSchedule | None = None
     tech_spec: dict[str, Any] | None = None
+    audit_log: list[dict[str, Any]] = field(default_factory=list)
+    db_id: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -98,6 +101,8 @@ class BudgetSession:
             "calculation_memory": self.calculation_memory,
             "schedule": self.schedule.to_dict() if self.schedule else None,
             "tech_spec": self.tech_spec,
+            "audit_log": self.audit_log,
+            "db_id": self.db_id,
             "source_priority": self.source_priority,
             "intent": self.intent,
             "template": self.project.template,
@@ -129,6 +134,24 @@ class BudgetSessionStore:
     def __init__(self) -> None:
         self._sessions: dict[str, BudgetSession] = {}
 
+    def _persist_snapshot(self, session: BudgetSession) -> None:
+        try:
+            from app.services.budget_session_snapshot_service import save_session_snapshot
+
+            save_session_snapshot(session)
+        except Exception:
+            pass
+
+    def get(self, session_id: str) -> BudgetSession | None:
+        if session_id in self._sessions:
+            return self._sessions[session_id]
+        try:
+            from app.services.budget_session_snapshot_service import restore_session_snapshot
+
+            return restore_session_snapshot(session_id)
+        except Exception:
+            return None
+
     def create(
         self,
         roots: list[BudgetItem],
@@ -157,6 +180,7 @@ class BudgetSessionStore:
             existing.project = proj
             existing.calculation_memory = memory
             existing.updated_at = datetime.now(timezone.utc).isoformat()
+            self._persist_snapshot(existing)
             return existing
 
         session = BudgetSession(
@@ -169,10 +193,8 @@ class BudgetSessionStore:
             calculation_memory=memory,
         )
         self._sessions[sid] = session
+        self._persist_snapshot(session)
         return session
-
-    def get(self, session_id: str) -> BudgetSession | None:
-        return self._sessions.get(session_id)
 
     def update_cell(
         self,
@@ -188,12 +210,79 @@ class BudgetSessionStore:
 
         calc = BudgetCalculator()
         edit_memory: list[dict[str, Any]] = []
+        audit_entries: list[dict[str, Any]] = []
         for root in session.roots:
+            old_value = calc.get_cell_value(root, row_id, field, code=code)
             _, mem = calc.apply_cell_edit(root, row_id, field, value, code=code)
             edit_memory.extend(mem)
+            if old_value is not None:
+                target = calc.find_row(root, row_id, code=code)
+                audit_entries.append(
+                    {
+                        "action": "cell_edit",
+                        "row_id": row_id or (target.row_id if target else ""),
+                        "row_code": code or (target.code if target else ""),
+                        "field": field,
+                        "old_value": old_value,
+                        "new_value": value,
+                        "at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
 
         session.calculation_memory = edit_memory
+        session.audit_log.extend(audit_entries)
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
+        return session
+
+    def set_bdi_config(self, session_id: str, config) -> BudgetSession:
+        from pricing.budget.bdi_calculator import BdiCalculator
+        from pricing.models.budget_metadata import BdiConfig
+
+        session = self._sessions.get(session_id)
+        if not session:
+            raise KeyError(f"Sessão não encontrada: {session_id}")
+
+        if not isinstance(config, BdiConfig):
+            config = BdiConfig.from_dict(config) if isinstance(config, dict) else BdiConfig.from_obra_type(str(config))
+
+        old_rates = (
+            session.project.bdi.rate_com_desoneracao,
+            session.project.bdi.rate_sem_desoneracao,
+        )
+        config.sync_rates()
+        session.project.apply_bdi_config(config)
+        bdi_calc = BdiCalculator(session.project.bdi)
+        for root in session.roots:
+            bdi_calc.apply_tree(root)
+            root.recompute_total()
+
+        session.audit_log.append(
+            {
+                "action": "bdi_change",
+                "profile_id": config.profile_id,
+                "source": config.source,
+                "obra_type": config.obra_type,
+                "old_rate_comd": old_rates[0],
+                "old_rate_semd": old_rates[1],
+                "new_rate_comd": config.rate_com_desoneracao,
+                "new_rate_semd": config.rate_sem_desoneracao,
+                "at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        session.calculation_memory = [
+            {
+                "step": "bdi_config_change",
+                "source": config.source,
+                "profile_id": config.profile_id,
+                "obra_type": session.project.obra_type,
+                "rate_comd": config.rate_com_desoneracao,
+                "rate_semd": config.rate_sem_desoneracao,
+                "grand_total": session.grand_total,
+            }
+        ]
+        session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session
 
     def set_obra_type(self, session_id: str, obra_type: str) -> BudgetSession:
@@ -220,6 +309,7 @@ class BudgetSessionStore:
             }
         ]
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session
 
     def update_project(
@@ -244,10 +334,15 @@ class BudgetSessionStore:
             "orcamento": "orcamento",
             "data_ref": "data_ref",
             "processo": "processo",
+            "commercial_margin_pct": "commercial_margin_pct",
+            "commercial_client": "commercial_client",
         }
         for key, attr in mapping.items():
             if key in fields and fields[key] is not None:
-                setattr(session.project, attr, str(fields[key]).strip())
+                if key == "commercial_margin_pct":
+                    setattr(session.project, attr, float(fields[key]))
+                else:
+                    setattr(session.project, attr, str(fields[key]).strip())
 
         if "price_bases" in fields and fields["price_bases"] is not None:
             from pricing.budget.price_base_session import apply_price_bases_selection
@@ -262,6 +357,7 @@ class BudgetSessionStore:
         if fields.get("projeto") or fields.get("nome_obra"):
             session.title = str(fields.get("projeto") or fields.get("nome_obra")).strip()
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session
 
     def add_etapa(self, session_id: str, name: str) -> BudgetSession:
@@ -273,6 +369,7 @@ class BudgetSessionStore:
         add_etapa(session.roots, name, session.project)
         session.calculation_memory = refresh_calculation_memory(session.roots)
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session
 
     def update_group(self, session_id: str, group_code: str, name: str) -> BudgetSession:
@@ -287,6 +384,7 @@ class BudgetSessionStore:
         update_group_name(group, name)
         session.calculation_memory = refresh_calculation_memory(session.roots)
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session
 
     def update_etapa(self, session_id: str, etapa_code: str, name: str) -> BudgetSession:
@@ -301,6 +399,7 @@ class BudgetSessionStore:
         add_subetapa(session.roots, parent_code, name, session.project)
         session.calculation_memory = refresh_calculation_memory(session.roots)
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session
 
     def _apply_wbs_renumber(self, session: BudgetSession) -> dict[str, str]:
@@ -332,6 +431,7 @@ class BudgetSessionStore:
             raise ValueError(f"Linha não encontrada: {row_id}")
         self._apply_wbs_renumber(session)
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session
 
     def renumber_itemization(self, session_id: str) -> tuple[BudgetSession, dict[str, str]]:
@@ -340,6 +440,7 @@ class BudgetSessionStore:
             raise KeyError(f"Sessão não encontrada: {session_id}")
         mapping = self._apply_wbs_renumber(session)
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session, mapping
 
     def compose_etapa(
@@ -358,6 +459,7 @@ class BudgetSessionStore:
             recompose_group_from_prompt,
             refresh_calculation_memory,
         )
+        from pricing.budget.ppd_layout import ROW_TYPE_SERVICO
 
         session = self._sessions.get(session_id)
         if not session:
@@ -366,6 +468,7 @@ class BudgetSessionStore:
         if not group:
             raise ValueError(f"Grupo não encontrado: {etapa_code}")
         removed = 0
+        services_before = len([c for c in group.children if c.row_type == ROW_TYPE_SERVICO])
         if replace_existing:
             _, log, removed = recompose_group_from_prompt(
                 group,
@@ -385,7 +488,22 @@ class BudgetSessionStore:
                 default_quantity=default_quantity,
             )
         session.calculation_memory = refresh_calculation_memory(session.roots)
+        services_after = len([c for c in group.children if c.row_type == ROW_TYPE_SERVICO])
+        append_audit(
+            session,
+            audit_entry(
+                "compose_etapa",
+                etapa_code=etapa_code,
+                prompt=prompt[:500] if prompt else "",
+                replace_existing=replace_existing,
+                removed_count=removed,
+                services_before=services_before,
+                services_after=services_after,
+                compose_steps=len(log),
+            ),
+        )
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session, log, removed
 
     def get_group_compose_prompt(self, session_id: str, group_code: str) -> tuple[str, int]:
@@ -408,6 +526,7 @@ class BudgetSessionStore:
         price_data: dict[str, Any],
     ) -> BudgetSession:
         from pricing.budget.budget_structure import (
+            find_item,
             refresh_calculation_memory,
             replace_service_from_price,
         )
@@ -416,6 +535,8 @@ class BudgetSessionStore:
         session = self._sessions.get(session_id)
         if not session:
             raise KeyError(f"Sessão não encontrada: {session_id}")
+        old_item, _, _ = find_item(session.roots, row_id=row_id)
+        old_snapshot = service_snapshot(old_item)
         price = PriceItem(
             code=str(price_data.get("code") or ""),
             description=str(price_data.get("description") or price_data.get("name") or ""),
@@ -432,8 +553,21 @@ class BudgetSessionStore:
             unit_hint=price_data.get("unit_hint"),
             pricing_query=str(price_data.get("pricing_query") or price_data.get("query") or ""),
         )
+        new_item, _, _ = find_item(session.roots, row_id=row_id)
         session.calculation_memory = refresh_calculation_memory(session.roots)
+        append_audit(
+            session,
+            audit_entry(
+                "replace_service",
+                row_id=row_id,
+                old_service=old_snapshot,
+                new_service=service_snapshot(new_item),
+                price_code=price.code,
+                price_source=price.source,
+            ),
+        )
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session
 
     def apply_group_quantity(
@@ -465,7 +599,18 @@ class BudgetSessionStore:
         for root in session.roots:
             root.recompute_total()
         session.calculation_memory = refresh_calculation_memory(session.roots)
+        append_audit(
+            session,
+            audit_entry(
+                "apply_group_quantity",
+                group_code=group_code,
+                quantity=quantity,
+                include_subgroups=include_subgroups,
+                updated_count=count,
+            ),
+        )
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session, count
 
     def add_service(
@@ -498,7 +643,7 @@ class BudgetSessionStore:
             metadata=dict(price_data.get("metadata") or {}),
         )
         unit_hint = str(price_data.get("unit_hint") or "").strip() or None
-        add_service_to_group(
+        svc = add_service_to_group(
             group,
             price,
             session.project,
@@ -506,7 +651,19 @@ class BudgetSessionStore:
             unit_hint=unit_hint,
         )
         session.calculation_memory = refresh_calculation_memory(session.roots)
+        append_audit(
+            session,
+            audit_entry(
+                "add_service",
+                etapa_code=etapa_code,
+                row_id=svc.row_id,
+                row_code=svc.code,
+                service=service_snapshot(svc),
+                quantity=quantity,
+            ),
+        )
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session
 
     def generate_memories(
@@ -533,6 +690,7 @@ class BudgetSessionStore:
         )
         session.calculation_memory = refresh_calculation_memory(session.roots)
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session, log
 
     def sync_schedule(self, session_id: str) -> BudgetSession:
@@ -550,7 +708,13 @@ class BudgetSessionStore:
             existing=session.schedule,
             project_start=session.schedule.project_start if session.schedule else None,
         )
+        task_count = len(session.schedule.tasks) if session.schedule else 0
+        append_audit(
+            session,
+            audit_entry("schedule_sync", task_count=task_count),
+        )
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session
 
     def get_schedule(self, session_id: str) -> BudgetSession:
@@ -575,16 +739,31 @@ class BudgetSessionStore:
         session = self._sessions.get(session_id)
         if not session or not session.schedule:
             raise KeyError(f"Sessão não encontrada: {session_id}")
+        task = session.schedule.task_by_id(task_id)
+        if not task:
+            raise ValueError(f"Tarefa não encontrada: {task_id}")
+        old_duration = task.duration_days
+        old_manual_start = task.manual_start
         if duration_days is not None:
             session.schedule = update_task_duration(session.schedule, task_id, duration_days)
         else:
-            task = session.schedule.task_by_id(task_id)
-            if not task:
-                raise ValueError(f"Tarefa não encontrada: {task_id}")
             if manual_start is not None:
                 task.manual_start = manual_start[:10] if manual_start else None
             session.schedule = run_cpm(session.schedule)
+        append_audit(
+            session,
+            audit_entry(
+                "schedule_task_update",
+                task_id=task_id,
+                task_name=task.name,
+                old_duration_days=old_duration,
+                new_duration_days=duration_days if duration_days is not None else task.duration_days,
+                old_manual_start=old_manual_start,
+                new_manual_start=task.manual_start,
+            ),
+        )
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session
 
     def update_schedule_settings(
@@ -598,8 +777,18 @@ class BudgetSessionStore:
         session = self._sessions.get(session_id)
         if not session or not session.schedule:
             raise KeyError(f"Sessão não encontrada: {session_id}")
+        old_start = session.schedule.project_start
         session.schedule = update_project_start(session.schedule, project_start)
+        append_audit(
+            session,
+            audit_entry(
+                "schedule_settings",
+                old_project_start=old_start,
+                new_project_start=project_start,
+            ),
+        )
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session
 
     def add_schedule_link(
@@ -622,7 +811,18 @@ class BudgetSessionStore:
             link_type=link_type,
             lag_days=lag_days,
         )
+        append_audit(
+            session,
+            audit_entry(
+                "schedule_link_add",
+                predecessor_id=predecessor_id,
+                successor_id=successor_id,
+                link_type=link_type,
+                lag_days=lag_days,
+            ),
+        )
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session
 
     def remove_schedule_link(self, session_id: str, link_id: str) -> BudgetSession:
@@ -632,7 +832,12 @@ class BudgetSessionStore:
         if not session or not session.schedule:
             raise KeyError(f"Sessão não encontrada: {session_id}")
         session.schedule = remove_link(session.schedule, link_id)
+        append_audit(
+            session,
+            audit_entry("schedule_link_remove", link_id=link_id),
+        )
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session
 
     def recalculate_schedule(self, session_id: str) -> BudgetSession:
@@ -642,7 +847,9 @@ class BudgetSessionStore:
         if not session or not session.schedule:
             raise KeyError(f"Sessão não encontrada: {session_id}")
         session.schedule = run_cpm(session.schedule)
+        append_audit(session, audit_entry("schedule_recalculate"))
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session
 
     def compose_schedule(
@@ -677,7 +884,20 @@ class BudgetSessionStore:
             budget_rows=rows,
         )
         session.schedule = result.schedule
+        append_audit(
+            session,
+            audit_entry(
+                "schedule_compose",
+                prompt=prompt[:500] if prompt else "",
+                replace_links=replace_links,
+                use_llm=use_llm,
+                llm_model=result.llm_model,
+                summary=(result.summary or "")[:300],
+                log_steps=len(result.log_dicts()),
+            ),
+        )
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session, result.log_dicts(), result.summary, result.llm_model
 
     def get_tech_spec(self, session_id: str) -> dict[str, Any] | None:
@@ -704,6 +924,7 @@ class BudgetSessionStore:
         current.touch()
         session.tech_spec = current.to_dict()
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session
 
     def clear_tech_spec(self, session_id: str) -> BudgetSession:
@@ -712,6 +933,7 @@ class BudgetSessionStore:
             raise KeyError(f"Sessão não encontrada: {session_id}")
         session.tech_spec = None
         session.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist_snapshot(session)
         return session
 
     def export_tech_spec_docx(self, session_id: str) -> bytes:

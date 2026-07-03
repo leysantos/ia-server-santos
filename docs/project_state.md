@@ -6,9 +6,9 @@
 | Campo | Valor |
 |-------|-------|
 | **Versão do sistema** | 1.0.0 |
-| **Última atualização** | 2026-06-20 |
-| **Marco atual** | M1–M5 + R10 Project RAG ✅ + price bases (`composition_index`) |
-| **Próximo foco** | Fase 2 item 3 — simuladores estruturais · M6 split `pricing.py` |
+| **Última atualização** | 2026-07-03 |
+| **Próximo foco** | Piloto §4.U humano (assinatura checklist na UI) · M10 `project.user_id` |
+| **Marco atual** | M1–M8 ✅ · Orçamento B1–B28 ✅ |
 | **Repositório** | [github.com/leysantos/ia-server-santos](https://github.com/leysantos/ia-server-santos) |
 | **Branch principal** | `main` |
 | **Modo padrão de agentes** | Inteligente (`USE_INTELLIGENT_AGENTS=true`) |
@@ -70,10 +70,10 @@ ia-server-santos/
 | **Vision Analysis** | 🟢 Vision Engine — OCR → RAG CBMAM (modo PCI) → `gemma3:12b` → JSON → `qwen3:14b` → DOCX · checklist IT-11/NT-03 · SSE · `/projects/{id}/vision` |
 | **Workflow Projetos** | 🟡 Fase 3 — Wizard de Entrega (`/workflow/wizard`) · seleção manual arquivos · templates A4–A0 · nomenclatura `DISC-FLnn-TIPO-DESC-REV` · análise CAD/IA · GRD PDF · ZIP estruturado · Fase 2.1 (classificador, skip, presigned) mantida |
 | **Operational Transparency** | 🟢 ActivityPanel global · Operations Console `/console` (SSE live + fila Ollama + log `norm_bulk`/`knowledge`) · timeline `/projects/{id}/activity` · `project_decisions` + auto-capture |
-| **Orçamento `/budget`** | 🟢 Abas: Dados · Etapas · **Orç. Sintético** · **Orç. Analítico** · **Busca CPU** · Memória · Cronograma · **Curva ABC** · **Curva S** · **Histograma** (cache CPUs + modelo · prefetch com cronograma · barras empilhadas + ref. BDI + **export PDF/Excel** com **gráficos no PDF** alinhados à UI) · Especificação · Histórico · **Modelos WBS** · **exportação nativa** (Excel/PDF por documento via select na toolbar; workbook legado 5 abas em `/export`) |
-| Chat streaming UX | 🟢 SSE instantâneo (`connected`) + tokens ~60fps (`flushSync` + rAF) |
+| **Orçamento `/budget`** | 🟢 **Produção interna alta** + **enterprise técnico** (B1–B28): 11 docs nativos + `proposta_comercial` + `.xlsm` oficial (`ppd_seminf_abril_2026.xlsm`) + compliance-pack · auditoria completa · snapshot PostgreSQL · tenant `empresa_id` · lock sessão concorrente · §8.1 |
+| Chat streaming UX | 🟢 SSE instantâneo (`connected`) + tokens ~60fps · **anexos no prompt** (PDF/planilha/imagem/CAD) em `/chat`, `/orchestrate`, `/copilot`, `/aed` + roteamento auto por tipo |
 | Agente Geotecnia dedicado | 🟢 `GeotecniaIntelligentAgent` — NBR 6122/7185, classificação solo, A_min |
-| Frontend | 🟢 `/chat`, `/projects`, `/budget`, `/orchestrate`, `/copilot`, `/aed`, `/console`, `/history`, `/settings`, `/projects/{id}/workflow` |
+| Frontend | 🟢 `/chat`, `/projects`, `/budget`, `/mobile/*` (telefone), `/orchestrate`, `/copilot`, `/aed`, `/console`, `/history`, `/settings`, `/projects/{id}/workflow` |
 | Auth SaaS | 🟢 JWT · middleware · papéis `admin` \| `dev_user` + **tipos customizados** · **permissões por módulo** (oculto/bloqueado) · `/settings/users` (**editar** + **excluir**/desativar) |
 
 ## Feature flags importantes (defaults)
@@ -96,9 +96,10 @@ ia-server-santos/
 
 ## Modelos Ollama no WSL (instalados)
 
-`qwen3.6:latest` · `gemma4:latest` · `deepseek-r1:14b` · `qwen3:8b` · `qwen3:14b` · `qwen3-coder` · `gemma3:12b` · `mistral:7b` · `phi3:mini` · `qwen2.5-coder` · `deepseek-coder` · `nomic-embed-text`
+`gemma4:latest` · `deepseek-r1:14b` · `deepseek-coder:latest` · `mistral:7b` · `qwen2.5-coder:latest` · `phi3:mini` · `gemma3:12b` · `nomic-embed-text:latest` · `qwen3-coder:latest` · `qwen3:14b` · `qwen3:8b`
 
-Config padrão: chat=`phi3:mini`/mistral · eng=`qwen3.6:latest` · fallback=`gemma4:latest` · embed=`nomic-embed-text`.  
+Config padrão: chat=`phi3:mini`/mistral · eng=`qwen3:14b` · fallback=`qwen3:8b` · embed=`nomic-embed-text`.  
+Router sincroniza `model_map` com `ollama list` via `installed_model_registry.py` (`build_router_model_map`, `refresh_installed_models`).  
 `GET /health` retorna lista dinâmica via Ollama; frontend exibe badge **WSL:** no `/chat`.
 
 ## Bloqueio principal
@@ -118,8 +119,9 @@ curl http://localhost:8000/pricing/sync/bank/references
 curl -X POST http://localhost:8000/pricing/sync/bank/active \
   -H 'Content-Type: application/json' -d '{"reference":"BR-2026-05"}'
 
-# Prévia CPU por UF e período
-curl 'http://localhost:8000/pricing/sync/bank/composition/95995?uf=AM&reference=BR-2026-05'
+# Prévia CPU por UF e período (código com `/` — ex. ORSE — usar query `code=`)
+curl 'http://localhost:8000/pricing/sync/bank/composition?code=00084/ORSE&uf=SE&reference=BR-ORSE-2026-04'
+curl 'http://localhost:8000/pricing/sync/bank/composition?code=95995&uf=AM&reference=BR-2026-05'
 ```
 
 UI: `/settings/price-bases` → inventário por fonte (clique no período = prévia; sem badge “ativo”) · `/budget` → **Adicionar base** (SINAPI / DP/SEMINF / SICRO — tipo, UF, período) + **Editar**/**Remover** · aditivos usam a mesma base do orçamento original · **busca manual** e **composição por prompt** usam bases da sessão.
@@ -300,7 +302,7 @@ Fase 4  SaaS produção        ██████░░░░░░░░░░�
 | 2 | **Indexar SINAPI/TCPO (orçamento)** — `price_bank` + `composition_index` FAISS | ✅ | Baixo — `make index-price-bases` · `make validate-price-bases` |
 | 3 | Simuladores por sistema estrutural (`concrete_armed_simulator`, etc.) | Alta | Médio |
 | 4 | Execution Planner (ordem + dependências entre disciplinas) | Alta | Alto |
-| 5 | Frontend `/aed` e `/copilot` | Média | Médio |
+| 5 | Frontend `/aed` e `/copilot` | ✅ | Médio — M3 concluído |
 | 6 | Integrar Copilot → AED (disparo automático p/ projetos estruturais) | Média | Baixo |
 | 7 | Propagação de premissas entre agentes (Orchestrator v2 completo) | Média | Alto |
 
@@ -740,8 +742,179 @@ Espelha a fórmula Excel da aba **Analítico com Custo**:
 ### Pendências orçamento
 
 - [x] Export Excel por documento com layout alinhado ao PDF (`budget_export_tables.py` + `export_budget_document_xlsx`)
-- [ ] Validar agente de cronograma com modelos maiores (`qwen3:14b`) em obras reais
-- [ ] Testes E2E frontend cronograma + desoneração
+- [x] Export analíticas Curva ABC / Curva S / Histograma (PDF + Excel + gráficos no PDF)
+- [x] Relatórios **Insumos e Materiais** e **Mão de Obra** (PDF/Excel) — agregação por código/unidade a partir das CPUs; rodapé TOTAL SEM BDI · VALOR BDI · TOTAL COM BDI
+- [x] Cache histograma + prefetch CPUs (reabertura instantânea da aba)
+- [x] **B1** — `user_id` + filtros em `budget_documents` (ownership multi-usuário)
+- [x] **B2** — Versionamento / lock otimista ao salvar (`expected_version`, HTTP 409)
+- [x] **B3** — BDI configurável por edital + decomposição TCU (perfis + UI Dados)
+- [x] **B4** — UI import PPD + pipeline LLM (`BudgetPipelinePanel` / `budgetGenerateStream` na aba Histórico)
+- [x] **B5** — Expor TCPO/ORSE na UI do orçamento (Busca CPU)
+- [x] **B6** — Fluxo aditivo (baseline congelada + revisão / aditivo contratual)
+- [x] **B7** — Trilha auditoria completa (B7+B16) — `cell_edit`, `bdi_change`, `add_service`, `replace_service`, `compose_etapa`, `apply_group_quantity`, cronograma → `budget_audit_log`
+- [x] **B8** — Curva S com cenário adotado explícito na exportação (ComD vs SemD documentado)
+- [x] **B10** — Testes E2E Playwright orçamento (`make test-budget-e2e` — **14** testes mock + `make test-budget-e2e-live`)
+- [x] **B12** — Piloto obra real automatizado (`test_budget_pilot_flow` + `make validate-budget-pilot`)
+- [x] **B14** — CI GitHub Actions (`make test-ci` = `test-ci-backend` + `test-budget-e2e`)
+- [x] **B15** — Piloto campo §4 (`validate_budget_pilot.sh` expandido + `test_pilot_section4_field_checklist` + CI export/ABC)
+- [x] **B16** — Auditoria completa CPU/serviço/cronograma (`budget_audit.py` + persistência rotas + `test_budget_audit_b16.py`)
+- [x] **B17** — Piloto UI manual §4.U — script `make validate-budget-pilot-ui` + checklist 4.U1–4.U7
+- [x] **B18** — Snapshot `SESSION_STORE` PostgreSQL (`budget_session_snapshots` + restore automático em `get()`)
+- [x] **B19** — Export `.xlsm` oficial SEMINF (`GET /budget/{id}/export/xlsm` + `POST .../workbook/sync`)
+- [x] **B20** — Testes export ampliados (pytest `proposta_comercial`/`compliance-pack` + Playwright export PDF/XLSX na toolbar)
+- [x] **B21** — CPQ margem comercial (`commercial_margin_pct` + UI `BudgetCommercialPanel` na aba Dados + export `proposta_comercial` PDF/XLSX)
+- [x] **B22** — Pacote compliance licitação (`GET .../export/compliance-pack.json` + checklist Lei 14.133)
+- [x] **B23** — UI licitação: toolbar PPD `.xlsm` + pacote compliance + painel checklist na aba Dados
+- [x] **B24** — Piloto ampliado: `validate_budget_pilot.sh` cobre 4.U5/4.U6 + pytest xlsm/compliance/BDI
+- [x] **B25** — Playwright API real (`e2e/budget-live.spec.ts` + `make test-budget-e2e-live`)
+- [x] **B26** — Validador BDI vs edital (`bdi_edital_validator.py` + `GET /bdi/validation` + alertas UI)
+- [x] **B27** — Tenant multi-empresa — `empresa_id` em `budget_documents` + header `X-Tenant-Id` + `BudgetTenantSelector` + MinIO `tenants/{id}/budgets/…`
+- [x] **B28** — Lock sessão concorrente — `BudgetSessionLock` TTL 300s + rotas lock/renew/release + guard PATCH cell/saved + heartbeat frontend
+- [x] **B17+** — UI checklist §4.U — `BudgetPilotChecklist` (4.U1–4.U7) na aba Dados + export JSON assinatura
+- [ ] Piloto UI §4.U — **conferência humana** na `/budget` (marcar checklist + export assinatura; ver `docs/e2e_validation_checklist.md`)
+
+### 8.1 Análise enterprise — módulo Orçamento (revisão 2026-06-29, pós B1–B22)
+
+> Revisão ponta a ponta: UI `/budget` · backend `pricing/budget/` · export · bases · cronograma · auth · persistência.  
+> Objetivo: avaliar prontidão para **empresa de grande porte** com obras **privadas** e **públicas (licitações)**.
+
+#### Escopo analisado
+
+| Camada | Componentes |
+|--------|-------------|
+| **Frontend** | 12 abas (`BudgetEtapasPanel`, `BudgetSpreadsheet`, analítico, busca CPU, memória, cronograma/Gantt, ABC/S/Histograma, especificação, histórico, WBS models) |
+| **Backend** | `budget_engine.py`, `budget_db_service.py`, `budget_export_tables.py`, `budget_pdf_export.py`, `budget_pdf_charts.py`, `schedule_curves.py`, `budget_analytics.py`, rotas em `pricing.py` |
+| **Bases** | SINAPI (Caixa, ComD/SemD), SICRO/DNIT, DP/SEMINF, TCPO/ORSE (indexados + filtros na Busca CPU — B5) |
+| **Export** | PDF/Excel nativo (**11** tipos incl. `proposta_comercial`) + **`.xlsm` oficial** (B19) + `compliance-pack.json` (B22) |
+| **Auth** | JWT + permissões por módulo; conversas e orçamentos isolados por `user_id` (B1) e **`empresa_id`/tenant** (B27); lock sessão concorrente (B28) |
+
+#### Pontos positivos
+
+| # | Capacidade | Relevância enterprise |
+|---|------------|----------------------|
+| 1 | **PPD MC/OR completo** — ComD/SemD paralelo, total adotado (menor), BDI SEMINF (8 tipos) | Atende fluxo interno SEMINF/SEINFRA e obras públicas estaduais similares |
+| 2 | **WBS hierárquico** — etapas/sub-etapas/serviços, renumeração, esqueletos | Escala para obras grandes com dezenas de etapas |
+| 3 | **CPU analítica** — expansão insumos, fórmula Caixa, variação mês anterior, busca ao vivo | Conferência técnica e defesa de preços unitários |
+| 4 | **Multi-base** — SINAPI + SICRO + SEMINF no mesmo orçamento | Obras rodoviárias (SICRO) + edificações (SINAPI) + padrão estadual |
+| 5 | **Cronograma CPM + Gantt** — sync orçamento→tarefas, curvas físico/financeiro, agente IA | Planejamento físico-financeiro exigido em licitações e contratos |
+| 6 | **Analíticas** — Curva ABC, Curva S, Histograma MO+EQ por item (tabela + gráfico empilhado), cache CPUs | Gestão de custo, desembolso e controle gerencial |
+| 7 | **Export institucional** — PDF paisagem/retrato, Excel com fórmulas, gráficos no PDF | Entrega a cliente/contratante sem depender de template externo |
+| 8 | **Especificação técnica IA** — serviço a serviço, DOCX/PDF ABNT | Memorial descritivo automatizado para propostas |
+| 9 | **Histórico + modelos WBS** — reuso entre obras | Ganho de produtividade em escritório grande |
+| 10 | **Integração price_bank** — sync SINAPI/SICRO/SEMINF, prévia CPU, encargos MO por UF | Operação autônoma de bases sem planilha manual |
+
+#### Pontos negativos / gaps
+
+> **Revisão pós B1–B26:** **14/14 gaps fechados** no escopo técnico §8.1. Itens **estritamente institucionais** (publicação PNCP, assinatura humana §4.U) permanecem operacionais fora do código.
+
+| # | Gap | Status | Impacto | Perfil afetado |
+|---|-----|--------|---------|----------------|
+| 1 | **Compliance licitação formal** — Lei 14.133, IN SEGES, PNCP, prestação de contas | ✅ Fechado (B22+B23) | — | Checklist L1–L7 + UI + JSON; L6/L7 PNCP/TCU **manual** por lei |
+| 2 | **BDI fixo SEMINF** — perfis edital TCU + custom (B3) | ✅ Fechado (B3+B26) | — | Validador item a item vs perfil + alertas UI |
+| 3 | ~~**Export nativo ≠ `.xlsm` oficial**~~ — **Resolvido (B19+B23)** | ✅ Fechado | — | Bridge + botão toolbar + piloto 4.U5 |
+| 4 | ~~**TCPO/ORSE na UI**~~ — **Resolvido (B5)** | ✅ Fechado | — | Busca CPU multi-base |
+| 5 | ~~**Sem `user_id`**~~ — **Resolvido (B1)** | ✅ Fechado | — | Ownership por usuário |
+| 6 | ~~**Sem versionamento/lock**~~ — **Resolvido (B2)** | ✅ Fechado | — | Lock otimista |
+| 7 | ~~**Sessão in-memory**~~ — **Resolvido (B11+B18)** | ✅ Fechado | — | Auto-save cliente + snapshot PostgreSQL + restore em `get()` |
+| 8 | ~~**Pipeline LLM sem UI**~~ — **Resolvido (B4)** | ✅ Fechado | — | Produtividade IA |
+| 9 | ~~**God file `pricing.py`**~~ — **Resolvido (B9/M6)** | ✅ Fechado | — | Sub-routers |
+| 10 | ~~**Zero testes frontend**~~ — **Resolvido (B10/B14/B20/B25)** | ✅ Fechado | — | ~95 pytest + **14** Playwright mock + live API opcional |
+| 11 | ~~**Curva S implícita**~~ — **Resolvido (B8)** | ✅ Fechado | — | Cenário adotado explícito |
+| 12 | ~~**Auditoria incompleta**~~ — **Resolvido (B7+B16)** | ✅ Fechado | — | CPU, serviço, compose, qty, cronograma |
+| 13 | ~~**CPQ comercial ausente**~~ — **Resolvido (B21)** | ✅ Fechado | — | Painel CPQ na aba Dados + margem % + `proposta_comercial` |
+| 14 | ~~**Piloto obra real**~~ — **Resolvido (B12/B15/B17/B24)** | ✅ Fechado | — | API + script §4.U + automação 4.U5/4.U6; assinatura humana opcional |
+
+#### Resumo cobertura gaps (pós B1–B26)
+
+| Categoria | Gaps (#) | % aprox. |
+|-----------|----------|----------|
+| ✅ **Resolvidos** | 1–14 (todos) | **14/14 (100%)** |
+| 🟡 **Mitigados** | — | **0/14** |
+| 🔴 **Abertos (técnicos)** | — | **0/14** |
+
+**Veredito:** ciclo **B1–B28** fecha **100%** dos gaps técnicos §8.1 + melhorias SaaS orçamento (tenant + lock). Pendências restantes: **assinatura humana** §4.U (processo) e **PNCP** (publicação manual).
+
+#### Matriz de prontidão
+
+| Perfil de uso | Nível | Comentário |
+|---------------|-------|------------|
+| **Obra pública SEMINF/SEINFRA-like** (produção interna) | 🟢 **Muito alta** | Fluxo completo + auditoria + snapshot + export `.xlsm` |
+| **Licitação / compliance formal** (14.133, TCU, PNCP) | 🟢 **Alta** | B22+B23 checklist/UI + B26 BDI; PNCP publicação manual |
+| **Obra privada / CPQ comercial** | 🟢 **Alta** | B21 painel CPQ + margem + export `proposta_comercial` |
+| **SaaS multi-equipe enterprise** | 🟢 **Alta** | B1/B2/B16/B18/B27 tenant + B28 lock sessão; membership formal user↔company opcional |
+
+#### Roadmap de melhorias — Orçamento (B1–B15 concluído · B16+ próximo)
+
+| # | Melhoria | Prioridade | Esforço | Benefício |
+|---|----------|------------|---------|-----------|
+| **B1** | `user_id` + filtros em `budget_documents` | Alta | Médio | ✅ ownership + filtro por usuário |
+| **B2** | Versionamento + lock otimista (`version`, `expected_version`) | Alta | Médio | ✅ HTTP 409 em conflito |
+| **B3** | BDI configurável por edital + decomposição TCU | Alta | Alto | ✅ perfis edital + painel Dados |
+| **B4** | UI import PPD + pipeline LLM (`BudgetPipelinePanel`) | Média | Médio | ✅ import PPD + pipeline SSE na aba Histórico |
+| **B5** | Expor TCPO/ORSE na UI (busca CPU + lançamento) | Média | Baixo | ✅ filtros TCPO/ORSE na Busca CPU |
+| **B6** | Fluxo aditivo — baseline congelada + revisão N | Alta | Alto | ✅ congelar + aditivo + compare |
+| **B7** | Auditoria célula/BDI/CPU/cronograma (`budget_audit_log`) | Alta | Médio | ✅ B7+B16 completo |
+| **B8** | Curva S export — cenário adotado explícito | Baixa | Baixo | ✅ UI + PDF/Excel (ComD/SemD, totais, BDI) |
+| **B9** | Split `pricing.py` → sub-routers (alias M6) | Média | Médio | ✅ `app/routes/pricing/` (providers, sync, budget, tech_spec, export) |
+| **B10** | Testes E2E frontend orçamento (Playwright) | Média | Médio | ✅ **12** testes (`make test-budget-e2e`) |
+| **B11** | Persistência sessão — auto-save periódico + heartbeat restore | Média | Médio | ✅ hook 60s/180s + indicador toolbar |
+| **B12** | Piloto obra real + checklist validação | Alta | Baixo (processo) | ✅ `test_budget_pilot_flow` + `make validate-budget-pilot` + esqueleto `sk-b12-piloto-passarela` |
+| **B13** | Lançar CPU da Busca CPU direto na etapa | Média | Baixo | ✅ painel etapa/qtd + `pricingAddService` + E2E |
+| **B14** | CI GitHub Actions — pytest orçamento + Playwright `/budget` | Média | Baixo | ✅ `.github/workflows/ci.yml` + `make test-ci` |
+| **B15** | Piloto campo §4 — script live + pytest exports (sintético, analítico, ABC, MCQ, cronograma) | Alta | Médio | ✅ `validate-budget-pilot` + `test_pilot_section4_field_checklist` · CI +`test_budget_export` / `test_budget_analytics` |
+
+**Ciclo B27–B28 concluído.** Próximo: **assinatura humana** §4.U · M10 `project.user_id` (transversal).
+
+#### Ciclo B27–B28 (concluído)
+
+| # | Melhoria | Status | Fecha gap / benefício |
+|---|----------|--------|------------------------|
+| **B27** | Tenant multi-empresa — `empresa_id`, `X-Tenant-Id`, selector UI, paths MinIO | ✅ | SaaS multi-equipe · isolamento orçamentos |
+| **B28** | Lock sessão concorrente — TTL, renew, guard edição, UI heartbeat | ✅ | Edição paralela segura |
+
+#### Ciclo B23–B26 (concluído)
+
+| # | Melhoria | Status | Fecha gap |
+|---|----------|--------|-----------|
+| **B23** | UI licitação — `.xlsm` + compliance toolbar + painel Dados | ✅ | #1, #3 |
+| **B24** | Piloto API ampliado (4.U5/4.U6 + BDI validation) | ✅ | #14 |
+| **B25** | Playwright export API real (`budget-live.spec.ts`) | ✅ | #10 |
+| **B26** | Validador BDI vs edital TCU | ✅ | #2 |
+
+#### Ciclo B16–B22 (concluído)
+
+| # | Melhoria | Status | Fecha gap |
+|---|----------|--------|-----------|
+| **B16** | Auditoria completa CPU/serviço/cronograma | ✅ | #12 |
+| **B17** | Piloto UI §4.U — `make validate-budget-pilot-ui` | ✅ script | #14 |
+| **B18** | Snapshot `SESSION_STORE` PostgreSQL | ✅ | #7 |
+| **B19** | Export `.xlsm` oficial + workbook sync | ✅ | #3 |
+| **B20** | Testes export ampliados (pytest + Playwright toolbar) | ✅ | #10 |
+| **B21** | CPQ — UI `BudgetCommercialPanel` + margem + `proposta_comercial` | ✅ | #13 |
+| **B22** | Pacote compliance `compliance-pack.json` | ✅ | #1 |
+
+#### Fluxo atual vs ideal (enterprise)
+
+```txt
+HOJE (produção — pós B1–B28)
+  novo orçamento → WBS/esqueleto → lançamento CPUs (B13) → ComD/SemD → cronograma
+  → analíticas → export PDF/Excel (11 docs) + .xlsm oficial (B19) + compliance-pack (B22)
+  → ownership (B1) · versionamento (B2) · BDI configurável (B3) · auditoria completa (B16)
+  → snapshot PostgreSQL (B18) · auto-save (B11) · CI pytest + Playwright (B14/B20/B25)
+  → CPQ painel Dados + proposta comercial com margem (B21)
+  → tenant empresa (B27) · lock sessão concorrente (B28) · checklist §4.U na UI (B17+)
+  ⚠ §4.U conferência humana (marcar + export JSON) · PNCP publicação manual
+
+IDEAL (enterprise licitação + privado)
+  projeto vinculado → orçamento baseline (lock) → equipe paralela (tenant + lock sessão) ✅
+  → BDI validado por edital → revisões/aditivos versionados → auditoria completa por operação
+  → export edital (.xlsm ou nativo certificado) + PNCP/TCU pack
+  → proposta comercial (obra privada) com margem
+```
+
+#### Conclusão
+
+O módulo orçamento atinge **maturidade técnica enterprise** para operação SEMINF/SEINFRA-like, defesa contratual e SaaS multi-equipe: ciclo **B1–B28** fecha gaps §8.1 e melhorias de produto (tenant, lock). Pendências são **operacionais** (validação humana §4.U, publicação PNCP).
 
 ## Intent Layer v2
 
@@ -1064,7 +1237,7 @@ input → project_understanding → design_generator (≥2 opções/disciplina)
 | `concrete_armed_simulator` (primeiro simulador real) | 2 | Alta |
 | Execution Planner no Orchestrator | 2 | Alta |
 | Validação normativa pós-LLM | 1 | Média |
-| GPU / otimização de latência | 1 | Média |
+| GPU / otimização de latência | 1 | Baixa (keep_alive, cache Ollama, fix CPU por VRAM) |
 | Auth JWT | 4 | ~~Baixa~~ Concluído (equipe local) |
 | Testes smoke E2E (auth + chat + upload LAN) | 4 | Alta |
 | `pytest-cov` + CI mínima (`make test`) | 4 | Alta |
@@ -1429,6 +1602,9 @@ Variável opcional: `API_BACKEND_ORIGIN` (default `http://127.0.0.1:8000`) se a 
 |----------|---------|--------|
 | `USE_INTELLIGENT_AGENTS` | `true` | `true` = RAG+LLM; `false` = agentes simulados |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Endpoint Ollama |
+| `OLLAMA_KEEP_ALIVE` | `15m` | Mantém modelos na VRAM entre requisições |
+| `OLLAMA_NUM_CTX` | `8192` | Tamanho de contexto LLM (menor = mais rápido) |
+| `OLLAMA_WARMUP_ON_STARTUP` | `false` | Pré-carrega chat+eng no startup da API |
 | `OLLAMA_LLM_MODEL` | `qwen3:14b` | Modelo primário |
 | `OLLAMA_CHAT_MODEL` | `qwen3:8b` | LLM leve para chat conversacional |
 | `USE_INTENT_LAYER` | `true` | Intent Layer v2 no chat (`false` = router legado) |
@@ -1467,16 +1643,21 @@ Settings completas: `backend/config/settings.py`
 | R-11 | Média | Agente cronograma com LLM pequeno pode gerar ações inválidas | Modelos maiores (`qwen3:14b`); enriquecimento heurístico + resolução código/nome |
 | R-04 | Média | Orchestrator v1 executa agentes com contexto limitado | Orchestrator v2: Execution Planner + dependências |
 | R-07 | Média | AED simula via heurísticas — simuladores dedicados ainda não existem | Implementar `*_simulator` por sistema estrutural |
-| R-08 | Baixa | Frontend sem `/aed` e `/copilot` | Criar páginas consumindo endpoints existentes |
+| R-08 | Baixa | ~~Frontend sem `/aed` e `/copilot`~~ | ✅ Páginas implementadas (M3) |
 | R-05 | Baixa | CORS amplo em dev | Origens via `/settings/access` + `CORS_ALLOWED_ORIGINS`; restringir em produção |
 | R-06 | Baixa | Senhas seed em dev | Trocar `AUTH_SEED_*` antes de expor na internet |
 | R-13 | Média | ~230 PDFs normativos sem texto (scan/OCR) + 367 chunks metadata≠FAISS | Pipeline OCR futuro; rebuild FAISS se delta crescer |
 | R-14 | Média | Zero testes frontend | Smoke E2E mínimo; Playwright ou script curl+auth |
 | R-15 | Média | God files (`pricing.py`, `api.ts`) | Sub-routers + módulos API por domínio |
 | R-16 | Média | `make test-backend` pode segfault (FAISS/extensões nativas) | Subset de testes estável para CI; investigar ordem/isolamento |
-| R-17 | Baixa | Sem CI/CD visível | GitHub Actions com `pytest` subset + `npm run lint` |
+| R-17 | Baixa | ~~Sem CI/CD visível~~ — **Mitigado (M8/B14)** | GitHub Actions em push/PR `main` |
 | R-18 | Alta | Multi-tenant ausente — todos os projetos visíveis | `user_id` em projetos + filtros antes de expor fora da LAN |
 | R-19 | Alta | Testes pytest sem `monkeypatch` em `PRICE_BANK_ROOT` corromperam `knowledge/price_bank/` (index SEMINF/SICRO + `compositions_closed` AM) | Isolar testes (`test_sicro_parser`, `test_seminf_refresh_prices_fixture`); `reconcile_with_disk` cobre `BR-SICRO-*`/`BR-DP-SEMINF-*`; `prune_orphan_references()` para órfãos |
+| R-20 | ~~Alta~~ Mitigado | Orçamentos isolados por `user_id` quando auth ativo (B1) |
+| R-21 | ~~Alta~~ Mitigado | Lock otimista com `version` + `expected_version` (B2) |
+| R-22 | ~~Média~~ Mitigado | BDI edital (B3) · auditoria completa (B7+B16) · compliance-pack (B22) |
+| R-23 | ~~Média~~ Mitigado | Sessão orçamento — B11 auto-save + B18 snapshot PostgreSQL + restore em `get()` |
+| R-24 | ~~Baixa~~ Mitigado | TCPO/ORSE na Busca CPU (B5) |
 
 ---
 
@@ -1484,12 +1665,32 @@ Settings completas: `backend/config/settings.py`
 
 | Data | Decisão | Motivo |
 |------|---------|--------|
-| 2026-06-20 | **Fase 2 — price bases indexados** | `scripts/index_price_bases.py` · `make index-price-bases` · `validate_price_bases.sh` — SINAPI via `price_bank` + FAISS `budget/compositions` (não `cost_index` legado) |
+| 2026-06-20 | **B12 — piloto orçamento** | Esqueleto `sk-b12-piloto-passarela` · `test_budget_pilot_flow.py` · `validate_budget_pilot.sh` |
+| 2026-06-20 | **M6 — split pricing.py** | Pacote `app/routes/pricing/` (providers, sync, budget, tech_spec, export) — 99 rotas |
+| 2026-06-20 | **Orçamento B11 — auto-save** | Heartbeat `restore` 60s · persist DB silencioso 3min · `sessionStorage` + indicador toolbar |
+| 2026-06-27 | **Relatórios insumos/MO (PDF/Excel)** | `rel_insumos` e `rel_mao_obra` — agregação de CPUs por código/unidade; total por linha (sem BDI); rodapé TOTAL SEM BDI · VALOR BDI · TOTAL COM BDI; cenário ComD/SemD adotado; toolbar `/budget` |
+| 2026-06-20 | **Orçamento B23–B26 — 100% gaps §8.1** | UI `.xlsm`/compliance · validador BDI · piloto 4.U5/4.U6 · Playwright API real |
+| 2026-07-03 | **Orçamento — bases dinâmicas + auto-add na Busca CPU** | `BudgetPriceBasesPanel` lista fontes do `price_bank` (ORSE, TCPO, etc.) · `upsertPriceBaseSelection` ao lançar CPU |
+| 2026-07-03 | **ORSE — fix lookup CPU (código com `/`)** | `GET /sync/bank/composition?code=` · rota path `{code:path}` · `resolve_open_composition_key` (`00084` → `00084/ORSE`) · frontend/PDF via query param |
+| 2026-07-03 | **ORSE — conector portal CEHOP** | `OrsePortalScraper` · `portal_sync` no sync ORSE · botão UI “Importar via portal CEHOP” · ~2k composições + CPUs + insumos sem ORSE 2 |
+| 2026-07-03 | **ORSE — fix detecção/validação import** | Rejeita planilhas SEMINF/SINAPI/PPD por engano · exige Composições+Insumos+Analítico · `ORSE_EXPORT_DIR` só lê subpasta `BR-ORSE-YYYY-MM` |
+| 2026-07-02 | **ORSE — sync UI + price_bank** | `/settings/price-bases` · download CEHOP `.ORSE` · import pasta Excel (composições+insumos+analítico) · `POST /sync/orse/upload/bundle/stream` · parser `orse_export_parser` · ref `BR-ORSE-YYYY-MM` |
+| 2026-07-02 | **Orçamento B27–B28 — tenant + lock sessão** | `empresa_id` + `X-Tenant-Id` + `BudgetTenantSelector` · `BudgetSessionLock` TTL + guard PATCH · `BudgetPilotChecklist` §4.U · pytest tenant/lock/pilot **11 passed** · fix middleware `SessionLocal` lazy + export filename ASCII |
+| 2026-07-02 | **Template `ppd_seminf_abril_2026.xlsm`** | Gerado de `00_MOD_MC_OR…v8.1.xlsm` via `make build-ppd-seminf-2026` — abas MCQ + ORC_SINTETICO + ORC_ANALITICO + CRONOGRAMA + ESP_TECNICA + Base Abril/2026; `make validate-budget-pilot` **23 OK** (4.U5 xlsm incluído) |
+| 2026-06-29 | **Orçamento B16–B22 — fechamento gaps técnicos** | Auditoria completa · snapshot PostgreSQL · export `.xlsm` · CPQ margem · compliance-pack · CI ampliado (~88 pytest) |
+| 2026-06-20 | **§8.1 sync pós B1–B15** | Revisão orçamentista sênior: 6/14 gaps resolvidos · 5/14 mitigados · 3/14 abertos; matriz prontidão atualizada; B7 parcial; roadmap B16+ |
+| 2026-06-27 | **Análise enterprise módulo Orçamento** | Revisão inicial §8.1 (pré-B15); substituída pela revisão 2026-06-20 acima |
 | 2026-06-20 | **R10 Project RAG — testes E2E automatizados** | `test_project_rag_e2e.py` (upload→FAISS→chat com mock embed) · `scripts/validate_project_rag.sh` · `make test-project-rag` / `validate-project-rag` |
 | 2026-06-20 | **Fix testes price_bank + recuperação SEMINF/SICRO** | `test_list_imported_sicro_ufs_filters_period` escrevia no disco real (`index.json` truncado, AM `closed=[]`); isolamento com `tmp_path`; `reconcile_with_disk` indexa `BR-*` com manifest e atualiza contagens; `BR-SICRO-AM-2026-01` restaurado da amostra `am-01-2026` |
 | 2026-06-20 | **ChatAgent platform_evaluation** | Meta-perguntas sobre arquitetura/fortes/fracos usam `project_state.md` + intent dedicada (não pitch genérico) |
 | 2026-06-20 | **Fix ContextVar no SSE chat stream** | `llm_model_scope` quebrava no thread pool Starlette (`ValueError: Token was created in a different Context`); modelo passado explicitamente em `/chat/stream` |
 | 2026-06-20 | **Fix stream chat com gemma4/deepseek-r1** | Timeout 300s + fallback chain + não força CPU (`num_gpu:0`) quando usuário escolhe modelo pesado; SSE encerra com evento `done` em erro |
+| 2026-06-20 | **Orçamento B6 — aditivos** | Baseline congelada · revisões N · compare vs baseline · UI `BudgetRevisionPanel` |
+| 2026-06-20 | **Orçamento B4 — pipeline LLM na UI** | Aba Histórico · prompt + `BudgetPipelinePanel` · SSE `budgetGenerateStream` |
+| 2026-06-20 | **Orçamento B1/B2 — ownership + versionamento** | `user_id` + filtro por usuário em `budget_documents` · lock otimista (`version`, `expected_version`, 409) · migração `migrate_budget_ownership` |
+| 2026-06-20 | **Orçamento B4 — import PPD na UI** | Modal Novo orçamento · upload `.xlsm/.xlsx` via `pricingImportPpd` |
+| 2026-06-20 | **Orçamento B8 — Curva S cenário adotado** | UI + export PDF/Excel documentam ComD/SemD adotado |
+| 2026-06-20 | **Histograma MO — filtro MO direta** | Exclui EPI, ferramentas, seguro, transporte, locação e encargos coletados Caixa; mantém profissionais · `is_histogram_direct_labor` |
 | 2026-06-24 | **Fix qwen3.6 sem resposta no chat** | VRAM fit (23GB→gemma4 em GPU 8GB); stream vazio aciona fallback; recovery generate no agente estrutural |
 | 2026-06-20 | **Model Router — qwen3.6 primário** | `engineering_primary` e `aed_simulation` usam `qwen3.6:latest`; `gemma4` como secundário; rótulo WSL ordena qwen3.6 primeiro |
 | 2026-06-20 | **Integrar gemma4 + deepseek-r1 no Model Router** | `gemma4:latest` engenharia secundária/visão; `deepseek-r1:14b` raciocínio (MEDIUM); cadeia gemma4 → qwen2.5-coder |
@@ -1499,7 +1700,13 @@ Settings completas: `backend/config/settings.py`
 | 2026-06-20 | **UI SICRO** | `/settings/price-bases`: filtro região/UF, meses trimestrais, botão sync todas UFs · `BudgetPriceBasesPanel`: região + versão por UF · `frontend/lib/sicro-links.ts` |
 | 2026-06-20 | **Auth — editar/excluir usuários** | `/settings/users`: modal de edição (e-mail, nome, senha, tipo, módulos) + confirmação de exclusão (desativa via `DELETE /auth/users/{id}`) |
 | 2026-06-20 | **Auth — tipos de usuário e módulos** | `/settings/users`: select com **Cadastrar novo…**, tabela de módulos (Oculto / Bloqueado); API `GET/POST /auth/roles`, `GET /auth/modules`; sidebar respeita permissões |
-| 2026-06-20 | **Histograma — cache de desempenho** | `budget-histogram-cache` + `budget-composition-loader`: bundle de CPUs por sessão, modelo calculado em cache, prefetch ao abrir orçamento com cronograma; reabertura da aba instantânea |
+| 2026-06-20 | **Fix histograma vazio na UI** | Frontend usava `item_type` bruto para classificar insumo/MO/equip.; alinhado com `resolve_resource_category` (SINAPI `classificacao`, unidade MES/H, mensalista). Cache do modelo só persiste quando há totais > 0 e chave inclui estado de carregamento das CPUs |
+| 2026-06-20 | **Otimização desempenho Ollama/IA** | `keep_alive` 15m · cache list_models/ping · `num_ctx` 8192 · chat não força CPU só por VRAM alta · embed throttle · warmup opcional · defaults centralizados |
+| 2026-06-20 | **Anexos no prompt — Orquestrador, Copilot, AED** | `POST /chat/attachments` reutilizado · `attachment_ids` em `/orchestrate`, `/copilot`, `/aed` · `resolve_prompt_with_attachments` no backend · `ChatBox` com anexos habilitados por padrão |
+| 2026-06-20 | **Chat — anexos no prompt** | Botão 📎 no `/chat` · `POST /chat/attachments` · extração multi-formato + visão para imagens/PDF · modo Auto escolhe modelo (gemma3/qwen/coder) · contexto injetado no stream |
+| 2026-06-20 | **Frontend mobile (telefone)** | Bottom nav (Chat, Orçamentos, CPU, Projetos, Config) · sidebar oculta `< lg` · workspace drawer · `/mobile/budget` (listar + PDF) · `/mobile/cpu` · `/mobile/projects` |
+| 2026-06-20 | **Relatório PDF — CPU consultada** | `GET /pricing/sync/bank/composition/export/pdf?code=` · `cpu_pdf_export.py` · botão na aba Busca CPU e painel de consulta |
+| 2026-06-20 | **Export PDF/Excel — alinhamento de colunas** | Item/Código/Un/Classe centralizados; Qtd e valores à direita em todos os relatórios; Curva ABC: linhas classe A (negrito) e TOTAL usam alinhamento correto (antes `cell_bold` forçava esquerda no PDF) |
 | 2026-06-20 | **PDF analíticas — gráficos** | Curva ABC (Pareto top 20), Curva S (linhas físico/financeiro) e Histograma (barras empilhadas + ref. BDI) renderizados no PDF via `budget_pdf_charts.py` — cores e legenda espelhando o frontend |
 | 2026-06-20 | **Orçamento — export analíticas PDF/Excel** | Curva ABC, Curva S e Histograma exportáveis via `/export/pdf|xlsx/{doc}` — layout paisagem institucional (logo, cabeçalho, meta obra); cálculo no backend espelhando UI |
 | 2026-06-20 | **Orçamento — analíticas Curva S + Histograma** | Curva S: serviços sem tarefa no cronograma alocados no 1º mês (total financeiro = soma efetiva ABC). Histograma: linha ref. com BDI por serviço (`total_effective ÷ custo CPU`) sobre barras analíticas; painel conferência atualizado |
@@ -1669,11 +1876,11 @@ O principal gap não é “falta de features”, e sim **consolidação para pro
 
 | # | Melhoria | Benefício |
 |---|----------|-----------|
-| M6 | **Quebrar `pricing.py`** em sub-routers (`sync`, `budget`, `export`, `tech_spec`) | Manutenibilidade |
-| M7 | **Modularizar `api.ts`** — `authApi`, `budgetApi`, `knowledgeApi`, etc. | Frontend escalável |
-| M8 | **CI GitHub Actions** — subset estável de testes + `npm run lint` | Regressão automática |
+| M6 | **Quebrar `pricing.py`** em sub-routers (`providers`, `sync`, `budget`, `export`, `tech_spec`) | ✅ Manutenibilidade |
+| M7 | **Modularizar `api.ts`** — `http.ts`, `budget-session.ts`, `budget-api.ts`, `sse.ts` | ✅ Frontend escalável (pricing* extraído) |
+| M8 | **CI GitHub Actions** — subset orçamento + export/ABC + Playwright `/budget` | ✅ ~74 pytest + 12 Playwright (`make test-ci`) |
 | M9 | **Desbloquear testes workflow** — PostgreSQL de teste via `docker compose` profile | Integração entrega confiável |
-| M10 | **Isolamento por usuário** — `project.user_id`, filtros em listagens | Conversas ✅ · projetos pendente |
+| M10 | **Isolamento por usuário** — `project.user_id`, filtros em listagens | Conversas ✅ · orçamentos ✅ (B1) · projetos pendente |
 
 ### Longo prazo (roadmap)
 
@@ -1684,6 +1891,8 @@ O principal gap não é “falta de features”, e sim **consolidação para pro
 | M13 | **Consolidar `experimental/`** — migrar ou arquivar duplicatas | Menos débito |
 | M14 | **Simuladores AED reais** — `concrete_armed_simulator` primeiro | AED deixa heurísticas |
 | M15 | **OCR em lote** — ~230 PDFs scan (R-13) | Cobertura normativa |
+| **B1–B15** | **Orçamento enterprise (ciclo 1)** — ver §8.1: ownership, versionamento, BDI, auditoria parcial, TCPO UI, E2E, CI, piloto | ✅ Produção interna · 🟡 licitação/CPQ pendente |
+| **B16+** | Auditoria completa, piloto §4.U, `SESSION_STORE` servidor, paridade `.xlsm`, E2E real | Fechar gaps #7, #10, #12, #14, #3 |
 
 ## Matriz força × prioridade
 
@@ -1707,7 +1916,7 @@ O principal gap não é “falta de features”, e sim **consolidação para pro
 | Domínio / produto | **A** | Escopo rico e diferenciado para escritório de engenharia |
 | Backend / API | **B+** | Sólido; god files e flags off reduzem nota |
 | Frontend / UX | **B** | Fluxos principais OK; faltam páginas e testes |
-| Testes / QA | **B−** | Volume alto backend; zero frontend; CI ausente |
+| Testes / QA | **B** | ~82 pytest orçamento + 12 Playwright (`make test-ci`); E2E export mockado |
 | Segurança | **B−** | Auth OK; defaults dev e CORS exigem hardening externo |
 | DevOps / operação | **B+** | Backup, console, LAN, Quick Tunnel — falta deploy prod |
 | Documentação | **A−** | Control plane maduro; manter sincronizado |
@@ -1733,7 +1942,7 @@ O principal gap não é “falta de features”, e sim **consolidação para pro
 2. Marcar `[x]` no **Roadmap** (seção 3)
 3. Registrar decisão na **seção 7** se aplicável
 4. Adicionar risco na **seção 6** se aplicável
-5. Revisar **seção 8 (Análise geral)** se mudou arquitetura, testes ou segurança
+5. Revisar **seção 8 (Análise geral)** e **§8.1 (Orçamento enterprise)** se mudou arquitetura, testes, segurança ou módulo orçamento
 6. Atualizar **Última atualização** no topo
 
 **Regra:** se o código mudou e este doc não reflete, o doc está errado — corrigir antes do próximo deploy.

@@ -60,7 +60,15 @@ class BudgetEngineV2:
         return SESSION_STORE.update_cell(session_id, row_id, field, value, code=code)
 
     def set_obra_type(self, session_id: str, obra_type: str) -> BudgetSession:
-        return SESSION_STORE.set_obra_type(session_id, obra_type)
+        from pricing.models.budget_metadata import BdiConfig
+
+        return SESSION_STORE.set_bdi_config(
+            session_id,
+            BdiConfig.from_obra_type(obra_type),
+        )
+
+    def set_bdi_config(self, session_id: str, config) -> BudgetSession:
+        return SESSION_STORE.set_bdi_config(session_id, config)
 
     def update_project(self, session_id: str, fields: dict[str, Any]) -> BudgetSession:
         return SESSION_STORE.update_project(session_id, fields)

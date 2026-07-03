@@ -11,6 +11,10 @@ class OrchestrateRequest(BaseModel):
         default=None,
         description='Modelo Ollama. Use "auto" ou omita para roteamento automático.',
     )
+    attachment_ids: Optional[list[str]] = Field(
+        default=None,
+        description="IDs de anexos preparados via POST /chat/attachments",
+    )
 
 
 class OrchestrateResponse(BaseModel):

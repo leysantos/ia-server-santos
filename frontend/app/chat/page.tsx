@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import ChatBox from "@/components/ChatBox";
 import MessageList from "@/components/MessageList";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -94,11 +95,21 @@ function ChatPageContent() {
         className="px-6"
         showModelsStatus
         trailing={
-          activeModel ? (
-            <div className="app-card px-3 py-2 text-right">
-              <p className="text-xs font-medium text-emerald-300">Modelo ativo: {activeModel}</p>
-            </div>
-          ) : undefined
+          <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
+            <Link
+              href="/history"
+              className="rounded-lg px-2 py-1 text-xs text-slate-400 ring-1 ring-slate-700 hover:text-white lg:hidden"
+            >
+              Histórico
+            </Link>
+            {activeModel ? (
+              <div className="app-card min-w-0 max-w-full px-3 py-2">
+                <p className="text-left text-xs font-medium leading-snug text-emerald-300 whitespace-normal break-words">
+                  Modelo ativo: {activeModel}
+                </p>
+              </div>
+            ) : null}
+          </div>
         }
       >
         <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -137,6 +148,7 @@ function ChatPageContent() {
         <>
           <MessageList messages={messages} loading={loading} />
           <ChatBox
+            allowAttachments
             onSend={(text, options) =>
               sendMessage(text, {
                 ...options,

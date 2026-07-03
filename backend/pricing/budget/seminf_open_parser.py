@@ -136,10 +136,17 @@ def parse_seminf_open_workbook(path: str | Path) -> dict[str, dict[str, Any]]:
         if kind == "Insumo":
             bank = str(row[2] or "").strip().lower()
             tipo = str(row[4] if len(row) > 4 else "").lower()
+            desc = str(row[3] or "").strip()
+            unit = str(row[6] or "").strip()
             if "equip" in tipo:
                 item_type = "equipamento"
             elif bank == "sinapi" and item_code.isdigit():
-                item_type = "insumo"
+                from pricing.budget.budget_resource_classification import is_labor_descriptor
+
+                if is_labor_descriptor(desc, unit) or "mao" in tipo:
+                    item_type = "mao_obra"
+                else:
+                    item_type = "insumo"
 
         comps[current_key]["items"].append(
             {

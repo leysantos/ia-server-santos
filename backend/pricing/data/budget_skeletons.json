@@ -100,7 +100,52 @@
       ],
       "created_at": "2026-06-25T18:56:13+00:00",
       "updated_at": "2026-06-25T19:05:14+00:00"
+    },
+    {
+      "id": "sk-b12-piloto-passarela",
+      "name": "PASSARELA PEDESTRE — PILOTO B12",
+      "description": "Esqueleto piloto municipal: passarela sobre córrego (fundação, estrutura metálica, pavimento, guarda-corpo).",
+      "obra_type": "RF",
+      "etapas": [
+        {
+          "name": "ADMINISTRAÇÃO DA OBRA",
+          "sub_etapas": [
+            { "name": "CORPO TÉCNICO" },
+            { "name": "MOBILIZAÇÃO" }
+          ]
+        },
+        {
+          "name": "SERVIÇOS PRELIMINARES",
+          "sub_etapas": [
+            { "name": "LOCACAO DE OBRA" },
+            { "name": "SINALIZACAO" }
+          ]
+        },
+        {
+          "name": "FUNDACOES",
+          "sub_etapas": [
+            { "name": "ESTACAS" },
+            { "name": "BLOCO DE COROAMENTO" }
+          ]
+        },
+        {
+          "name": "ESTRUTURA METALICA",
+          "sub_etapas": [
+            { "name": "VIGAS E LONGARINAS" },
+            { "name": "PINTURA ANTICORROSIVA" }
+          ]
+        },
+        {
+          "name": "PAVIMENTO E GUARDA-CORPO",
+          "sub_etapas": [
+            { "name": "PISO DE MADEIRA PLASTICA" },
+            { "name": "GUARDA-CORPO" }
+          ]
+        }
+      ],
+      "created_at": "2026-06-20T12:00:00+00:00",
+      "updated_at": "2026-06-20T12:00:00+00:00"
     }
   ],
-  "updated_at": "2026-06-25T19:05:14+00:00"
+  "updated_at": "2026-06-20T12:00:00+00:00"
 }

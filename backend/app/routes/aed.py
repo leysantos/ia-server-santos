@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.schemas.aed import AedRequest, AedResponse
 from app.services.aed_service import AedService
+from core.chat.chat_attachment_service import resolve_prompt_with_attachments
 
 router = APIRouter(prefix="/aed", tags=["AED"])
 aed_service = AedService()
@@ -15,8 +16,12 @@ def aed_design(request: AedRequest):
     Pipeline: understanding → designs → simulation → comparison → selection → report
     """
     try:
+        enriched_text, _ = resolve_prompt_with_attachments(
+            request.text,
+            request.attachment_ids,
+        )
         result = aed_service.process(
-            text=request.text,
+            text=enriched_text,
             use_rag=request.use_rag,
             persist=request.persist,
         )

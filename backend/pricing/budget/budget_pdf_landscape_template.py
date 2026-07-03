@@ -27,7 +27,7 @@ from pricing.models.budget_metadata import BudgetProjectMetadata
 TEMPLATE_ID = "landscape_budget_v1"
 
 LANDSCAPE_BUDGET_DOC_TYPES = frozenset(
-    {"orc_sintetico", "orc_analitico", "cronograma", "curva_abc", "curva_s", "histograma"}
+    {"orc_sintetico", "orc_analitico", "cronograma", "curva_abc", "curva_s", "histograma", "rel_insumos", "rel_mao_obra"}
 )
 
 HEADER_BLUE = colors.HexColor("#1F4E79")
@@ -366,6 +366,14 @@ def cell_styles() -> dict[str, ParagraphStyle]:
             alignment=TA_CENTER,
             textColor=colors.white,
         ),
+        "header_left": ParagraphStyle(
+            "HeaderLeft",
+            fontName="Helvetica-Bold",
+            fontSize=7,
+            leading=9,
+            alignment=TA_LEFT,
+            textColor=colors.white,
+        ),
         "cell_bold": ParagraphStyle(
             "CellBold",
             fontName="Helvetica-Bold",
@@ -437,6 +445,7 @@ def zebra_style_commands(
     *,
     summary_rows: int = 1,
     right_cols: tuple[int, ...] = (),
+    center_cols: tuple[int, ...] = (),
 ) -> list[tuple]:
     cmds: list[tuple] = [
         ("BACKGROUND", (0, 0), (-1, 0), HEADER_BLUE),
@@ -450,8 +459,10 @@ def zebra_style_commands(
         ("TOPPADDING", (0, 0), (-1, -1), 3),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
     ]
+    for col in center_cols:
+        cmds.append(("ALIGN", (col, 0), (col, -1), "CENTER"))
     for col in right_cols:
-        cmds.append(("ALIGN", (col, 1), (col, -1), "RIGHT"))
+        cmds.append(("ALIGN", (col, 0), (col, -1), "RIGHT"))
     body_end = max(1, row_count - summary_rows)
     for row_idx in range(1, body_end):
         if row_idx % 2 == 0:

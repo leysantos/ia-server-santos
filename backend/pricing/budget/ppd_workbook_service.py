@@ -35,8 +35,22 @@ DEFAULT_SEMINF_EXPORTABLE = [
 ]
 
 
-def workbook_storage_key(session_id: str) -> str:
+def workbook_storage_key(session_id: str, tenant_id: str | None = None) -> str:
+    prefix = f"tenants/{tenant_id}" if tenant_id else "budgets"
+    if tenant_id:
+        return f"{prefix}/budgets/{session_id}/{WORKBOOK_FILENAME}"
     return f"budgets/{session_id}/{WORKBOOK_FILENAME}"
+
+
+def _session_tenant_id(session: BudgetSession) -> str | None:
+    tid = session.intent.get("empresa_id") or session.intent.get("tenant_id")
+    return str(tid).strip() if tid else None
+
+
+def _storage_key_for_session(session_id: str) -> str:
+    session = SESSION_STORE.get(session_id)
+    tenant = _session_tenant_id(session) if session else None
+    return workbook_storage_key(session_id, tenant)
 
 
 def get_workbook_binding(session: BudgetSession) -> dict[str, Any] | None:
@@ -106,7 +120,7 @@ def init_workbook(
 
     tmpl = resolve_template(template_id or PPD_SEMINF_2026_ID)
     storage = get_workflow_storage()
-    key = workbook_storage_key(session_id)
+    key = _storage_key_for_session(session_id)
 
     if force or not storage.exists(key):
         with tempfile.TemporaryDirectory(prefix="ppd-init-") as tmp:
@@ -222,10 +236,10 @@ def get_workbook_bytes(session_id: str, *, auto_init: bool = True) -> bytes:
         session.intent["ppd_workbook"] = binding
 
     storage = get_workflow_storage()
-    key = str((binding or {}).get("storage_key") or workbook_storage_key(session_id))
+    key = str((binding or {}).get("storage_key") or _storage_key_for_session(session_id))
     if not storage.exists(key):
         init_workbook(session_id)
-        key = workbook_storage_key(session_id)
+        key = _storage_key_for_session(session_id)
     return storage.get_bytes(key)
 
 
@@ -285,7 +299,7 @@ def workbook_status(session_id: str) -> dict[str, Any]:
         raise KeyError(f"Sessão não encontrada: {session_id}")
     binding = get_workbook_binding(session) or {}
     storage = get_workflow_storage()
-    key = binding.get("storage_key") or workbook_storage_key(session_id)
+    key = binding.get("storage_key") or _storage_key_for_session(session_id)
     lo = libreoffice_info()
 
     exportable = binding.get("exportable_sheets")

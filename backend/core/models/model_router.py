@@ -13,6 +13,11 @@ from datetime import datetime, timezone
 from threading import Lock
 from typing import Any, Optional
 
+from core.models.installed_model_registry import (
+    build_router_model_map,
+    filter_installed_models,
+    resolve_task_model,
+)
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -262,32 +267,30 @@ class ModelRouter:
     """Seleciona modelo LLM ideal por task_type com fallback inteligente."""
 
     def __init__(self) -> None:
-        self.model_map: dict[str, str] = {
-            # RTX 4060 8GB — leves 100% VRAM
-            "chat_simple": "phi3:mini",
-            "intent_layer": "phi3:mini",
-            "chat_natural": "mistral:7b",
-            # Código / fallback rápido
-            "code_generation": "deepseek-coder:latest",
-            "code_understanding": "qwen2.5-coder:latest",
-            # Engenharia — qwen3.6 (primário) + deepseek-r1 (raciocínio) + gemma4 (secundário)
-            "engineering_primary": "qwen3.6:latest",
-            "engineering_reasoning": "deepseek-r1:14b",
-            "engineering_secondary": "gemma4:latest",
-            "engineering_fallback": "qwen2.5-coder:latest",
-            "rag_embedding": "nomic-embed-text",
-            "orchestration_synthesis": "deepseek-r1:14b",
-            "platform_evaluation": "deepseek-r1:14b",
-            "aed_simulation": "qwen3.6:latest",
-            "aed_evaluation": "deepseek-r1:14b",
-            # Orçamento WBS / pricing
-            "budget_wbs_light": "mistral:7b",
-            "budget_wbs": "qwen2.5-coder:latest",
-            "budget_wbs_high": "deepseek-r1:14b",
-            "budget_pricing_light": "phi3:mini",
-            "budget_pricing": "mistral:7b",
-            "budget_pricing_high": "qwen2.5-coder:latest",
-        }
+        self.model_map: dict[str, str] = build_router_model_map()
+        if not self.model_map:
+            self.model_map = {
+                "chat_simple": "phi3:mini",
+                "intent_layer": "phi3:mini",
+                "chat_natural": "mistral:7b",
+                "code_generation": "deepseek-coder:latest",
+                "code_understanding": "qwen2.5-coder:latest",
+                "engineering_primary": "qwen3:14b",
+                "engineering_reasoning": "deepseek-r1:14b",
+                "engineering_secondary": "gemma4:latest",
+                "engineering_fallback": "qwen3:8b",
+                "rag_embedding": "nomic-embed-text:latest",
+                "orchestration_synthesis": "deepseek-r1:14b",
+                "platform_evaluation": "deepseek-r1:14b",
+                "aed_simulation": "qwen3:14b",
+                "aed_evaluation": "deepseek-r1:14b",
+                "budget_wbs_light": "mistral:7b",
+                "budget_wbs": "qwen2.5-coder:latest",
+                "budget_wbs_high": "qwen3-coder:latest",
+                "budget_pricing_light": "phi3:mini",
+                "budget_pricing": "mistral:7b",
+                "budget_pricing_high": "qwen2.5-coder:latest",
+            }
 
         self._fallback_map: dict[str, str] = {
             "engineering_primary": "engineering_reasoning",
@@ -349,6 +352,38 @@ class ModelRouter:
         self._recent_requests: deque[InferenceRecord] = deque(maxlen=200)
         self._learned_overrides: dict[str, str] = {}
         self._lock = Lock()
+
+    def refresh_installed_models(self) -> dict[str, str]:
+        """Re-sincroniza model_map com `ollama list` (útil após pull/rm)."""
+        from core.models.installed_model_registry import get_installed_model_names
+
+        synced = build_router_model_map(get_installed_model_names(force_refresh=True))
+        if synced:
+            with self._lock:
+                self.model_map.update(synced)
+        return dict(self.model_map)
+
+    def _resolve_installed(self, model: str, task_type: str | None = None) -> str:
+        if not model:
+            if task_type:
+                resolved = resolve_task_model(task_type)
+                if resolved:
+                    return resolved
+            return settings.OLLAMA_LLM_MODEL
+        from core.models.installed_model_registry import (
+            TASK_MODEL_CANDIDATES,
+            get_installed_model_names,
+            pick_installed_model,
+        )
+
+        installed = get_installed_model_names()
+        if task_type:
+            task_candidates = TASK_MODEL_CANDIDATES.get(task_type, ())
+            candidates = (model,) + tuple(c for c in task_candidates if c and c != model)
+        else:
+            candidates = (model,)
+        picked = pick_installed_model(candidates, installed)
+        return picked or model
 
     def evaluation_enabled(self) -> bool:
         return settings.USE_MODEL_EVALUATION
@@ -434,8 +469,8 @@ class ModelRouter:
         model = self.model_map.get(resolved_task)
         if not model:
             logger.warning("ModelRouter: task_type desconhecido %s, usando engineering_primary", task_type)
-            model = self.model_map["engineering_primary"]
-        return model
+            model = self.model_map.get("engineering_primary") or settings.OLLAMA_LLM_MODEL
+        return self._resolve_installed(model, resolved_task)
 
     def get_fallback_models(
         self,
@@ -459,15 +494,16 @@ class ModelRouter:
             if fb_key and fb_key in self.model_map:
                 fallbacks.append(self.model_map[fb_key])
         if resolved == "chat_natural":
-            fallbacks.append(self.model_map["chat_simple"])
+            fallbacks.append(self.model_map.get("chat_simple", settings.OLLAMA_CHAT_MODEL))
         # dedupe preserving order
         seen: set[str] = set()
         unique: list[str] = []
+        primary = self.model_map.get(resolved)
         for m in fallbacks:
-            if m not in seen:
+            if m and m not in seen and m != primary:
                 seen.add(m)
                 unique.append(m)
-        return unique
+        return filter_installed_models(unique)
 
     def is_light_task(self, text: str) -> bool:
         """Detecta tarefa leve (saudação, chat curto)."""

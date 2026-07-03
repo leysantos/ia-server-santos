@@ -11,6 +11,7 @@ import { useActivity } from "@/context/ActivityContext";
 import { markdownToHtml } from "@/lib/markdown-lite";
 import { api } from "@/services/api";
 import type { AedResponse } from "@/types/api";
+import { uploadPromptAttachments } from "@/lib/prompt-attachments";
 
 function reportMarkdown(result: AedResponse): string | null {
   const report = result.report as { final_report?: string } | undefined;
@@ -49,10 +50,12 @@ export default function AedPage() {
     ]);
 
     try {
+      const { attachmentIds } = await uploadPromptAttachments(options.files, options.llmModel);
       const response = await api.aed({
         text,
         use_rag: options.useRag,
         persist: options.persist,
+        attachment_ids: attachmentIds,
       });
       setResult(response);
       setSteps([
@@ -95,7 +98,7 @@ export default function AedPage() {
       <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6">
         <ChatBox
           onSend={handleSend}
-          disabled={loading}
+          loading={loading}
           placeholder="Ex.: dimensionar laje maciça 6×8 m, carga 3 kN/m², fck 30 MPa…"
         />
 

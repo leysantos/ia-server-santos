@@ -1,6 +1,7 @@
 from typing import Generator, Optional
 
 from config.settings import USE_INTENT_LAYER
+from core.chat.chat_attachment_service import compose_message_with_attachments, purge_stale_attachments
 from core.conversation_context import build_assistant_meta, compose_thread_input
 from core.database.conversation_access import conversation_user_id
 from core.database.models import User
@@ -22,8 +23,10 @@ class ChatStreamService:
         conversation_id: Optional[str] = None,
         project_id: Optional[str] = None,
         llm_model: Optional[str] = None,
+        attachment_ids: Optional[list[str]] = None,
         user: Optional[User] = None,
     ) -> Generator[str, None, None]:
+        purge_stale_attachments()
         yield format_sse(
             "status",
             {"message": "Conectado — preparando resposta...", "phase": "connected"},
@@ -37,6 +40,7 @@ class ChatStreamService:
                 conversation_id=conversation_id,
                 project_id=project_id,
                 llm_model=llm_model,
+                attachment_ids=attachment_ids,
                 user=user,
             )
         except Exception as exc:
@@ -64,9 +68,37 @@ class ChatStreamService:
         conversation_id: Optional[str],
         project_id: Optional[str],
         llm_model: Optional[str] = None,
+        attachment_ids: Optional[list[str]] = None,
         user: Optional[User] = None,
     ) -> Generator[str, None, None]:
         user_id = conversation_user_id(user)
+
+        enriched_text, attachments, attachment_model_hint = compose_message_with_attachments(
+            text, attachment_ids
+        )
+        if attachments:
+            names = ", ".join(a.filename for a in attachments)
+            yield format_sse(
+                "status",
+                {
+                    "message": f"Analisando {len(attachments)} arquivo(s): {names}",
+                    "phase": "attachments",
+                    "attachments": [a.to_dict() for a in attachments],
+                },
+            )
+
+        effective_llm_model = llm_model
+        if not effective_llm_model and attachment_model_hint:
+            effective_llm_model = attachment_model_hint
+            yield format_sse(
+                "status",
+                {
+                    "message": f"Modo auto — modelo selecionado para anexos: {attachment_model_hint}",
+                    "phase": "model_route",
+                    "llm_model": attachment_model_hint,
+                },
+            )
+
         active_conversation_id = conversation_id
         if persist:
             conversation = ensure_conversation(
@@ -93,7 +125,7 @@ class ChatStreamService:
             yield format_sse("error", {"message": "Streaming requer USE_INTENT_LAYER=true"})
             return
 
-        agent_input = compose_thread_input(text, active_conversation_id, user_id=user_id)
+        agent_input = compose_thread_input(enriched_text, active_conversation_id, user_id=user_id)
         final_output: dict | None = None
 
         with track_stream_job(
@@ -121,7 +153,7 @@ class ChatStreamService:
 
             from core.runtime.ollama_concurrency import is_heavy_llm_model
 
-            selected_model = llm_model
+            selected_model = effective_llm_model
             if is_heavy_llm_model(selected_model):
                 yield format_sse(
                     "status",
@@ -141,7 +173,7 @@ class ChatStreamService:
                 persist=persist,
                 conversation_id=active_conversation_id,
                 project_id=active_project_id,
-                llm_model=llm_model,
+                llm_model=effective_llm_model,
             ):
                 runtime_job.update_from_stream(event_type, data)
                 if event_type == "done":

@@ -3,6 +3,12 @@
 import { useMemo } from "react";
 import type { BudgetSessionResponse } from "@/types/api";
 import { buildScurvePoints, formatBrlCompact } from "@/lib/budget-analytics";
+import {
+  bdiComdLabel,
+  bdiSemdLabel,
+  modeColorClass,
+  sessionFinancialBreakdown,
+} from "@/lib/budget-desoneracao";
 import { BudgetLineChart, ChartLegend } from "@/components/BudgetChartPrimitives";
 import { BudgetAnalyticsReconciliationPanel } from "@/components/BudgetAnalyticsReconciliationPanel";
 import BudgetAnalyticsExportActions from "@/components/BudgetAnalyticsExportActions";
@@ -30,6 +36,8 @@ export default function BudgetCurvaSTab({
     [schedule, rows]
   );
 
+  const financial = useMemo(() => sessionFinancialBreakdown(session), [session]);
+
   if (!hasSchedule) {
     return (
       <div className="rounded-xl bg-slate-900/40 p-8 text-center ring-1 ring-slate-800">
@@ -53,7 +61,7 @@ export default function BudgetCurvaSTab({
             <h3 className="text-sm font-semibold text-slate-200">Curva S — avanço acumulado</h3>
             <p className="mt-1 text-xs text-slate-500">
               Distribuição mensal proporcional à duração das tarefas no cronograma. Físico ponderado
-              pela quantidade dos serviços; financeiro pelo valor efetivo.
+              pela quantidade dos serviços; financeiro pelo valor efetivo por serviço.
             </p>
           </div>
           <BudgetAnalyticsExportActions
@@ -63,6 +71,42 @@ export default function BudgetCurvaSTab({
             onExportPdf={onExportPdf}
             onExportExcel={onExportExcel}
           />
+        </div>
+
+        <div className="mt-4 rounded-lg bg-slate-950/50 px-4 py-3 ring-1 ring-slate-800/80">
+          <p className="text-[10px] uppercase tracking-wide text-slate-500">Cenário adotado</p>
+          <p className="mt-1 text-sm font-semibold text-slate-100">
+            {financial.adoptedMode === "semd" ? "Sem desoneração (SemD)" : "Com desoneração (ComD)"}
+            <span className="ml-2 text-xs font-normal text-slate-500">
+              — menor valor integral entre ComD e SemD
+            </span>
+          </p>
+          <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <dt className="text-slate-500">{bdiComdLabel(session)}</dt>
+              <dd className={cn("mt-0.5 font-medium", modeColorClass("comd", true))}>
+                {fmtCurrency(financial.totalComd)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">{bdiSemdLabel(session)}</dt>
+              <dd className={cn("mt-0.5 font-medium", modeColorClass("semd", true))}>
+                {fmtCurrency(financial.totalSemd)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">Total adotado</dt>
+              <dd className={cn("mt-0.5 font-semibold", modeColorClass(financial.adoptedMode, true))}>
+                {fmtCurrency(financial.adoptedTotal)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">Base financeira da curva</dt>
+              <dd className="mt-0.5 font-medium tabular-nums text-amber-200/90">
+                {fmtCurrency(totalFinancial)}
+              </dd>
+            </div>
+          </dl>
         </div>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-3">

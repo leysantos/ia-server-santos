@@ -59,6 +59,17 @@ def export_session_xlsx(session_id: str, doc_type: str) -> bytes:
     branding = get_global_export_branding()
     logo = _resolve_logo_bytes(branding)
     profile = get_company_profile()
+    if doc_type.strip().lower() == "proposta_comercial":
+        from pricing.budget.budget_commercial_export import export_proposta_comercial_xlsx
+
+        return export_proposta_comercial_xlsx(
+            session.roots,
+            session.project,
+            branding=branding,
+            schedule=session.schedule,
+            logo_bytes=logo,
+            company_profile=profile,
+        )
     return export_budget_document_xlsx(
         doc_type,
         session.roots,
@@ -96,6 +107,17 @@ def export_session_pdf(session_id: str, doc_type: str) -> bytes:
     logo = _resolve_logo_bytes(branding)
     brasao = _resolve_brasao_bytes(branding)
     profile = get_company_profile()
+    if doc_type.strip().lower() == "proposta_comercial":
+        from pricing.budget.budget_commercial_export import export_proposta_comercial_pdf
+
+        return export_proposta_comercial_pdf(
+            session.roots,
+            session.project,
+            branding=branding,
+            schedule=session.schedule,
+            logo_bytes=logo,
+            company_profile=profile,
+        )
     return export_budget_pdf(
         doc_type,
         session.roots,

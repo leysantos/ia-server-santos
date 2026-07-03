@@ -323,8 +323,10 @@ class ChatAgent(BaseAgent):
         if vram_notice:
             self._llm_status_note = vram_notice
         opts = dict(ollama_options or {})
+        from core.runtime.ollama_defaults import merge_llm_options
+
+        opts = merge_llm_options(opts)
         opts.setdefault("num_predict", 8192)
-        opts.setdefault("num_ctx", 12288)
         return effective or primary, fallbacks, timeout, opts
 
     def _call_platform_evaluation(self, text: str, llm_model: str | None = None) -> str:

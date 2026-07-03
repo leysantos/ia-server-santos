@@ -32,6 +32,16 @@ import {
   formatSeminfBundleSummary,
   type SeminfBundleDetection,
 } from "@/lib/seminf-bundle";
+import {
+  ORSE_PORTAL_URL,
+  orseDefaultPeriod,
+  orseMonthlyDownloadUrl,
+} from "@/lib/orse-links";
+import {
+  detectOrseBundleFromFolder,
+  formatOrseBundleSummary,
+  type OrseBundleDetection,
+} from "@/lib/orse-bundle";
 
 const ALL_SICRO_UFS = SICRO_REGIONS.flatMap((r) => r.ufs);
 
@@ -94,12 +104,14 @@ function acceptForSource(source: string): string {
   if (source === "ppd_seminf" || source === "dp_seminf") return ".xlsm,.xlsx,.xls";
   if (source === "sinapi") return ".zip,.xlsx,.xls";
   if (source === "cicro") return ".7z,.zip,.xlsx,.xls";
+  if (source === "orse") return ".zip,.xlsx,.xls,.csv,.orse";
   return ".zip,.xlsx,.xls,.csv";
 }
 
 function defaultDownloadUrl(source: string, year: number, month: number): string {
   if (source === "sinapi") return sinapiNationalDownloadsUrl();
   if (source === "cicro") return SICRO_PORTAL_URL;
+  if (source === "orse") return ORSE_PORTAL_URL;
   if (source === "ppd_seminf") return "";
   return "";
 }
@@ -243,6 +255,26 @@ function SourceHint({
       </p>
     );
   }
+  if (source === "orse") {
+    return (
+      <p className="text-xs text-slate-500">
+        ORSE (Sergipe/CEHOP):{" "}
+        <ExternalLink href={ORSE_PORTAL_URL} className="text-cyan-400 underline">
+          downloads — Atualização da Base
+        </ExternalLink>
+        . O pacote <code className="text-slate-400">.ORSE</code> atualiza o SQL Server do ORSE 2 (Windows).{" "}
+        <strong className="text-slate-400">Baixar pacote CEHOP</strong> guarda o arquivo no servidor;{" "}
+        <strong className="text-slate-400">Importar via portal CEHOP</strong> baixa composições, CPUs e insumos
+        direto de orse.cehop.se.gov.br (sem ORSE 2). Leva ~15–25 min.{" "}
+        <strong className="text-slate-400">Importar pasta export ORSE</strong> usa Excel exportados do ORSE 2
+        (Relatórios → Cadastrais). Não use pastas SEMINF/PPD.
+        Link direto {month}/{year}:{" "}
+        <ExternalLink href={orseMonthlyDownloadUrl(year, month)} className="text-cyan-400 underline">
+          {`${year}${String(month).padStart(2, "0")}01-00.ORSE`}
+        </ExternalLink>
+      </p>
+    );
+  }
   return (
     <p className="text-xs text-slate-500">
       Informe o link da página de download ao lado do período ou exporte CSV/XLSX/ZIP e use{" "}
@@ -255,6 +287,7 @@ export default function SettingsPriceBasesPage() {
   const defaultPeriod = sinapiDefaultPeriod();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const seminfFolderRef = useRef<HTMLInputElement>(null);
+  const orseFolderRef = useRef<HTMLInputElement>(null);
 
   const [sources, setSources] = useState<PriceSyncSourceInfo[]>([]);
   const [inventory, setInventory] = useState<PriceBankInventory | null>(null);
@@ -286,6 +319,7 @@ export default function SettingsPriceBasesPage() {
   const [newSourceLabel, setNewSourceLabel] = useState("");
   const [creatingSource, setCreatingSource] = useState(false);
   const [seminfBundlePreview, setSeminfBundlePreview] = useState<SeminfBundleDetection | null>(null);
+  const [orseBundlePreview, setOrseBundlePreview] = useState<OrseBundleDetection | null>(null);
   const [refreshingSeminf, setRefreshingSeminf] = useState(false);
 
   const references: PriceBankReference[] = bank?.references ?? inventory?.groups.flatMap((g) =>
@@ -367,6 +401,13 @@ export default function SettingsPriceBasesPage() {
       setSyncMonth(period.month);
       setSyncUf("SP");
       setSyncRegion("all");
+    } else if (importSource === "orse") {
+      const period = orseDefaultPeriod();
+      setSyncYear(period.year);
+      setSyncMonth(period.month);
+      setSyncUf("SE");
+      setSyncRegion("all");
+      setOrseBundlePreview(null);
     }
   }, [importSource]);
 
@@ -449,7 +490,8 @@ export default function SettingsPriceBasesPage() {
 
   const handleSync = async (
     name: string,
-    opts?: { download_all_regions?: boolean; skip_existing_ufs?: boolean }
+    opts?: { download_all_regions?: boolean; skip_existing_ufs?: boolean },
+    extra?: { packageOnly?: boolean; portalSync?: boolean }
   ) => {
     setSyncing(name);
     setImportProgress({ phase: "start", percent: 0, current: 0, total: 0, message: "Iniciando…" });
@@ -466,6 +508,8 @@ export default function SettingsPriceBasesPage() {
           uf: syncUf,
           download_all_regions: allRegions,
           skip_existing_ufs: skipExisting,
+          package_only: extra?.packageOnly ?? false,
+          portal_sync: extra?.portalSync ?? false,
           index_faiss: false,
           reload_providers: false,
           set_active: false,
@@ -500,6 +544,18 @@ export default function SettingsPriceBasesPage() {
         } else {
           setSuccess(`SICRO — ${syncedCount || "todas as"} UF(s) sincronizadas (ref. ${refKey}).`);
         }
+      } else if (extra?.portalSync && name === "orse") {
+        setSuccess(
+          `${formatSyncSuccess("ORSE (portal CEHOP)", result)} — importação pode levar vários minutos.`
+        );
+      } else if (extra?.packageOnly && name === "orse") {
+        const meta = result.download?.metadata as Record<string, unknown> | undefined;
+        const bytes = meta?.orse_package_bytes;
+        const sizeKb = typeof bytes === "number" ? Math.round(bytes / 1024) : null;
+        setSuccess(
+          `Pacote ORSE ${String(syncMonth).padStart(2, "0")}/${syncYear} baixado${sizeKb ? ` (${sizeKb} KB)` : ""}. ` +
+            "Aplique no ORSE 2 e use 'Importar pasta export ORSE' com os Excel exportados."
+        );
       } else {
         setSuccess(formatSyncSuccess(name, result));
       }
@@ -741,6 +797,54 @@ export default function SettingsPriceBasesPage() {
     setSeminfBundlePreview(detected);
     setError(null);
     void handleSeminfBundleUpload(importSource, detected.files, detected.folderName);
+  };
+
+  const handleOrseBundleUpload = async (detected: Exclude<OrseBundleDetection, { error: string }>) => {
+    setSyncing("orse");
+    setImportProgress({ phase: "start", percent: 0, current: 0, total: 0, message: "Importando ORSE…" });
+    setError(null);
+    setSuccess(null);
+    try {
+      const result = await api.pricingSyncOrseBundleWithProgress(
+        detected.files,
+        {
+          year: syncYear,
+          month: syncMonth,
+          uf: "SE",
+          index_faiss: false,
+          reload_providers: false,
+          set_active: false,
+        },
+        (p) => setImportProgress(p)
+      );
+      const refKey =
+        (typeof result.download?.metadata?.reference === "string"
+          ? result.download.metadata.reference
+          : null) ?? `BR-ORSE-${syncYear}-${String(syncMonth).padStart(2, "0")}`;
+      setViewReference(refKey);
+      setPreviewSource("orse");
+      setSuccess(formatSyncSuccess("ORSE", result));
+      await refresh(refKey);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Falha na importação ORSE");
+    } finally {
+      setSyncing(null);
+      setImportProgress(null);
+      setOrseBundlePreview(null);
+    }
+  };
+
+  const handleOrseFolderSelect = (fileList: FileList | null) => {
+    if (!fileList?.length) return;
+    const detected = detectOrseBundleFromFolder(fileList, syncYear, syncMonth);
+    if ("error" in detected) {
+      setOrseBundlePreview(null);
+      setError(detected.error);
+      return;
+    }
+    setOrseBundlePreview(detected);
+    setError(null);
+    void handleOrseBundleUpload(detected);
   };
 
   const loadPreview = async (opts?: { uf?: string; reference?: string }) => {
@@ -1120,7 +1224,9 @@ export default function SettingsPriceBasesPage() {
                   ? sinapiNationalDownloadsUrl()
                   : importSource === "cicro"
                     ? SICRO_PORTAL_URL
-                    : "https://…"
+                    : importSource === "orse"
+                      ? ORSE_PORTAL_URL
+                      : "https://…"
               }
               className="mt-1 block w-full rounded-lg border-0 bg-slate-800 px-3 py-2 text-sm text-white ring-1 ring-slate-700 placeholder:text-slate-600 disabled:opacity-50"
             />
@@ -1182,7 +1288,7 @@ export default function SettingsPriceBasesPage() {
         )}
 
         <div className="mt-4 flex flex-wrap gap-2">
-          {canAutoDownload && !showNewSourceForm && (
+          {canAutoDownload && !showNewSourceForm && importSource !== "orse" && (
             <button
               type="button"
               disabled={!!syncing}
@@ -1191,6 +1297,49 @@ export default function SettingsPriceBasesPage() {
             >
               {syncing === importSource ? "Baixando…" : importSource === "cicro" ? `Download automático (${syncUf})` : "Download automático"}
             </button>
+          )}
+          {importSource === "orse" && !showNewSourceForm && (
+            <div className="flex w-full flex-col gap-2">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={!!syncing}
+                  onClick={() => void handleSync("orse", undefined, { portalSync: true })}
+                  className="rounded-lg bg-violet-700/80 px-4 py-2 text-sm font-medium text-white hover:bg-violet-600 disabled:opacity-50"
+                  title="Importa composições, CPUs e insumos do site orse.cehop.se.gov.br (15–25 min)"
+                >
+                  {syncing === "orse" ? "Importando portal…" : `Importar via portal CEHOP (${String(syncMonth).padStart(2, "0")}/${syncYear})`}
+                </button>
+                <button
+                  type="button"
+                  disabled={!!syncing}
+                  onClick={() => void handleSync("orse", undefined, { packageOnly: true })}
+                  className="rounded-lg bg-emerald-600/80 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+                >
+                  {syncing === "orse" ? "Baixando…" : "Baixar pacote CEHOP (.ORSE)"}
+                </button>
+                <button
+                  type="button"
+                  disabled={!!syncing}
+                  onClick={() => orseFolderRef.current?.click()}
+                  className="rounded-lg bg-cyan-700/80 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-600 disabled:opacity-50"
+                >
+                  {syncing === "orse" ? "Importando…" : `Importar pasta export ORSE (${String(syncMonth).padStart(2, "0")}/${syncYear})`}
+                </button>
+                <button
+                  type="button"
+                  disabled={!!syncing}
+                  onClick={() => void handleSync("orse")}
+                  className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 ring-1 ring-slate-700 hover:bg-slate-700 disabled:opacity-50"
+                  title="Baixa .ORSE e importa se ORSE_EXPORT_DIR tiver Excel do período"
+                >
+                  {syncing === "orse" ? "Sincronizando…" : "Sincronizar (download + import)"}
+                </button>
+              </div>
+              {orseBundlePreview && !syncing && "files" in orseBundlePreview && (
+                <p className="text-xs text-slate-500">{formatOrseBundleSummary(orseBundlePreview)}</p>
+              )}
+            </div>
           )}
           {importSource === "cicro" && canAutoDownload && !showNewSourceForm && (
             <>
@@ -1290,7 +1439,7 @@ export default function SettingsPriceBasesPage() {
                 <p className="text-xs text-slate-500">{formatSeminfBundleSummary(seminfBundlePreview)}</p>
               )}
             </div>
-          ) : !showNewSourceForm ? (
+          ) : !showNewSourceForm && importSource !== "orse" ? (
             <button
               type="button"
               disabled={!!syncing}
@@ -1330,6 +1479,18 @@ export default function SettingsPriceBasesPage() {
             multiple
             onChange={(e) => {
               handleSeminfFolderSelect(e.target.files);
+              e.target.value = "";
+            }}
+            {...({ webkitdirectory: "", directory: "" } as InputHTMLAttributes<HTMLInputElement>)}
+          />
+          <input
+            ref={orseFolderRef}
+            type="file"
+            className="hidden"
+            disabled={!!syncing}
+            multiple
+            onChange={(e) => {
+              handleOrseFolderSelect(e.target.files);
               e.target.value = "";
             }}
             {...({ webkitdirectory: "", directory: "" } as InputHTMLAttributes<HTMLInputElement>)}
@@ -1598,22 +1759,28 @@ export default function SettingsPriceBasesPage() {
             <table className="w-full table-fixed text-left text-xs text-slate-400">
               <thead>
                 <tr className="border-b border-slate-700 text-slate-500">
-                  <th className="w-[4.5rem] py-2 pr-2">Tipo</th>
-                  <th className="w-[4rem] py-2 pr-2">Classif.</th>
-                  <th className="w-[4.5rem] py-2 pr-2">Código</th>
-                  <th className="w-[38%] py-2 pr-2">Descrição</th>
-                  <th className="py-2 pr-2">Und</th>
-                  <th className="py-2 pr-2 text-right">Coef.</th>
-                  <th className="py-2 pr-2" title="Origem de preço SINAPI (C, CR…)">
+                  <th className="w-[3.75rem] py-2 pr-2">Tipo</th>
+                  <th className="w-[3.25rem] py-2 pr-2">Classif.</th>
+                  <th className="w-[8.5rem] py-2 pr-2">Código</th>
+                  <th className="min-w-0 w-[46%] py-2 pr-2">Descrição</th>
+                  <th className="w-[2.25rem] py-2 pr-1">Und</th>
+                  <th className="w-[2.75rem] py-2 pr-1 text-right">Coef.</th>
+                  <th
+                    className="w-[2.25rem] py-2 pr-1"
+                    title="Origem de preço SINAPI (C, CR…)"
+                  >
                     Origem
                   </th>
-                  <th className="py-2 pr-2" title="AS = preço associado a São Paulo (SEMINF tp2 ou SINAPI %AS)">
+                  <th
+                    className="w-[2rem] py-2 pr-1"
+                    title="AS = preço associado a São Paulo (SEMINF tp2 ou SINAPI %AS)"
+                  >
                     tp2
                   </th>
-                  <th className="py-2 pr-2 text-right">
+                  <th className="w-[4.75rem] py-2 pr-1.5 text-right">
                     Preço un. {previewPriceMode === "comd" ? "(ComD)" : "(SemD)"}
                   </th>
-                  <th className="py-2 text-right">
+                  <th className="w-[4.75rem] py-2 text-right">
                     Parcial {previewPriceMode === "comd" ? "(ComD)" : "(SemD)"}
                   </th>
                 </tr>
@@ -1632,16 +1799,16 @@ export default function SettingsPriceBasesPage() {
                     <tr key={`${item.code}-${i}`} className="border-b border-slate-800/80">
                       <td className="py-1.5 pr-2 text-cyan-400/90">{cpuItemTypeLabel(item.item_type)}</td>
                       <td className="py-1.5 pr-2 text-slate-400">{item.classificacao || "—"}</td>
-                      <td className="py-1.5 pr-2 font-mono">{item.code}</td>
-                      <td className="whitespace-normal break-words py-1.5 pr-2 align-top leading-snug">
+                      <td className="whitespace-nowrap py-1.5 pr-2 font-mono">{item.code}</td>
+                      <td className="min-w-0 whitespace-normal break-words py-1.5 pr-2 align-top leading-snug">
                         {item.description}
                       </td>
-                      <td className="py-1.5 pr-2">{item.unit}</td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">{item.coefficient}</td>
-                      <td className="py-1.5 pr-2 font-mono text-slate-400">{item.origem_preco || "—"}</td>
+                      <td className="py-1.5 pr-1">{item.unit}</td>
+                      <td className="py-1.5 pr-1 text-right tabular-nums">{item.coefficient}</td>
+                      <td className="py-1.5 pr-1 font-mono text-slate-400">{item.origem_preco || "—"}</td>
                       <td
                         className={cn(
-                          "py-1.5 pr-2 font-mono",
+                          "py-1.5 pr-1 font-mono",
                           item.tp2 === "AS" ? "text-amber-300" : "text-slate-600"
                         )}
                         title={
@@ -1652,7 +1819,7 @@ export default function SettingsPriceBasesPage() {
                       >
                         {item.tp2 || "—"}
                       </td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">
+                      <td className="py-1.5 pr-1.5 text-right tabular-nums">
                         {unitPrice.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                       </td>
                       <td className="py-1.5 text-right tabular-nums">

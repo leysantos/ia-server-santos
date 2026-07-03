@@ -32,11 +32,23 @@ def test_resolve_chat_runtime_cpu_when_vision_active():
         registry.finish(job.id, status="completed")
 
 
+def test_resolve_chat_runtime_normal_when_only_vram_high():
+    """VRAM alta sem job GPU ativo não deve forçar CPU (modelo já residente)."""
+    from unittest.mock import patch
+
+    with patch("core.runtime.ollama_concurrency._active_gpu_jobs", return_value=[]):
+        with patch("core.runtime.ollama_concurrency._vram_pressure_percent", return_value=88.0):
+            plan = resolve_chat_runtime()
+    assert plan.gpu_busy is False
+    assert plan.parallel_mode == "normal"
+    assert plan.ollama_options.get("num_gpu") is None
+
+
 def test_heavy_model_override_keeps_gpu_and_extends_timeout(no_vram_downgrade):
     from core.llm_override import llm_model_scope
     from core.runtime.ollama_concurrency import is_heavy_llm_model, resolve_llm_stream_config
 
-    assert is_heavy_llm_model("qwen3.6:latest")
+    assert is_heavy_llm_model("qwen3:14b")
     assert is_heavy_llm_model("gemma4:latest")
     assert is_heavy_llm_model("deepseek-r1:14b")
     assert not is_heavy_llm_model("phi3:mini")

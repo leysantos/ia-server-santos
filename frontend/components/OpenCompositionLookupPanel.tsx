@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/services/api";
 import type { BudgetPriceBaseSelection, OpenCompositionDetail } from "@/types/api";
 import OpenCompositionPreview, { refLabelFromReference } from "@/components/OpenCompositionPreview";
+import CpuExportPdfButton from "@/components/CpuExportPdfButton";
 import {
   type BudgetCpuFilterState,
   useBudgetCpuFilters,
@@ -224,7 +225,17 @@ export default function OpenCompositionLookupPanel({
       {error && <p className="mt-2 text-xs text-amber-300">{error}</p>}
 
       {preview && (
-        <div className="mt-4">
+        <div className="mt-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {filters.reference && (
+              <CpuExportPdfButton
+                code={preview.code}
+                uf={filters.uf}
+                reference={filters.reference}
+                priceMode={priceMode}
+              />
+            )}
+          </div>
           <OpenCompositionPreview
             preview={preview}
             priceMode={priceMode}

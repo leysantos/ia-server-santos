@@ -9,6 +9,7 @@ import ChatStreamBanner from "@/components/ChatStreamBanner";
 import VisionJobBanner from "@/components/VisionJobBanner";
 import NormBulkImportBanner from "@/components/NormBulkImportBanner";
 import KnowledgeWebImportBanner from "@/components/KnowledgeWebImportBanner";
+import MobileBottomNav from "@/components/mobile/MobileBottomNav";
 import { ModelsStatusProvider } from "@/components/ModelsStatusBadge";
 import { WorkspaceShellProvider } from "@/components/WorkspaceShellContext";
 import { ActivityProvider } from "@/context/ActivityContext";
@@ -17,6 +18,7 @@ import { NormBulkImportProvider } from "@/context/NormBulkImportContext";
 import { KnowledgeWebImportProvider } from "@/context/KnowledgeWebImportContext";
 import { VisionJobProvider } from "@/context/VisionJobContext";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { cn } from "@/lib/utils";
 
 function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -46,7 +48,12 @@ function AppShell({ children }: { children: ReactNode }) {
                   <div className="flex h-dvh overflow-hidden">
                     <Sidebar />
                     <WorkspacePanelLoader />
-                    <main className="app-ambient relative flex min-w-0 flex-1 flex-col overflow-hidden bg-surface">
+                    <main
+                      className={cn(
+                        "app-ambient relative flex min-w-0 flex-1 flex-col overflow-hidden bg-surface",
+                        "pb-[calc(3.75rem+env(safe-area-inset-bottom,0px))] lg:pb-0"
+                      )}
+                    >
                       <ChatStreamBanner />
                       <VisionJobBanner />
                       <NormBulkImportBanner />
@@ -55,6 +62,7 @@ function AppShell({ children }: { children: ReactNode }) {
                     </main>
                     <ActivityPanel />
                   </div>
+                  <MobileBottomNav />
                 </KnowledgeWebImportProvider>
               </NormBulkImportProvider>
             </VisionJobProvider>

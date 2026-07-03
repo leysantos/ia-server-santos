@@ -5,38 +5,19 @@ import { api } from "@/services/api";
 import type { BudgetPriceBaseSelection, PriceBankReference } from "@/types/api";
 import { BRAZIL_UFS, referenceLabelFromKey } from "@/lib/brazil-ufs";
 import {
+  refsForSource,
+  sourceKey,
+  sourceOptionsFromReferences,
+  defaultUfForSource,
+} from "@/lib/price-base-sources";
+import {
   SICRO_REGIONS,
-  sicroReferenceMatchesUf,
   sicroUfsForRegion,
 } from "@/lib/sicro-links";
 import { budgetBtn, budgetFieldLabel, budgetSelect } from "@/lib/budget-ui";
 import { cn } from "@/lib/utils";
 
-function sourceKey(ref: PriceBankReference): string {
-  return (ref.source || "sinapi").toLowerCase();
-}
-
-function isSeminfSource(source: string): boolean {
-  const s = source.toLowerCase();
-  return s === "dp_seminf" || s === "ppd_seminf";
-}
-
-export const SOURCE_LABELS: Record<string, string> = {
-  sinapi: "SINAPI",
-  dp_seminf: "DP/SEMINF",
-  ppd_seminf: "PP/SEMINF",
-  cicro: "CICRO/SICRO",
-};
-
-function sourceLabel(name: string, references: PriceBankReference[]): string {
-  if (SOURCE_LABELS[name]) return SOURCE_LABELS[name];
-  const ref = references.find((r) => sourceKey(r) === name);
-  if (ref?.source) {
-    const key = sourceKey({ ...ref, source: ref.source });
-    if (SOURCE_LABELS[key]) return SOURCE_LABELS[key];
-  }
-  return name.replace(/_/g, " ").toUpperCase();
-}
+export { SOURCE_LABELS } from "@/lib/price-base-sources";
 
 export interface BudgetCpuFilterState {
   source: string;
@@ -89,59 +70,35 @@ export function useBudgetCpuFilters(
       setUf(primary.uf);
       return;
     }
-    const firstSinapi = references.find((r) => sourceKey(r) === "sinapi");
-    if (firstSinapi) {
-      setSource(sourceKey(firstSinapi));
-      setReference(firstSinapi.reference);
-      setUf(firstSinapi.default_uf ?? "SP");
+    const first = references[0];
+    if (first) {
+      const src = sourceKey(first);
+      setSource(src);
+      setReference(first.reference);
+      setUf(first.default_uf ?? defaultUfForSource(src, references));
     }
   }, [references, enabledBases]);
 
-  const sourceOptions = useMemo(() => {
-    const names = new Set<string>();
-    for (const r of references) {
-      names.add(sourceKey(r));
-    }
-    return Array.from(names).map((name) => ({
-      name,
-      label: sourceLabel(name, references),
-    }));
-  }, [references]);
+  const sourceOptions = useMemo(
+    () => sourceOptionsFromReferences(references),
+    [references]
+  );
 
-  const periodOptions = useMemo(() => {
-    if (source === "cicro") {
-      return references.filter(
-        (r) =>
-          (sourceKey(r) === "cicro" || r.reference.toUpperCase().includes("SICRO")) &&
-          sicroReferenceMatchesUf(r.reference, uf)
-      );
-    }
-    if (isSeminfSource(source)) {
-      return references.filter((r) => isSeminfSource(sourceKey(r)));
-    }
-    return references.filter((r) => sourceKey(r) === source);
-  }, [references, source, uf]);
+  const periodOptions = useMemo(
+    () => refsForSource(source, uf, references),
+    [references, source, uf]
+  );
 
   const changeSource = useCallback(
     (src: string) => {
       setSource(src);
-      setUf(src === "cicro" || isSeminfSource(src) ? "AM" : "SP");
+      setUf(defaultUfForSource(src, references));
       if (src === "cicro") setRegion("all");
 
-      const refs =
-        src === "cicro"
-          ? references.filter(
-              (r) =>
-                (sourceKey(r) === "cicro" || r.reference.toUpperCase().includes("SICRO")) &&
-                sicroReferenceMatchesUf(r.reference, src === "cicro" ? "AM" : uf)
-            )
-          : isSeminfSource(src)
-            ? references.filter((r) => isSeminfSource(sourceKey(r)))
-            : references.filter((r) => sourceKey(r) === src);
-
+      const refs = refsForSource(src, defaultUfForSource(src, references), references);
       if (refs[0]) setReference(refs[0].reference);
     },
-    [references, uf]
+    [references]
   );
 
   useEffect(() => {

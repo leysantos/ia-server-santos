@@ -11,9 +11,10 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import { useRouter } from "next/navigation";
-import { chatStream } from "@/services/api";
+import { api, chatStream } from "@/services/api";
 import type { ChatMessage, ChatResponse } from "@/types/api";
 import { generateId } from "@/lib/utils";
+import { uploadPromptAttachments } from "@/lib/prompt-attachments";
 import { useActivityOptional } from "@/context/ActivityContext";
 import type { ChatSendOptions } from "@/components/ChatBox";
 
@@ -134,7 +135,20 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       if (runningRef.current) return;
       runningRef.current = true;
 
-      const userMessage: ChatMessage = { id: generateId(), role: "user", content: text };
+      const attachmentNames = params.files?.map((f) => f.name) ?? [];
+      const userContent =
+        attachmentNames.length > 0
+          ? `${text}\n\n📎 ${attachmentNames.join(" · ")}`
+          : text;
+
+      const userMessage: ChatMessage = {
+        id: generateId(),
+        role: "user",
+        content: userContent,
+        meta: attachmentNames.length
+          ? { extra: { attachments: attachmentNames } }
+          : undefined,
+      };
       const assistantId = generateId();
       const assistantPlaceholder: ChatMessage = {
         id: assistantId,
@@ -174,13 +188,30 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           let finalResponse: ChatResponse | null = null;
           let streamMeta: ChatMessage["meta"] = { streaming: true, streamStatus: "Conectando..." };
 
+          let attachmentIds: string[] | undefined;
+          let llmModel = params.llmModel;
+          if (params.files?.length) {
+            flushSync(() =>
+              updateAssistant(assistantId, {
+                meta: { streaming: true, streamStatus: "Enviando e processando anexos…" },
+              })
+            );
+            const upload = await uploadPromptAttachments(params.files, params.llmModel);
+            attachmentIds = upload.attachmentIds;
+            if (upload.llmModel !== params.llmModel && params.llmModel === "auto") {
+              setSession((prev) => ({ ...prev, activeModel: upload.llmModel }));
+            }
+            llmModel = upload.llmModel;
+          }
+
           for await (const event of chatStream({
             text,
             use_rag: params.useRag,
             persist: params.persist,
             conversation_id: conversationIdRef.current ?? undefined,
             project_id: params.projectId ?? undefined,
-            llm_model: params.llmModel !== "auto" ? params.llmModel : undefined,
+            llm_model: llmModel !== "auto" ? llmModel : undefined,
+            attachment_ids: attachmentIds,
           })) {
             if (event.type === "status") {
               const message = String(event.data.message ?? "Processando...");

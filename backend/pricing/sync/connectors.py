@@ -427,53 +427,437 @@ class SinapiConnector(BasePriceConnector):
 
 class OrseConnector(BasePriceConnector):
     """
-    ORSE (Sergipe) — sem API pública tabular.
-    Use `local_file` apontando para CSV/XLSX exportado do ORSE ou
-    ORSE_EXPORT_PATH no ambiente.
+    ORSE (Sergipe) — download mensal do pacote `.ORSE` (CEHOP).
+
+    O arquivo `.ORSE` é um pacote proprietário criptografado para atualização
+    do SQL Server interno do ORSE 2 — **não** é CSV/Excel. Para alimentar o
+    IA Server Santos, informe também export tabular (Relatórios → Composições/Insumos
+    no ORSE) via `local_file` ou `ORSE_EXPORT_PATH`.
     """
 
     name = "orse"
     label = "ORSE (Sergipe)"
+    PORTAL_BASE = "https://orse.cehop.se.gov.br"
+
+    @staticmethod
+    def monthly_filename(*, year: int, month: int, revision: str = "00") -> str:
+        return f"{year}{month:02d}01-{revision}.ORSE"
+
+    @staticmethod
+    def monthly_download_url(*, year: int, month: int, revision: str = "00") -> str:
+        name = OrseConnector.monthly_filename(year=year, month=month, revision=revision)
+        return f"{OrseConnector.PORTAL_BASE}/downloads/{name}"
+
+    @staticmethod
+    def reference_label(*, year: int, month: int) -> str:
+        return f"BR-ORSE-{year}-{month:02d}"
 
     def supports_auto_download(self) -> bool:
-        return False
+        return True
+
+    def _session(self) -> requests.Session:
+        session = requests.Session()
+        session.headers.update({"User-Agent": _USER_AGENT})
+        return session
+
+    def _download_monthly_orse(
+        self,
+        *,
+        dest_dir: Path,
+        year: int,
+        month: int,
+        on_progress: Any | None = None,
+    ) -> Path:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        filename = self.monthly_filename(year=year, month=month)
+        dest = dest_dir / filename
+        url = self.monthly_download_url(year=year, month=month)
+
+        def emit(pct: int, msg: str) -> None:
+            if on_progress:
+                on_progress({"percent": pct, "phase": "download", "message": msg})
+
+        emit(5, f"Baixando {filename} da CEHOP…")
+        session = self._session()
+        last_err: Exception | None = None
+        for attempt, delay in enumerate(_DOWNLOAD_DELAYS, start=1):
+            try:
+                resp = session.get(url, timeout=180, stream=True)
+                if resp.status_code == 404:
+                    raise FileNotFoundError(
+                        f"Base ORSE {year}-{month:02d} não publicada em {url}"
+                    )
+                resp.raise_for_status()
+                size = int(resp.headers.get("Content-Length") or 0)
+                written = 0
+                with open(dest, "wb") as handle:
+                    for chunk in resp.iter_content(chunk_size=65536):
+                        if chunk:
+                            handle.write(chunk)
+                            written += len(chunk)
+                            if size > 0:
+                                pct = 5 + round(written / size * 55)
+                                emit(min(60, pct), f"Download ORSE… {written // 1024} KB")
+                if written < 1024:
+                    raise ValueError(f"Download ORSE inválido ({written} bytes) — {url}")
+                emit(62, f"Pacote ORSE salvo ({written // 1024} KB)")
+                return dest
+            except Exception as exc:
+                last_err = exc
+                if attempt < len(_DOWNLOAD_DELAYS):
+                    time.sleep(delay)
+        raise RuntimeError(f"Falha ao baixar ORSE após {_DOWNLOAD_RETRIES} tentativas") from last_err
+
+    def _resolve_export_bundle(
+        self,
+        *,
+        local_file: Path | None,
+        insumos_file: Path | None,
+        composicoes_file: Path | None,
+        analitico_file: Path | None,
+        dest_dir: Path,
+        year: int,
+        month: int,
+    ) -> tuple[Path, Path | None, Path | None] | None:
+        import os
+
+        from pricing.budget.orse_bundle_detect import (
+            classify_orse_bundle_files,
+            is_foreign_price_base_file,
+            is_orse_composicoes_file,
+        )
+
+        def _reject_foreign(path: Path, *, role: str) -> None:
+            if is_foreign_price_base_file(path):
+                raise ValueError(
+                    f"Arquivo '{path.name}' não é export ORSE ({role}) — parece SEMINF/PPD/SINAPI. "
+                    "Use planilhas exportadas do ORSE 2 (Relatórios → Cadastrais)."
+                )
+
+        if composicoes_file and composicoes_file.is_file():
+            _reject_foreign(composicoes_file, role="composições")
+            if insumos_file and insumos_file.is_file():
+                _reject_foreign(insumos_file, role="insumos")
+            if analitico_file and analitico_file.is_file():
+                _reject_foreign(analitico_file, role="analítico")
+            return composicoes_file, insumos_file, analitico_file
+
+        if local_file and local_file.is_file():
+            suffix = local_file.suffix.lower()
+            if suffix in (".xlsx", ".xls", ".csv"):
+                if is_orse_composicoes_file(local_file):
+                    return local_file, insumos_file, analitico_file
+                classified = classify_orse_bundle_files([local_file])
+                if classified["composicoes"]:
+                    return (
+                        classified["composicoes"],
+                        classified.get("insumos") or insumos_file,
+                        classified.get("analitico") or analitico_file,
+                    )
+                _reject_foreign(local_file, role="arquivo")
+                return local_file, insumos_file, analitico_file
+            if local_file.is_dir():
+                paths = [p for p in local_file.rglob("*") if p.is_file()]
+                classified = classify_orse_bundle_files(paths)
+                if classified["composicoes"]:
+                    return (
+                        classified["composicoes"],
+                        classified.get("insumos"),
+                        classified.get("analitico"),
+                    )
+
+        ref = self.reference_label(year=year, month=month)
+        export_dir = Path(os.environ.get("ORSE_EXPORT_DIR", "")).expanduser()
+        if export_dir.is_dir():
+            period_dir = export_dir / ref
+            if period_dir.is_dir():
+                paths = [p for p in period_dir.rglob("*") if p.is_file()]
+                classified = classify_orse_bundle_files(paths)
+                if classified["composicoes"]:
+                    return (
+                        classified["composicoes"],
+                        classified.get("insumos"),
+                        classified.get("analitico"),
+                    )
+
+        for pattern in (f"orse_{ref}_composicoes.xlsx", f"orse_{ref}_insumos.xlsx"):
+            candidate = dest_dir / pattern
+            if candidate.is_file() and "composic" in pattern:
+                ins = dest_dir / f"orse_{ref}_insumos.xlsx"
+                return candidate, ins if ins.is_file() else None, None
+        return None
+
+    def _save_orse_bundle(
+        self,
+        *,
+        bundle: Any,
+        dest_dir: Path,
+        year: int,
+        month: int,
+        uf: str,
+        orse_package: Path | None,
+        on_progress: Any | None = None,
+        set_active: bool = False,
+        import_mode: str = "orse_export",
+    ) -> DownloadResult:
+        def emit(pct: int, phase: str, msg: str) -> None:
+            if on_progress:
+                on_progress({"percent": pct, "phase": phase, "message": msg})
+
+        from pricing.budget.price_bank_store import PriceBankStore
+        from pricing.sync.sinapi_parser import export_sinapi_csv
+
+        ref_key = self.reference_label(year=year, month=month)
+        emit(50, "bank", f"Gravando price_bank {ref_key}…")
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        csv_path = dest_dir / f"orse_{ref_key.replace('/', '-')}.csv"
+        export_sinapi_csv([c.to_dict() for c in bundle.closed], csv_path)
+
+        bank_metadata = {
+            **(bundle.metadata or {}),
+            "year": year,
+            "month": month,
+            "import_mode": import_mode,
+        }
+        if orse_package:
+            bank_metadata["orse_package"] = str(orse_package.resolve())
+            bank_metadata["orse_package_bytes"] = orse_package.stat().st_size
+
+        manifest = PriceBankStore.for_reference(ref_key).save_bank(
+            source=self.name,
+            reference=ref_key,
+            closed=bundle.closed,
+            open_compositions=bundle.open_map,
+            insumos=bundle.insumos,
+            uf=uf.upper(),
+            desonerado=True,
+            metadata=bank_metadata,
+            set_active=set_active,
+        )
+        open_items = sum(len(c.items) for c in bundle.open_map.values())
+        emit(65, "bank", "Banco ORSE salvo")
+
+        return DownloadResult(
+            source=self.name,
+            local_path=csv_path,
+            reference=ref_key,
+            item_count=len(bundle.closed),
+            metadata={
+                "reference": ref_key,
+                "bank": manifest.to_dict(),
+                "compositions_closed": manifest.counts.get("compositions_closed", 0),
+                "compositions_open": manifest.counts.get("compositions_open", 0),
+                "insumos": manifest.counts.get("insumos", 0),
+                "open_items_total": open_items,
+                **bank_metadata,
+            },
+        )
+
+    def download_from_portal(
+        self,
+        *,
+        dest_dir: Path,
+        year: int,
+        month: int,
+        uf: str = "SE",
+        on_progress: Any | None = None,
+        set_active: bool = False,
+    ) -> DownloadResult:
+        """Importa ORSE via portal público CEHOP (sem ORSE 2 / Excel)."""
+        from pricing.sync.orse_portal_scraper import OrsePortalScraper
+
+        def emit(pct: int, phase: str, msg: str) -> None:
+            if on_progress:
+                on_progress({"percent": pct, "phase": phase, "message": msg})
+
+        emit(3, "portal", f"Conectando ao portal CEHOP — {month:02d}/{year}…")
+        scraper = OrsePortalScraper(
+            year=year,
+            month=month,
+            on_progress=on_progress,
+        )
+        bundle = scraper.build_bundle()
+        emit(92, "portal", "Portal CEHOP processado — gravando banco…")
+        return self._save_orse_bundle(
+            bundle=bundle,
+            dest_dir=dest_dir,
+            year=year,
+            month=month,
+            uf=uf,
+            orse_package=None,
+            on_progress=on_progress,
+            set_active=set_active,
+            import_mode="orse_portal",
+        )
+
+    def _ingest_export_bundle(
+        self,
+        *,
+        dest_dir: Path,
+        composicoes_path: Path,
+        insumos_path: Path | None,
+        analitico_path: Path | None,
+        year: int,
+        month: int,
+        uf: str,
+        orse_package: Path | None,
+        on_progress: Any | None = None,
+        set_active: bool = False,
+    ) -> DownloadResult:
+        def emit(pct: int, phase: str, msg: str) -> None:
+            if on_progress:
+                on_progress({"percent": pct, "phase": phase, "message": msg})
+
+        from pricing.sync.orse_export_parser import parse_orse_export_bundle
+
+        emit(20, "parse", f"Lendo composições — {composicoes_path.name}…")
+        bundle = parse_orse_export_bundle(
+            composicoes_path=composicoes_path,
+            insumos_path=insumos_path,
+            analitico_path=analitico_path,
+        )
+
+        return self._save_orse_bundle(
+            bundle=bundle,
+            dest_dir=dest_dir,
+            year=year,
+            month=month,
+            uf=uf,
+            orse_package=orse_package,
+            on_progress=on_progress,
+            set_active=set_active,
+            import_mode="orse_export",
+        )
+
+    def download_package_only(
+        self,
+        *,
+        dest_dir: Path,
+        year: int,
+        month: int,
+        on_progress: Any | None = None,
+    ) -> DownloadResult:
+        """Baixa pacote `.ORSE` mensal da CEHOP (sem importar price_bank)."""
+        package = self._download_monthly_orse(
+            dest_dir=dest_dir / "packages",
+            year=year,
+            month=month,
+            on_progress=on_progress,
+        )
+        ref = self.reference_label(year=year, month=month)
+        return DownloadResult(
+            source=self.name,
+            local_path=package,
+            reference=ref,
+            item_count=0,
+            metadata={
+                "reference": ref,
+                "orse_package": str(package.resolve()),
+                "orse_package_bytes": package.stat().st_size,
+                "package_only": True,
+            },
+        )
 
     def download(
         self,
         *,
         dest_dir: Path,
         local_file: Path | None = None,
+        insumos_file: Path | None = None,
+        composicoes_file: Path | None = None,
+        analitico_file: Path | None = None,
+        year: int | None = None,
+        month: int | None = None,
+        uf: str = "SE",
+        package_only: bool = False,
+        portal_sync: bool = False,
+        on_progress: Any | None = None,
+        set_active: bool = False,
         **_: Any,
     ) -> DownloadResult:
-        import os
+        today = date.today()
+        year = year or today.year
+        month = month or today.month
 
-        path = local_file or Path(os.environ.get("ORSE_EXPORT_PATH", ""))
-        if not path.is_file():
-            raise FileNotFoundError(
-                "ORSE não possui download HTTP público. "
-                "Exporte composições/insumos do ORSE (CSV/XLSX) e informe "
-                "local_file ou ORSE_EXPORT_PATH."
+        if portal_sync:
+            return self.download_from_portal(
+                dest_dir=dest_dir,
+                year=year,
+                month=month,
+                uf=uf,
+                on_progress=on_progress,
+                set_active=set_active,
             )
 
-        from pricing.providers._tabular import parse_tabular_file
+        if package_only:
+            return self.download_package_only(
+                dest_dir=dest_dir,
+                year=year,
+                month=month,
+                on_progress=on_progress,
+            )
 
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        rows = parse_tabular_file(path)
-        if not rows:
-            raise ValueError(f"Nenhum item parseado em {path.name}")
-
-        from pricing.sync.sinapi_parser import export_sinapi_csv
-
-        ref = path.stem
-        csv_path = dest_dir / f"orse_{ref}.csv"
-        export_sinapi_csv(rows, csv_path)
-        return DownloadResult(
-            source=self.name,
-            local_path=csv_path,
-            reference=ref,
-            item_count=len(rows),
-            metadata={"source_file": str(path.resolve())},
+        bundle_paths = self._resolve_export_bundle(
+            local_file=local_file,
+            insumos_file=insumos_file,
+            composicoes_file=composicoes_file,
+            analitico_file=analitico_file,
+            dest_dir=dest_dir,
+            year=year,
+            month=month,
         )
+
+        orse_package: Path | None = None
+        if not bundle_paths:
+            orse_package = self._download_monthly_orse(
+                dest_dir=dest_dir / "packages",
+                year=year,
+                month=month,
+                on_progress=on_progress,
+            )
+            bundle_paths = self._resolve_export_bundle(
+                local_file=local_file,
+                insumos_file=insumos_file,
+                composicoes_file=composicoes_file,
+                analitico_file=analitico_file,
+                dest_dir=dest_dir,
+                year=year,
+                month=month,
+            )
+
+        if not bundle_paths:
+            raise FileNotFoundError(
+                "Pacote .ORSE baixado da CEHOP, mas faltam planilhas exportadas. "
+                "No ORSE 2 (Windows): Ferramentas → Atualização da Base → aplique o .ORSE; "
+                "depois Relatórios → Cadastrais → exporte Composições e Insumos (Excel). "
+                "Use 'Importar pasta export ORSE' nesta tela ou defina ORSE_EXPORT_DIR no servidor."
+                + (f" Pacote: {orse_package}" if orse_package else "")
+            )
+
+        composicoes_path, insumos_path, analitico_path = bundle_paths
+        if composicoes_path.suffix.lower() == ".orse":
+            raise ValueError(
+                "Arquivo .ORSE é pacote de atualização do ORSE 2 — exporte Excel e importe a pasta."
+            )
+
+        return self._ingest_export_bundle(
+            dest_dir=dest_dir,
+            composicoes_path=composicoes_path,
+            insumos_path=insumos_path,
+            analitico_path=analitico_path,
+            year=year,
+            month=month,
+            uf=uf,
+            orse_package=orse_package,
+            on_progress=on_progress,
+            set_active=set_active,
+        )
+
+
+def is_orse_composicoes_file(path: Path) -> bool:
+    from pricing.budget.orse_bundle_detect import is_orse_composicoes_file as _is
+
+    return _is(path)
 
 
 class TcpoConnector(BasePriceConnector):

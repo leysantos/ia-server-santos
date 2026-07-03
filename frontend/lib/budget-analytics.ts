@@ -10,6 +10,7 @@ import {
   daysBetween,
   type MonthBucket,
 } from "@/lib/schedule-curves";
+import { resolveResourceCategory, isHistogramDirectLabor } from "@/lib/budget-resource-classification";
 
 export type ResourceCategory = "equipamento" | "insumo" | "mao_obra";
 
@@ -37,6 +38,11 @@ export interface AbcItem {
   abcClass: AbcClass;
 }
 
+export interface HistogramMeasure {
+  quantity: number;
+  value: number;
+}
+
 export interface ResourceMonthBucket {
   monthIndex: number;
   label: string;
@@ -48,8 +54,12 @@ export interface ResourceMonthBucket {
   totalWithBdi: number;
 }
 
-export interface StackedHistogramMonth extends ResourceMonthBucket {
+export interface StackedHistogramMonth {
+  monthIndex: number;
+  label: string;
   periodDay: number;
+  equipamento: HistogramMeasure;
+  mao_obra: HistogramMeasure;
 }
 
 export interface HistogramMonthColumn {
@@ -91,6 +101,34 @@ export interface HistogramWorkbookModel {
 }
 
 const HOURS_PER_WORKER_MONTH = 22 * 8;
+
+export const HISTOGRAM_ITEM_COLORS = [
+  "#0B2E4A",
+  "#F59E0B",
+  "#10B981",
+  "#F472B6",
+  "#A78BFA",
+  "#FB7185",
+  "#34D399",
+  "#60A5FA",
+  "#FBBF24",
+  "#C084FC",
+  "#2DD4BF",
+  "#F97316",
+] as const;
+
+export function histogramItemColor(index: number): string {
+  return HISTOGRAM_ITEM_COLORS[index % HISTOGRAM_ITEM_COLORS.length];
+}
+
+export interface HistogramReportModel {
+  maoObra: HistogramSectionModel | null;
+  equipamento: HistogramSectionModel | null;
+  hasSchedule: boolean;
+  servicesWithCpu: number;
+  projectLabel: string;
+  clientLabel: string;
+}
 
 const HISTOGRAM_SECTION_TITLES: Record<ResourceCategory, string> = {
   mao_obra: "HISTOGRAMA DE MÃO DE OBRA DIRETA",
@@ -185,14 +223,6 @@ export function buildScurvePoints(
   return { points, totalFinancial, hasSchedule: points.length > 0 };
 }
 
-function normalizeResourceCategory(itemType: string): ResourceCategory | null {
-  const key = itemType.toLowerCase().replace(/\s+/g, "_");
-  if (key === "equipamento") return "equipamento";
-  if (key === "insumo" || key === "material") return "insumo";
-  if (key === "mao_obra" || key === "maodeobra") return "mao_obra";
-  return null;
-}
-
 function itemQuantityForService(item: OpenCompositionItem, serviceQty: number): number {
   return Math.max(0, item.coefficient * Math.max(0, serviceQty));
 }
@@ -257,8 +287,9 @@ function buildHistogramSection(
     const serviceQty = service.quantity ?? 1;
 
     for (const item of detail.items) {
-      const cat = normalizeResourceCategory(item.item_type);
+      const cat = resolveResourceCategory(item);
       if (cat !== category) continue;
+      if (category === "mao_obra" && !isHistogramDirectLabor(item)) continue;
 
       const totalQty = itemQuantityForService(item, serviceQty);
       if (totalQty <= 0) continue;
@@ -275,8 +306,13 @@ function buildHistogramSection(
         accum.set(key, row);
       }
 
+      const addMonthly = (index: number, rawQty: number) => {
+        row!.monthly[index] =
+          (row!.monthly[index] ?? 0) + toChartContribution(category, rawQty, item.unit);
+      };
+
       if (!task?.early_start || !task.early_finish) {
-        row.monthly[0] = (row.monthly[0] ?? 0) + totalQty;
+        addMonthly(0, totalQty);
         continue;
       }
 
@@ -291,7 +327,7 @@ function buildHistogramSection(
           m.monthEndIso
         );
         if (overlap <= 0) continue;
-        row.monthly[i] += totalQty * (overlap / duration);
+        addMonthly(i, totalQty * (overlap / duration));
       }
     }
   }
@@ -319,7 +355,24 @@ export interface StackedHistogramModel {
   servicesWithCpu: number;
   projectLabel: string;
   clientLabel: string;
-  totals: Record<ResourceCategory, number> & { total: number; totalWithBdi: number };
+  totals: {
+    equipamento: HistogramMeasure;
+    mao_obra: HistogramMeasure;
+  };
+}
+
+const EMPTY_MEASURE: HistogramMeasure = { quantity: 0, value: 0 };
+
+function histogramQuantityForItem(
+  item: OpenCompositionItem,
+  serviceQty: number,
+  category: ResourceCategory
+): number {
+  const qty = itemQuantityForService(item, serviceQty);
+  if (category === "mao_obra" && isHourUnit(item.unit)) {
+    return qty / HOURS_PER_WORKER_MONTH;
+  }
+  return qty;
 }
 
 export function buildStackedHistogram(
@@ -332,7 +385,7 @@ export function buildStackedHistogram(
   const clientLabel = project?.empresa?.trim() || project?.orgao?.trim() || "—";
   const projectLabel = [project?.projeto, project?.objeto].filter(Boolean).join(" — ") || "Obra";
 
-  const { months, hasSchedule, servicesWithCpu } = buildResourceDemandHistogram(
+  const { months, hasSchedule, servicesWithCpu } = buildMoEquipHistogram(
     schedule,
     rows,
     compositions,
@@ -346,7 +399,7 @@ export function buildStackedHistogram(
       servicesWithCpu: 0,
       projectLabel,
       clientLabel,
-      totals: { equipamento: 0, insumo: 0, mao_obra: 0, total: 0, totalWithBdi: 0 },
+      totals: { equipamento: { ...EMPTY_MEASURE }, mao_obra: { ...EMPTY_MEASURE } },
     };
   }
 
@@ -357,22 +410,25 @@ export function buildStackedHistogram(
     monthIndex: m.monthIndex,
     label: m.label,
     periodDay: columns[i]?.periodDay ?? (i + 1) * 30,
-    equipamento: m.equipamento,
-    insumo: m.insumo,
-    mao_obra: m.mao_obra,
-    total: m.total,
-    totalWithBdi: m.totalWithBdi,
+    equipamento: { quantity: m.equipamentoQty, value: m.equipamentoValue },
+    mao_obra: { quantity: m.maoObraQty, value: m.maoObraValue },
   }));
 
   const totals = stackedMonths.reduce(
     (acc, m) => ({
-      equipamento: acc.equipamento + m.equipamento,
-      insumo: acc.insumo + m.insumo,
-      mao_obra: acc.mao_obra + m.mao_obra,
-      total: acc.total + m.total,
-      totalWithBdi: acc.totalWithBdi + m.totalWithBdi,
+      equipamento: {
+        quantity: acc.equipamento.quantity + m.equipamento.quantity,
+        value: acc.equipamento.value + m.equipamento.value,
+      },
+      mao_obra: {
+        quantity: acc.mao_obra.quantity + m.mao_obra.quantity,
+        value: acc.mao_obra.value + m.mao_obra.value,
+      },
     }),
-    { equipamento: 0, insumo: 0, mao_obra: 0, total: 0, totalWithBdi: 0 }
+    {
+      equipamento: { quantity: 0, value: 0 },
+      mao_obra: { quantity: 0, value: 0 },
+    }
   );
 
   return {
@@ -385,23 +441,58 @@ export function buildStackedHistogram(
   };
 }
 
-/** @deprecated use buildStackedHistogram — planilha detalhada por categoria */
-export function buildHistogramWorkbook(
+function finalizeHistogramSection(
+  category: ResourceCategory,
+  columns: HistogramMonthColumn[],
+  items: HistogramItemRow[],
+  servicesWithCpu: number
+): HistogramSectionModel {
+  const monthlyTotals = columns.map((_, i) =>
+    items.reduce((sum, item) => sum + (item.monthlyValues[i] ?? 0), 0)
+  );
+
+  const chartYLabel =
+    category === "mao_obra" ? "Profissionais" : "Quantidade";
+
+  return {
+    title: HISTOGRAM_SECTION_TITLES[category],
+    category,
+    columns,
+    items,
+    monthlyTotals,
+    chartValues: monthlyTotals,
+    chartYLabel,
+  };
+}
+
+export function buildHistogramItemStacks(section: HistogramSectionModel): {
+  key: string;
+  label: string;
+  color: string;
+  values: number[];
+}[] {
+  return section.items.map((item) => ({
+    key: item.itemKey,
+    label: item.description,
+    color: histogramItemColor(item.index - 1),
+    values: item.monthlyValues,
+  }));
+}
+
+export function buildHistogramReport(
   schedule: ProjectSchedule | undefined | null,
   rows: BudgetRow[],
   compositions: Map<string, OpenCompositionDetail>,
   project?: { projeto?: string; empresa?: string; orgao?: string; objeto?: string }
-): HistogramWorkbookModel {
-  const clientLabel =
-    project?.empresa?.trim() ||
-    project?.orgao?.trim() ||
-    "—";
+): HistogramReportModel {
+  const clientLabel = project?.empresa?.trim() || project?.orgao?.trim() || "—";
   const projectLabel =
     [project?.projeto, project?.objeto].filter(Boolean).join(" — ") || "Obra";
 
   if (!schedule?.project_start) {
     return {
-      sections: [],
+      maoObra: null,
+      equipamento: null,
       hasSchedule: false,
       servicesWithCpu: 0,
       projectLabel,
@@ -412,7 +503,8 @@ export function buildHistogramWorkbook(
   const { months: scheduleMonths } = buildScheduleCurvesByMonth(schedule, rows);
   if (scheduleMonths.length === 0) {
     return {
-      sections: [],
+      maoObra: null,
+      equipamento: null,
       hasSchedule: false,
       servicesWithCpu: 0,
       projectLabel,
@@ -421,11 +513,10 @@ export function buildHistogramWorkbook(
   }
 
   const columns = buildMonthColumns(schedule, scheduleMonths);
-  const categories: ResourceCategory[] = ["mao_obra", "equipamento", "insumo"];
-  let maxServicesWithCpu = 0;
+  let servicesWithCpu = 0;
 
-  const sections: HistogramSectionModel[] = categories.map((category) => {
-    const { items, servicesWithCpu } = buildHistogramSection(
+  const buildSection = (category: ResourceCategory): HistogramSectionModel | null => {
+    const { items, servicesWithCpu: svc } = buildHistogramSection(
       category,
       columns,
       rows,
@@ -433,49 +524,164 @@ export function buildHistogramWorkbook(
       compositions,
       scheduleMonths
     );
-    maxServicesWithCpu = Math.max(maxServicesWithCpu, servicesWithCpu);
-
-    const monthlyTotals = columns.map((_, i) =>
-      items.reduce((sum, item) => sum + (item.monthlyValues[i] ?? 0), 0)
-    );
-
-    const chartValues = columns.map((_, i) =>
-      items.reduce(
-        (sum, item) =>
-          sum +
-          toChartContribution(category, item.monthlyValues[i] ?? 0, item.unit),
-        0
-      )
-    );
-
-    const chartYLabel =
-      category === "mao_obra"
-        ? "Profissionais (equiv.)"
-        : category === "equipamento"
-          ? "Demanda total"
-          : "Quantidade total";
-
-    return {
-      title: HISTOGRAM_SECTION_TITLES[category],
-      category,
-      columns,
-      items,
-      monthlyTotals,
-      chartValues,
-      chartYLabel,
-    };
-  });
+    servicesWithCpu = Math.max(servicesWithCpu, svc);
+    if (items.length === 0) return null;
+    return finalizeHistogramSection(category, columns, items, svc);
+  };
 
   return {
-    sections,
+    maoObra: buildSection("mao_obra"),
+    equipamento: buildSection("equipamento"),
     hasSchedule: true,
-    servicesWithCpu: maxServicesWithCpu,
+    servicesWithCpu,
     projectLabel,
     clientLabel,
   };
 }
 
-/** @deprecated use buildHistogramWorkbook — agregado por categoria em R$ */
+/** Planilha detalhada por categoria (MO + equipamentos). */
+export function buildHistogramWorkbook(
+  schedule: ProjectSchedule | undefined | null,
+  rows: BudgetRow[],
+  compositions: Map<string, OpenCompositionDetail>,
+  project?: { projeto?: string; empresa?: string; orgao?: string; objeto?: string }
+): HistogramWorkbookModel {
+  const report = buildHistogramReport(schedule, rows, compositions, project);
+  const sections = [report.maoObra, report.equipamento].filter(
+    (s): s is HistogramSectionModel => s != null
+  );
+  return {
+    sections,
+    hasSchedule: report.hasSchedule,
+    servicesWithCpu: report.servicesWithCpu,
+    projectLabel: report.projectLabel,
+    clientLabel: report.clientLabel,
+  };
+}
+
+export function formatHistogramQty(value: number): string {
+  if (Math.abs(value) < 0.0001) return "—";
+  if (value >= 100) return value.toFixed(0);
+  if (value >= 10) return value.toFixed(1);
+  return value.toFixed(2);
+}
+
+interface MoEquipMonthBucket {
+  monthIndex: number;
+  label: string;
+  equipamentoQty: number;
+  equipamentoValue: number;
+  maoObraQty: number;
+  maoObraValue: number;
+}
+
+/** Histograma MO + equipamentos: quantidades e valores mensais rateados pelo cronograma. */
+export function buildMoEquipHistogram(
+  schedule: ProjectSchedule | undefined | null,
+  rows: BudgetRow[],
+  compositions: Map<string, OpenCompositionDetail>,
+  priceMode: "comd" | "semd" = "comd"
+): { months: MoEquipMonthBucket[]; hasSchedule: boolean; servicesWithCpu: number } {
+  if (!schedule?.project_start) {
+    return { months: [], hasSchedule: false, servicesWithCpu: 0 };
+  }
+
+  const { months: scheduleMonths } = buildScheduleCurvesByMonth(schedule, rows);
+  if (scheduleMonths.length === 0) {
+    return { months: [], hasSchedule: false, servicesWithCpu: 0 };
+  }
+
+  const buckets: MoEquipMonthBucket[] = scheduleMonths.map((m) => ({
+    monthIndex: m.monthIndex,
+    label: m.label,
+    equipamentoQty: 0,
+    equipamentoValue: 0,
+    maoObraQty: 0,
+    maoObraValue: 0,
+  }));
+
+  const services = rows.filter((r) => r.row_type === "S" && !r.is_memory_row);
+  let servicesWithCpu = 0;
+
+  for (const service of services) {
+    const detail = compositions.get(service.row_id);
+    if (!detail) continue;
+    servicesWithCpu += 1;
+
+    const task = taskForService(schedule, service.row_id);
+    const serviceQty = service.quantity ?? 1;
+
+    for (const item of detail.items) {
+      const cat = resolveResourceCategory(item);
+      if (cat !== "mao_obra" && cat !== "equipamento") continue;
+
+      const qty = histogramQuantityForItem(item, serviceQty, cat);
+      const val = itemCostForService(item, serviceQty, priceMode);
+      if (qty <= 0 && val <= 0) continue;
+
+      const distribute = (factor: number, bucket: MoEquipMonthBucket) => {
+        if (cat === "equipamento") {
+          bucket.equipamentoQty += qty * factor;
+          bucket.equipamentoValue += val * factor;
+        } else {
+          bucket.maoObraQty += qty * factor;
+          bucket.maoObraValue += val * factor;
+        }
+      };
+
+      if (!task?.early_start || !task.early_finish) {
+        const first = buckets[0];
+        if (first) distribute(1, first);
+        continue;
+      }
+
+      const duration = Math.max(1, task.duration_days);
+      for (let i = 0; i < buckets.length; i++) {
+        const m = scheduleMonths[i];
+        if (!m) continue;
+        const overlap = overlapDays(
+          task.early_start,
+          task.early_finish,
+          m.monthStartIso,
+          m.monthEndIso
+        );
+        if (overlap <= 0) continue;
+        distribute(overlap / duration, buckets[i]);
+      }
+    }
+  }
+
+  return { months: buckets, hasSchedule: true, servicesWithCpu };
+}
+
+/** @deprecated — use buildMoEquipHistogram */
+export function buildResourceQuantityHistogram(
+  schedule: ProjectSchedule | undefined | null,
+  rows: BudgetRow[],
+  compositions: Map<string, OpenCompositionDetail>
+): { months: ResourceMonthBucket[]; hasSchedule: boolean; servicesWithCpu: number } {
+  const { months, hasSchedule, servicesWithCpu } = buildMoEquipHistogram(
+    schedule,
+    rows,
+    compositions,
+    "comd"
+  );
+  return {
+    months: months.map((m) => ({
+      monthIndex: m.monthIndex,
+      label: m.label,
+      equipamento: m.equipamentoQty,
+      insumo: 0,
+      mao_obra: m.maoObraQty,
+      total: m.equipamentoQty + m.maoObraQty,
+      totalWithBdi: 0,
+    })),
+    hasSchedule,
+    servicesWithCpu,
+  };
+}
+
+/** @deprecated custos em R$ — use buildResourceQuantityHistogram */
 export function buildResourceDemandHistogram(
   schedule: ProjectSchedule | undefined | null,
   rows: BudgetRow[],
@@ -580,7 +786,7 @@ function categoryTotalsFromComposition(
   let composicaoCost = 0;
 
   for (const item of detail.items) {
-    const cat = normalizeResourceCategory(item.item_type);
+    const cat = resolveResourceCategory(item);
     const cost = itemCostForService(item, serviceQty, mode);
     if (cat) {
       totals[cat] += cost;

@@ -3,16 +3,14 @@
 import { useMemo, useState } from "react";
 import type { BudgetSessionResponse } from "@/types/api";
 import {
-  buildStackedHistogram,
-  formatBrl,
-  formatBrlCompact,
-  RESOURCE_CATEGORY_COLORS,
-  RESOURCE_CATEGORY_LABELS,
-  type ResourceCategory,
-  type StackedHistogramMonth,
+  buildHistogramItemStacks,
+  buildHistogramReport,
+  formatHistogramQty,
+  type HistogramItemRow,
+  type HistogramReportModel,
+  type HistogramSectionModel,
 } from "@/lib/budget-analytics";
 import { BudgetStackedBarChart, ChartLegend } from "@/components/BudgetChartPrimitives";
-import { BudgetAnalyticsReconciliationPanel } from "@/components/BudgetAnalyticsReconciliationPanel";
 import BudgetAnalyticsExportActions from "@/components/BudgetAnalyticsExportActions";
 import { useBudgetServiceCompositions } from "@/hooks/useBudgetServiceCompositions";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -29,7 +27,14 @@ interface BudgetHistogramaTabProps {
   exportDisabled?: boolean;
 }
 
-const STACK_ORDER: ResourceCategory[] = ["insumo", "equipamento", "mao_obra"];
+function sectionHasData(section: HistogramSectionModel | null): boolean {
+  if (!section) return false;
+  return section.items.some((item) => item.total > 0.0001);
+}
+
+function reportHasData(model: HistogramReportModel): boolean {
+  return sectionHasData(model.maoObra) || sectionHasData(model.equipamento);
+}
 
 export default function BudgetHistogramaTab({
   session,
@@ -37,35 +42,35 @@ export default function BudgetHistogramaTab({
   onExportExcel,
   exportDisabled,
 }: BudgetHistogramaTabProps) {
-  const [priceMode, setPriceMode] = useState<"comd" | "semd">("comd");
   const { loaded, loading, progress, errorCount, loadKey } = useBudgetServiceCompositions(session);
+
+  const compositionLoadState = `${loaded.size}|${progress.done}|${loading ? 1 : 0}`;
 
   const modelCacheKey = useMemo(
     () =>
       histogramModelCacheKey(
         session.session_id ?? "",
-        loadKey,
-        priceMode,
+        `${loadKey}|${compositionLoadState}`,
+        "comd",
         session.schedule
       ),
-    [session.session_id, loadKey, priceMode, session.schedule]
+    [session.session_id, loadKey, compositionLoadState, session.schedule]
   );
 
   const model = useMemo(() => {
     if (!loading) {
       const cached = getCachedHistogramModel(modelCacheKey);
-      if (cached) return cached;
+      if (cached && reportHasData(cached)) return cached;
     }
 
-    const built = buildStackedHistogram(
+    const built = buildHistogramReport(
       session.schedule,
       session.rows ?? [],
       loaded,
-      priceMode,
       session.project
     );
 
-    if (!loading && built.hasSchedule) {
+    if (!loading && built.hasSchedule && reportHasData(built)) {
       setCachedHistogramModel(modelCacheKey, built);
     }
     return built;
@@ -75,69 +80,46 @@ export default function BudgetHistogramaTab({
     session.rows,
     session.project,
     loaded,
-    priceMode,
     loading,
   ]);
-
-  const stacks = useMemo(
-    () =>
-      STACK_ORDER.map((cat) => ({
-        key: cat,
-        label: RESOURCE_CATEGORY_LABELS[cat],
-        color: RESOURCE_CATEGORY_COLORS[cat],
-        values: model.months.map((m) => m[cat]),
-      })),
-    [model.months]
-  );
 
   if (!model.hasSchedule) {
     return (
       <div className="rounded-xl bg-slate-900/40 p-8 text-center ring-1 ring-slate-800">
-        <h3 className="text-sm font-semibold text-slate-200">Histograma de demanda</h3>
+        <h3 className="text-sm font-semibold text-slate-200">Histograma de mão de obra e equipamentos</h3>
         <p className="mt-2 text-sm text-slate-400">
-          Sincronize o cronograma na aba Cronograma para visualizar a demanda mensal de insumos,
-          equipamentos e mão de obra.
+          Sincronize o cronograma na aba Cronograma para visualizar a demanda mensal por item de mão de
+          obra e equipamentos.
         </p>
       </div>
     );
   }
 
-  const hasData = model.months.some((m) => m.total > 0);
+  const hasData = reportHasData(model);
 
   return (
     <div className="space-y-4">
       <div className="rounded-xl bg-slate-900/40 p-5 ring-1 ring-slate-800">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h3 className="text-sm font-semibold text-slate-200">Histograma de demanda</h3>
+            <h3 className="text-sm font-semibold text-slate-200">
+              Histograma de mão de obra e equipamentos
+            </h3>
             <p className="mt-1 text-xs text-slate-500">
-              Barras verticais empilhadas por mês — insumos, equipamentos e mão de obra (custos das
-              CPUs rateados pelo cronograma).
+              Tabela por item com quantidades mensais (dias acumulados da obra) e gráfico empilhado —
+              conforme planilha Caixa.
             </p>
             <p className="mt-1 text-xs text-slate-600">
               CLIENTE: {model.clientLabel} — {model.projectLabel}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <BudgetAnalyticsExportActions
-              docKey="histograma"
-              label="Histograma"
-              disabled={exportDisabled || loading}
-              onExportPdf={onExportPdf}
-              onExportExcel={onExportExcel}
-            />
-            <label className="text-sm text-slate-400">
-            Preços
-            <select
-              value={priceMode}
-              onChange={(e) => setPriceMode(e.target.value as "comd" | "semd")}
-              className="ml-2 rounded-lg border-0 bg-slate-800 px-3 py-2 text-sm text-white ring-1 ring-slate-700"
-            >
-              <option value="comd">Com desoneração</option>
-              <option value="semd">Sem desoneração</option>
-            </select>
-          </label>
-          </div>
+          <BudgetAnalyticsExportActions
+            docKey="histograma"
+            label="Histograma"
+            disabled={exportDisabled || loading}
+            onExportPdf={onExportPdf}
+            onExportExcel={onExportExcel}
+          />
         </div>
 
         {loading && (
@@ -153,193 +135,196 @@ export default function BudgetHistogramaTab({
           </p>
         )}
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-4">
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <MiniStat label="Serviços com CPU" value={String(model.servicesWithCpu)} />
-          {STACK_ORDER.map((cat) => (
-            <MiniStat
-              key={cat}
-              label={RESOURCE_CATEGORY_LABELS[cat]}
-              value={formatBrlCompact(model.totals[cat])}
-              color={RESOURCE_CATEGORY_COLORS[cat]}
-            />
-          ))}
+          <MiniStat
+            label="Itens MO"
+            value={String(model.maoObra?.items.length ?? 0)}
+          />
+          <MiniStat
+            label="Itens equipamentos"
+            value={String(model.equipamento?.items.length ?? 0)}
+          />
+          <MiniStat
+            label="Períodos"
+            value={String(
+              model.maoObra?.columns.length ?? model.equipamento?.columns.length ?? 0
+            )}
+          />
         </div>
-
-        <ChartLegend
-          className="mt-4 justify-center"
-          items={[
-            ...STACK_ORDER.map((cat) => ({
-              label: RESOURCE_CATEGORY_LABELS[cat],
-              color: RESOURCE_CATEGORY_COLORS[cat],
-            })),
-            ...(model.totals.totalWithBdi > 0
-              ? [{ label: "Ref. com BDI", color: "#f472b6" }]
-              : []),
-          ]}
-        />
-
-        {hasData ? (
-          <>
-            <BudgetAnalyticsReconciliationPanel
-              className="mt-4"
-              schedule={session.schedule}
-              rows={session.rows ?? []}
-              histogramTotal={model.totals.total}
-              histogramTotalWithBdi={model.totals.totalWithBdi}
-            />
-            <div className="mt-4 overflow-x-auto">
-              <BudgetStackedBarChart
-                periodLabels={model.months.map((m) => String(m.periodDay))}
-                stacks={stacks}
-                referenceSeries={
-                  model.totals.totalWithBdi > 0
-                    ? {
-                        label: "Ref. com BDI",
-                        color: "#f472b6",
-                        values: model.months.map((m) => m.totalWithBdi),
-                      }
-                    : undefined
-                }
-                renderTooltip={(index) => (
-                  <StackedMonthTooltip month={model.months[index]} />
-                )}
-              />
-            </div>
-            <p className="mt-2 text-center text-[10px] text-slate-600">
-              Eixo horizontal: dia acumulado da obra · Eixo vertical: custo (R$) · linha tracejada =
-              referência com BDI · passe o mouse sobre as barras
-            </p>
-          </>
-        ) : (
-          <p className="mt-6 py-8 text-center text-sm text-slate-500">
-            Nenhum custo analítico disponível. Verifique serviços, CPUs e cronograma.
-          </p>
-        )}
       </div>
 
-      {hasData && (
-        <div className="overflow-hidden rounded-xl ring-1 ring-slate-800">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-900/80 text-slate-500">
-              <tr>
-                <th className="px-3 py-2 font-medium">Mês</th>
-                <th className="px-3 py-2 text-right font-medium">Insumos</th>
-                <th className="px-3 py-2 text-right font-medium">Equipamentos</th>
-                <th className="px-3 py-2 text-right font-medium">Mão de obra</th>
-                <th className="px-3 py-2 text-right font-medium">Total</th>
-                <th className="px-3 py-2 text-right font-medium">Ref. BDI</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60 bg-slate-950/30">
-              {model.months.map((m) => (
-                <tr key={m.monthIndex} className="hover:bg-slate-900/40">
-                  <td className="px-3 py-2 text-slate-300">
-                    {m.label}
-                    <span className="ml-1 text-[10px] text-slate-600">(d{m.periodDay})</span>
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-emerald-200/90">
-                    {formatBrlCompact(m.insumo)}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-amber-200/90">
-                    {formatBrlCompact(m.equipamento)}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-cyan-200/90">
-                    {formatBrlCompact(m.mao_obra)}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-slate-200">
-                    {formatBrlCompact(m.total)}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-pink-200/90">
-                    {formatBrlCompact(m.totalWithBdi)}
-                  </td>
-                </tr>
-              ))}
-              <tr className="bg-slate-900/60 font-semibold text-slate-100">
-                <td className="px-3 py-2">Total geral</td>
-                <td className="px-3 py-2 text-right tabular-nums text-emerald-200/90">
-                  {formatBrlCompact(model.totals.insumo)}
-                </td>
-                <td className="px-3 py-2 text-right tabular-nums text-amber-200/90">
-                  {formatBrlCompact(model.totals.equipamento)}
-                </td>
-                <td className="px-3 py-2 text-right tabular-nums text-cyan-200/90">
-                  {formatBrlCompact(model.totals.mao_obra)}
-                </td>
-                <td className="px-3 py-2 text-right tabular-nums">
-                  {formatBrlCompact(model.totals.total)}
-                </td>
-                <td className="px-3 py-2 text-right tabular-nums text-pink-200/90">
-                  {formatBrlCompact(model.totals.totalWithBdi)}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+      {hasData ? (
+        <div className="space-y-6">
+          {model.maoObra && sectionHasData(model.maoObra) && (
+            <HistogramSectionPanel section={model.maoObra} />
+          )}
+          {model.equipamento && sectionHasData(model.equipamento) && (
+            <HistogramSectionPanel section={model.equipamento} />
+          )}
+        </div>
+      ) : (
+        <div className="rounded-xl bg-slate-900/40 p-8 text-center ring-1 ring-slate-800">
+          <p className="text-sm text-slate-500">
+            Nenhum dado de MO ou equipamento. Verifique serviços, CPUs e cronograma.
+          </p>
         </div>
       )}
     </div>
   );
 }
 
-function StackedMonthTooltip({ month }: { month: StackedHistogramMonth | undefined }) {
-  if (!month) return null;
-
-  const rows: { cat: ResourceCategory; value: number }[] = STACK_ORDER.map((cat) => ({
-    cat,
-    value: month[cat],
-  })).filter((r) => r.value > 0);
+function HistogramSectionPanel({ section }: { section: HistogramSectionModel }) {
+  const periodLabels = section.columns.map((c) => String(c.periodDay));
+  const stacks = useMemo(() => buildHistogramItemStacks(section), [section]);
 
   return (
-    <div className="space-y-2">
-      <div>
-        <p className="font-medium text-slate-100">{month.label}</p>
-        <p className="text-[10px] text-slate-500">Dia {month.periodDay} da obra</p>
+    <div className="rounded-xl bg-slate-900/40 p-5 ring-1 ring-slate-800">
+      <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-200">
+        {section.title}
+      </h4>
+      <p className="mt-1 text-xs text-slate-500">
+        {section.chartYLabel} rateados pelo cronograma · colunas em dias acumulados da obra
+      </p>
+
+      <div className="mt-4 overflow-x-auto rounded-lg ring-1 ring-slate-800">
+        <table className="w-full min-w-[720px] text-left text-xs">
+          <thead className="bg-slate-900/80 text-slate-500">
+            <tr>
+              <th className="px-3 py-2 font-medium">ITENS</th>
+              <th className="px-3 py-2 font-medium">DISCRIMINAÇÃO</th>
+              {section.columns.map((col) => (
+                <th key={col.monthIndex} className="px-2 py-2 text-center font-medium tabular-nums">
+                  {col.periodDay}
+                </th>
+              ))}
+              <th className="px-3 py-2 text-center font-medium">TOTAL</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800/60 bg-slate-950/30">
+            {section.items.map((item) => (
+              <HistogramItemTableRow key={item.itemKey} item={item} columnCount={section.columns.length} />
+            ))}
+            <tr className="bg-slate-900/60 font-semibold text-slate-100">
+              <td className="px-3 py-2" colSpan={2}>
+                TOTAL
+              </td>
+              {section.monthlyTotals.map((val, i) => (
+                <td key={i} className="px-2 py-2 text-center tabular-nums">
+                  {formatHistogramQty(val)}
+                </td>
+              ))}
+              <td className="px-3 py-2 text-center tabular-nums">
+                {formatHistogramQty(section.monthlyTotals.reduce((s, v) => s + v, 0))}
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
-      <div className="space-y-1 border-t border-slate-700/60 pt-1.5 text-[10px]">
-        {rows.map(({ cat, value }) => (
-          <div key={cat} className="flex justify-between gap-3">
-            <span className="inline-flex items-center gap-1.5 text-slate-400">
-              <span
-                className="inline-block h-2 w-2 rounded-sm"
-                style={{ backgroundColor: RESOURCE_CATEGORY_COLORS[cat] }}
-              />
-              {RESOURCE_CATEGORY_LABELS[cat]}
-            </span>
-            <span className="tabular-nums font-medium text-slate-200">{formatBrl(value)}</span>
-          </div>
-        ))}
-        <div className="flex justify-between gap-3 border-t border-slate-700/40 pt-1 font-semibold">
-          <span className="text-slate-400">Total (CPU)</span>
-          <span className="tabular-nums text-cyan-300">{formatBrl(month.total)}</span>
+
+      <div className="mt-6">
+        <ChartLegend
+          className="mb-3 flex-wrap justify-center gap-x-4 gap-y-1"
+          items={stacks.map((s) => ({ label: s.label, color: s.color }))}
+        />
+        <p className="mb-2 text-center text-xs font-medium text-slate-400">
+          {section.chartYLabel}
+        </p>
+        <div className="overflow-x-auto">
+          <BudgetStackedBarChart
+            periodLabels={periodLabels}
+            stacks={stacks}
+            renderTooltip={(index) => (
+              <SectionMonthTooltip section={section} stacks={stacks} monthIndex={index} />
+            )}
+          />
         </div>
-        {month.totalWithBdi > 0 && (
-          <div className="flex justify-between gap-3 text-[10px]">
-            <span className="text-pink-300/80">Ref. com BDI</span>
-            <span className="tabular-nums font-medium text-pink-200">{formatBrl(month.totalWithBdi)}</span>
-          </div>
-        )}
       </div>
     </div>
   );
 }
 
-function MiniStat({
-  label,
-  value,
-  color,
+function HistogramItemTableRow({
+  item,
+  columnCount,
 }: {
-  label: string;
-  value: string;
-  color?: string;
+  item: HistogramItemRow;
+  columnCount: number;
 }) {
+  return (
+    <tr className="hover:bg-slate-900/40">
+      <td className="px-3 py-2 text-center tabular-nums text-slate-400">{item.index}</td>
+      <td className="px-3 py-2 text-slate-300">
+        {item.description}
+        {item.unit ? (
+          <span className="ml-1 text-[10px] text-slate-600">({item.unit})</span>
+        ) : null}
+      </td>
+      {Array.from({ length: columnCount }, (_, i) => (
+        <td key={i} className="px-2 py-2 text-center tabular-nums text-slate-300">
+          {formatHistogramQty(item.monthlyValues[i] ?? 0)}
+        </td>
+      ))}
+      <td className="px-3 py-2 text-center tabular-nums font-medium text-slate-200">
+        {formatHistogramQty(item.total)}
+      </td>
+    </tr>
+  );
+}
+
+function SectionMonthTooltip({
+  section,
+  stacks,
+  monthIndex,
+}: {
+  section: HistogramSectionModel;
+  stacks: ReturnType<typeof buildHistogramItemStacks>;
+  monthIndex: number;
+}) {
+  const col = section.columns[monthIndex];
+  if (!col) return null;
+
+  const total = stacks.reduce((s, st) => s + (st.values[monthIndex] ?? 0), 0);
+
+  return (
+    <div className="space-y-2">
+      <div>
+        <p className="font-medium text-slate-100">{col.label}</p>
+        <p className="text-[10px] text-slate-500">Dia {col.periodDay} da obra</p>
+      </div>
+      <div className="space-y-1 border-t border-slate-700/60 pt-1.5 text-[10px]">
+        {stacks.map((st) => {
+          const val = st.values[monthIndex] ?? 0;
+          if (val <= 0) return null;
+          return (
+            <div key={st.key} className="flex justify-between gap-3">
+              <span className="inline-flex items-center gap-1.5 text-slate-400">
+                <span
+                  className="inline-block h-2 w-2 rounded-sm"
+                  style={{ backgroundColor: st.color }}
+                />
+                {st.label}
+              </span>
+              <span className="tabular-nums font-medium text-slate-200">
+                {formatHistogramQty(val)}
+              </span>
+            </div>
+          );
+        })}
+        <div className="flex justify-between gap-3 border-t border-slate-700/40 pt-1 font-semibold">
+          <span className="text-slate-400">Total</span>
+          <span className="tabular-nums text-cyan-300">{formatHistogramQty(total)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg bg-slate-950/40 px-3 py-2 ring-1 ring-slate-800/80">
       <p className="text-[10px] uppercase tracking-wide text-slate-500">{label}</p>
-      <p
-        className="mt-1 text-base font-semibold tabular-nums"
-        style={color ? { color } : undefined}
-      >
-        {value}
-      </p>
+      <p className="mt-1 text-base font-semibold tabular-nums text-slate-200">{value}</p>
     </div>
   );
 }

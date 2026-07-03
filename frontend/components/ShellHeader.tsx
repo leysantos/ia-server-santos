@@ -34,7 +34,7 @@ export default function ShellHeader({
       {hasTrailing ? (
         <div className="shell-header-split flex h-full w-full flex-col justify-center gap-2 max-lg:py-2 lg:flex-row lg:items-center lg:justify-between lg:gap-4 lg:py-0">
           <div className={cn("flex min-w-0 flex-1 items-center", innerClassName)}>{children}</div>
-          <div className="flex min-w-0 max-w-full shrink-0 flex-wrap items-center justify-end gap-2 sm:gap-3">
+          <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2 sm:gap-3">
             {trailing}
             {showModelsStatus && <ModelsStatusBadge />}
           </div>

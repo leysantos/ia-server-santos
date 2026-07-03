@@ -128,7 +128,17 @@ def mcq_col_widths(usable_width: float | None = None) -> list[float]:
 def build_mcq_table(roots: list[BudgetItem], *, usable_width: float | None = None) -> list[Any]:
     width = usable_width if usable_width is not None else usable_portrait_width()
     styles = cell_styles()
-    data: list[list[Any]] = [[para(h, styles["header"]) for h in MCQ_TABLE_HEADERS]]
+    center_cols = (0, 1, 3)
+    right_cols = (4,)
+    data: list[list[Any]] = [
+        [
+            para(MCQ_TABLE_HEADERS[0], styles["header"]),
+            para(MCQ_TABLE_HEADERS[1], styles["header"]),
+            para(MCQ_TABLE_HEADERS[2], styles["header_left"]),
+            para(MCQ_TABLE_HEADERS[3], styles["header"]),
+            para(MCQ_TABLE_HEADERS[4], styles["header_right"]),
+        ]
+    ]
 
     for item, depth in flatten_budget_rows(roots):
         if item.metadata.get("is_memory_row") or item.row_type == "MEMORIA":
@@ -137,19 +147,28 @@ def build_mcq_table(roots: list[BudgetItem], *, usable_width: float | None = Non
             continue
         is_group = item.row_type in (ROW_TYPE_ETAPA, ROW_TYPE_SUB_ETAPA)
         data.append([
-            item.code or "",
-            "" if is_group else (item.source_code or ""),
+            para(item.code or "", styles["cell_bold"] if is_group else styles["cell_center"]),
+            para("" if is_group else (item.source_code or ""), styles["cell_center"]),
             para(
                 f"{'  ' * depth}{item.name or ''}",
                 styles["cell_bold"] if is_group else styles["cell"],
                 bold=is_group,
             ),
-            "" if is_group else (item.unit or ""),
-            "" if is_group else fmt_qty(item.quantity),
+            para("" if is_group else (item.unit or ""), styles["cell_center"]),
+            para("" if is_group else fmt_qty(item.quantity), styles["cell_right"]),
         ])
 
     table = Table(data, colWidths=mcq_col_widths(width), repeatRows=1)
-    table.setStyle(TableStyle(zebra_style_commands(len(data), summary_rows=0, right_cols=(4,))))
+    table.setStyle(
+        TableStyle(
+            zebra_style_commands(
+                len(data),
+                summary_rows=0,
+                right_cols=right_cols,
+                center_cols=center_cols,
+            )
+        )
+    )
     return [table]
 
 

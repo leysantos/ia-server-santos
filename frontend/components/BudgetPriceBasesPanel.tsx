@@ -5,51 +5,17 @@ import { api } from "@/services/api";
 import type { BudgetPriceBaseSelection, PriceBankReference } from "@/types/api";
 import { BRAZIL_UFS, referenceLabelFromKey } from "@/lib/brazil-ufs";
 import {
-  SICRO_REGIONS,
-  sicroReferenceMatchesUf,
-  sicroUfsForRegion,
-} from "@/lib/sicro-links";
+  defaultUfForSource,
+  refsForSource,
+  sourceOptionsFromReferences,
+  sourceLabel,
+} from "@/lib/price-base-sources";
+import { SICRO_REGIONS, sicroUfsForRegion } from "@/lib/sicro-links";
 import { cn } from "@/lib/utils";
 import { budgetBtn, budgetSelect } from "@/lib/budget-ui";
 
-const ADDABLE_BASES: Array<{ source: string; label: string }> = [
-  { source: "sinapi", label: "SINAPI" },
-  { source: "dp_seminf", label: "DP/SEMINF" },
-  { source: "cicro", label: "SICRO3" },
-];
-
-function isSeminfSource(source: string): boolean {
-  const s = source.toLowerCase();
-  return s === "dp_seminf" || s === "ppd_seminf";
-}
-
-function sourceKey(ref: PriceBankReference): string {
-  return (ref.source || "sinapi").toLowerCase();
-}
-
-function refsForBase(
-  source: string,
-  uf: string,
-  references: PriceBankReference[]
-): PriceBankReference[] {
-  if (source === "sinapi") {
-    return references.filter((r) => sourceKey(r) === "sinapi");
-  }
-  if (source === "cicro") {
-    return references.filter(
-      (r) =>
-        (sourceKey(r) === "cicro" || r.reference.toUpperCase().includes("SICRO")) &&
-        sicroReferenceMatchesUf(r.reference, uf)
-    );
-  }
-  if (isSeminfSource(source)) {
-    return references.filter((r) => isSeminfSource(sourceKey(r)));
-  }
-  return [];
-}
-
 function refLabel(row: BudgetPriceBaseSelection, references: PriceBankReference[]) {
-  const match = refsForBase(row.source, row.uf, references).find((r) => r.reference === row.reference);
+  const match = refsForSource(row.source, row.uf, references).find((r) => r.reference === row.reference);
   return match?.label ?? referenceLabelFromKey(row.reference);
 }
 
@@ -76,18 +42,26 @@ export default function BudgetPriceBasesPanel({ value, disabled, onChange }: Bud
       .catch((e) => setLoadError(e instanceof Error ? e.message : "Falha ao carregar períodos"));
   }, []);
 
-  const sinapiImported = references.some((r) => sourceKey(r) === "sinapi");
-  const seminfImported = references.some((r) => isSeminfSource(sourceKey(r)));
-  const cicroImported = references.some(
-    (r) => sourceKey(r) === "cicro" || r.reference.toUpperCase().includes("SICRO")
+  const addableSources = useMemo(
+    () => sourceOptionsFromReferences(references),
+    [references]
   );
 
   const cicroUfOptions = useMemo(() => [...sicroUfsForRegion(draftRegion)], [draftRegion]);
 
   const draftRefs = useMemo(
-    () => refsForBase(draftSource, draftUf, references),
+    () => refsForSource(draftSource, draftUf, references),
     [draftSource, draftUf, references]
   );
+
+  useEffect(() => {
+    if (addableSources.length === 0) return;
+    if (!addableSources.some((s) => s.name === draftSource)) {
+      const first = addableSources[0].name;
+      setDraftSource(first);
+      setDraftUf(defaultUfForSource(first, references));
+    }
+  }, [addableSources, draftSource, references]);
 
   useEffect(() => {
     if (!draftRefs.some((r) => r.reference === draftReference)) {
@@ -100,40 +74,34 @@ export default function BudgetPriceBasesPanel({ value, disabled, onChange }: Bud
     [value]
   );
 
-  const resetDraft = useCallback((source = "sinapi") => {
-    setDraftSource(source);
-    setDraftUf(source === "cicro" ? "AM" : "SP");
-    setDraftRegion("all");
-    setEditingSource(null);
-    setFormError(null);
-  }, []);
+  const resetDraft = useCallback(
+    (source = addableSources[0]?.name ?? "sinapi") => {
+      setDraftSource(source);
+      setDraftUf(defaultUfForSource(source, references));
+      setDraftRegion("all");
+      setEditingSource(null);
+      setFormError(null);
+    },
+    [addableSources, references]
+  );
 
   const buildSelection = useCallback((): BudgetPriceBaseSelection | null => {
-    const label = ADDABLE_BASES.find((b) => b.source === draftSource)?.label ?? draftSource.toUpperCase();
     if (!draftReference) {
       setFormError("Selecione um período importado.");
       return null;
     }
-    if (draftSource === "sinapi" && !sinapiImported) {
-      setFormError("Importe SINAPI em Configurações → Bases de preços.");
-      return null;
-    }
-    if (isSeminfSource(draftSource) && !seminfImported) {
-      setFormError("Importe DP/SEMINF em Configurações → Bases de preços.");
-      return null;
-    }
-    if (draftSource === "cicro" && !cicroImported) {
-      setFormError("Importe SICRO em Configurações → Bases de preços.");
+    if (draftRefs.length === 0) {
+      setFormError("Nenhum período importado para esta base. Importe em Configurações → Bases de preços.");
       return null;
     }
     return {
       source: draftSource,
-      label,
+      label: sourceLabel(draftSource, references),
       enabled: true,
       uf: draftUf.toUpperCase(),
       reference: draftReference,
     };
-  }, [cicroImported, draftReference, draftSource, draftUf, seminfImported, sinapiImported]);
+  }, [draftReference, draftRefs.length, draftSource, draftUf, references]);
 
   const handleAdd = () => {
     const sel = buildSelection();
@@ -192,20 +160,24 @@ export default function BudgetPriceBasesPanel({ value, disabled, onChange }: Bud
             <span className={fieldLabel}>Tipo de base</span>
             <select
               value={draftSource}
-              disabled={disabled || !!editingSource}
+              disabled={disabled || !!editingSource || addableSources.length === 0}
               onChange={(e) => {
                 const src = e.target.value;
                 setDraftSource(src);
-                setDraftUf(src === "cicro" ? "AM" : src === "dp_seminf" ? "AM" : "SP");
+                setDraftUf(defaultUfForSource(src, references));
                 setFormError(null);
               }}
               className={cn(budgetSelect, "min-w-[160px]")}
             >
-              {ADDABLE_BASES.map((b) => (
-                <option key={b.source} value={b.source}>
-                  {b.label}
-                </option>
-              ))}
+              {addableSources.length === 0 ? (
+                <option value="">Nenhuma base importada</option>
+              ) : (
+                addableSources.map((b) => (
+                  <option key={b.name} value={b.name}>
+                    {b.label}
+                  </option>
+                ))
+              )}
             </select>
           </label>
 

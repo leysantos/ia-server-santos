@@ -140,7 +140,7 @@ function ConversationItem({
   );
 }
 
-export default function WorkspacePanel() {
+export default function WorkspacePanel({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -250,6 +250,7 @@ export default function WorkspacePanel() {
     const params = new URLSearchParams({ c: conversationId });
     if (projectId) params.set("project", projectId);
     router.push(`/chat?${params.toString()}`);
+    onNavigate?.();
   };
 
   const handleCreateProject = async () => {

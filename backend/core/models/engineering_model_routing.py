@@ -80,13 +80,16 @@ def engineering_generate(
     model = effective or model
     effective_timeout = timeout or stream_timeout
     llm = client or OllamaClient(timeout=effective_timeout)
+    from core.runtime.ollama_defaults import merge_llm_options
+
+    gen_options = merge_llm_options(ollama_options)
 
     if override:
         return llm.generate(
             prompt,
             model=model,
             fallback_models=fallbacks or None,
-            options=ollama_options or None,
+            options=gen_options or None,
         )
 
     return routed_generate(

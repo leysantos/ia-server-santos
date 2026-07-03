@@ -28,6 +28,20 @@ HIST_STACK_COLORS = {
     "equipamento": "#f59e0b",
     "mao_obra": "#38bdf8",
 }
+HISTOGRAM_ITEM_COLORS = (
+    "#0B2E4A",
+    "#F59E0B",
+    "#10B981",
+    "#F472B6",
+    "#A78BFA",
+    "#FB7185",
+    "#34D399",
+    "#60A5FA",
+    "#FBBF24",
+    "#C084FC",
+    "#2DD4BF",
+    "#F97316",
+)
 HIST_REF_BDI = "#f472b6"
 HIST_SEGMENT_STROKE = "#1e293b"
 GRID_COLOR = colors.HexColor("#94a3b8")
@@ -412,14 +426,10 @@ def analytics_chart_legend(doc_type: str, *, include_bdi_ref: bool = True) -> li
             ("Desembolso financeiro acumulado", SCURVE_FINANCIAL),
         ]
     if key == "histograma":
-        items = [
-            ("Insumos", HIST_STACK_COLORS["insumo"]),
+        return [
             ("Equipamentos", HIST_STACK_COLORS["equipamento"]),
             ("Mão de obra", HIST_STACK_COLORS["mao_obra"]),
         ]
-        if include_bdi_ref:
-            items.append(("Ref. com BDI (tracejado)", HIST_REF_BDI))
-        return items
     return []
 
 
@@ -428,9 +438,12 @@ def analytics_chart_caption(doc_type: str) -> str:
     if key == "curva_abc":
         return "Gráfico: top 20 serviços · barras = valor · linha azul = % acumulado"
     if key == "curva_s":
-        return "Evolução mensal acumulada — físico (verde) e financeiro (azul)"
+        return (
+            "Evolução mensal acumulada — físico (verde) e financeiro (azul). "
+            "Cenário ComD/SemD adotado documentado acima da tabela."
+        )
     if key == "histograma":
-        return "Eixo horizontal: dia acumulado da obra · Eixo vertical: custo (R$) · linha tracejada = referência com BDI"
+        return "Gráficos: quantidades (topo) e valores R$ (base) · MO e equipamentos · eixo X = dia acumulado"
     return ""
 
 
@@ -490,27 +503,52 @@ def _build_histogram_chart(
     schedule: ProjectSchedule | None,
     width: float,
 ) -> tuple[AnalyticsChartFlowable | None, bool]:
-    months, _, _, _, _, total_bdi = build_stacked_histogram(roots, meta, schedule)
-    if not months or not any(m.total > 0 for m in months):
+    months, _, _, _, _, _ = build_stacked_histogram(roots, meta, schedule)
+    if not months or not any(m.total > 0 or m.total_qty > 0 for m in months):
         return None, False
 
     period_labels = [str(m.period_day) for m in months]
-    stacks = [
-        ("insumo", HIST_STACK_COLORS["insumo"], [m.insumo for m in months]),
+    qty_stacks = [
+        ("equipamento", HIST_STACK_COLORS["equipamento"], [m.equipamento_qty for m in months]),
+        ("mao_obra", HIST_STACK_COLORS["mao_obra"], [m.mao_obra_qty for m in months]),
+    ]
+    val_stacks = [
         ("equipamento", HIST_STACK_COLORS["equipamento"], [m.equipamento for m in months]),
         ("mao_obra", HIST_STACK_COLORS["mao_obra"], [m.mao_obra for m in months]),
     ]
-    include_bdi = total_bdi > 0
-    ref = [m.total_with_bdi for m in months] if include_bdi else None
 
     def render(canv: Any, w: float, h: float) -> None:
+        gap = 18.0
+        chart_h = (h - gap) / 2
+        top_base = gap / 2 + chart_h
+
+        canv.saveState()
+        canv.translate(0, top_base)
+        canv.setFont("Helvetica-Bold", 8)
+        canv.setFillColor(LABEL_COLOR)
+        canv.drawString(52, chart_h + 2, "Quantidades mensais")
         _stacked_bar_chart(
             canv,
             w,
-            h,
+            chart_h,
             period_labels=period_labels,
-            stacks=stacks,
-            reference_values=ref,
+            stacks=qty_stacks,
+            reference_values=None,
         )
+        canv.restoreState()
 
-    return AnalyticsChartFlowable(width, CHART_HEIGHT, render), include_bdi
+        canv.saveState()
+        canv.setFont("Helvetica-Bold", 8)
+        canv.setFillColor(LABEL_COLOR)
+        canv.drawString(52, chart_h + 2, "Valores mensais (R$)")
+        _stacked_bar_chart(
+            canv,
+            w,
+            chart_h,
+            period_labels=period_labels,
+            stacks=val_stacks,
+            reference_values=None,
+        )
+        canv.restoreState()
+
+    return AnalyticsChartFlowable(width, CHART_HEIGHT * 2 + 24, render), False

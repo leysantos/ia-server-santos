@@ -17,6 +17,11 @@
 make test-backend   # inclui test_smoke_e2e.py, test_project_rag_e2e.py e test_conversation_user_scope.py
 make test-project-rag   # só R10 (upload → FAISS → chat), sem Ollama
 make smoke-e2e      # API em :8000
+make test-budget-e2e   # Playwright smoke /budget (frontend, mocks API)
+make test-budget-pilot # pytest fluxo piloto B12 (sem API externa)
+make test-ci           # CI local: pytest subset orçamento + Playwright /budget
+make test-ci-backend   # só pytest (2 fases: unit orçamento + smoke/piloto)
+make validate-budget-pilot  # API :8000 — sessão, save, export, BDI
 make validate-project-rag   # R10 contra API + Ollama (indexação real)
 make validate-price-bases   # Fase 2 — price_bank + composition FAISS + prévia CPU
 make validate-lan   # LAN + proxy /api-backend
@@ -76,13 +81,31 @@ make validate-price-bases   # API: inventário + prévia composição 95995
 
 ## 4 — Orçamento piloto
 
+> **Automatizado (sem UI):**  
+> `make test-budget-pilot` — pytest incl. `test_pilot_section4_field_checklist` (§4.4–4.5 exports + cronograma)  
+> `make validate-budget-pilot` — API live `:8000` (requer `make api`) — cobre §4.1–4.5 ponta a ponta  
+> Esqueleto recomendado: **PASSARELA PEDESTRE — PILOTO B12** (`sk-b12-piloto-passarela`)
+
 | # | Passo | OK | Data | Notas |
 |---|-------|----|------|-------|
-| 4.1 | `/budget` — criar sessão piloto | | | |
-| 4.2 | Sync SINAPI ou SICRO referência ativa | | | |
-| 4.3 | Busca CPU retorna composições | | | |
-| 4.4 | Orç. sintético + analítico preenchidos | | | |
-| 4.5 | Export Excel/PDF de pelo menos um documento | | | |
+| 4.1 | `/budget` — criar sessão piloto (esqueleto B12 ou reforma quadra) | | | `make test-budget-pilot` · `validate-budget-pilot` |
+| 4.2 | Sync SINAPI ou SICRO referência ativa | | | `make validate-price-bases` · aviso se vazio |
+| 4.3 | Busca CPU retorna composições | | | Aba Busca CPU · `RUN_BUDGET_PILOT_LIVE=1 make test-budget-pilot` |
+| 4.4 | Orç. sintético + analítico preenchidos; serviço lançado; cronograma sync; ComD/SemD | | | `test_pilot_section4_field_checklist` |
+| 4.5 | Export Excel/PDF — sintético, analítico, MCQ, **curva ABC**, cronograma | | | `make validate-budget-pilot` (8–10 arquivos) |
+
+### UI manual (complementar ao script)
+
+| # | Passo | OK | Data | Notas |
+|---|-------|----|------|-------|
+| 4.U1 | Novo orçamento → esqueleto passarela B12 na UI | | | `/budget` → Cadastrar modelo |
+| 4.U2 | Busca CPU → lançar na etapa (painel B13) | | | Playwright `test-budget-e2e` cobre mock |
+| 4.U3 | Abas Cronograma + Curva ABC visualmente corretas | | | Gantt + classificação Pareto |
+| 4.U4 | Cronograma sync + curvas físico-financeiro | | | Aba Dados → `BudgetPilotChecklist` |
+| 4.U5 | Export `.xlsm` oficial PPD SEMINF | | | Toolbar ou checklist 4.U5 |
+| 4.U6 | Compliance-pack + checklist L1–L7 | | | Aba Dados → painel compliance |
+| 4.U7 | Proposta comercial com margem % | | | `BudgetCommercialPanel` + export |
+| 4.U∑ | Export JSON assinatura do checklist | | | Botão "Exportar assinatura" no checklist |
 
 ## 5 — Copilot e AED (M3)
 

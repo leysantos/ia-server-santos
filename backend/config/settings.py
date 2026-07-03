@@ -10,10 +10,10 @@ Uso:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -87,7 +87,7 @@ class AppSettings(BaseSettings):
     )
 
     # --- CORS ---
-    cors_allowed_origins: list[str] = Field(
+    cors_allowed_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: [
             "http://localhost:3000",
             "http://127.0.0.1:3000",
@@ -105,10 +105,10 @@ class AppSettings(BaseSettings):
         default="nomic-embed-text", validation_alias="OLLAMA_EMBED_MODEL"
     )
     ollama_llm_model: str = Field(
-        default="qwen3.6:latest", validation_alias="OLLAMA_LLM_MODEL"
+        default="qwen3:14b", validation_alias="OLLAMA_LLM_MODEL"
     )
     ollama_llm_fallback_model: str = Field(
-        default="mistral:7b", validation_alias="OLLAMA_LLM_FALLBACK_MODEL"
+        default="qwen3:8b", validation_alias="OLLAMA_LLM_FALLBACK_MODEL"
     )
     ollama_connect_timeout: int = Field(default=5, validation_alias="OLLAMA_CONNECT_TIMEOUT")
     ollama_budget_model: str = Field(
@@ -116,7 +116,7 @@ class AppSettings(BaseSettings):
     )
     ollama_budget_timeout: int = Field(default=180, validation_alias="OLLAMA_BUDGET_TIMEOUT")
     ollama_chat_model: str = Field(
-        default="qwen2.5-coder:latest", validation_alias="OLLAMA_CHAT_MODEL"
+        default="phi3:mini", validation_alias="OLLAMA_CHAT_MODEL"
     )
     ollama_chat_timeout: int = Field(default=45, validation_alias="OLLAMA_CHAT_TIMEOUT")
     ollama_chat_busy_timeout: int = Field(
@@ -129,10 +129,19 @@ class AppSettings(BaseSettings):
         default=75.0, validation_alias="OLLAMA_CHAT_GPU_BUSY_VRAM_PCT"
     )
     ollama_chat_light_model: str = Field(
-        default="gemma2:2b", validation_alias="OLLAMA_CHAT_LIGHT_MODEL"
+        default="phi3:mini", validation_alias="OLLAMA_CHAT_LIGHT_MODEL"
     )
     ollama_heavy_model_timeout: int = Field(
         default=300, validation_alias="OLLAMA_HEAVY_MODEL_TIMEOUT"
+    )
+    ollama_keep_alive: str = Field(default="15m", validation_alias="OLLAMA_KEEP_ALIVE")
+    ollama_num_ctx: int = Field(default=8192, validation_alias="OLLAMA_NUM_CTX")
+    ollama_model_list_cache_sec: int = Field(
+        default=60, validation_alias="OLLAMA_MODEL_LIST_CACHE_SEC"
+    )
+    ollama_ping_cache_sec: int = Field(default=15, validation_alias="OLLAMA_PING_CACHE_SEC")
+    ollama_warmup_on_startup: bool = Field(
+        default=False, validation_alias="OLLAMA_WARMUP_ON_STARTUP"
     )
     chat_use_llm: bool = Field(default=True, validation_alias="CHAT_USE_LLM")
 
@@ -258,6 +267,11 @@ _LEGACY_FIELD_MAP: dict[str, str] = {
     "OLLAMA_CHAT_GPU_BUSY_VRAM_PCT": "ollama_chat_gpu_busy_vram_pct",
     "OLLAMA_CHAT_LIGHT_MODEL": "ollama_chat_light_model",
     "OLLAMA_HEAVY_MODEL_TIMEOUT": "ollama_heavy_model_timeout",
+    "OLLAMA_KEEP_ALIVE": "ollama_keep_alive",
+    "OLLAMA_NUM_CTX": "ollama_num_ctx",
+    "OLLAMA_MODEL_LIST_CACHE_SEC": "ollama_model_list_cache_sec",
+    "OLLAMA_PING_CACHE_SEC": "ollama_ping_cache_sec",
+    "OLLAMA_WARMUP_ON_STARTUP": "ollama_warmup_on_startup",
     "CHAT_USE_LLM": "chat_use_llm",
     "USE_INTENT_LAYER": "use_intent_layer",
     "USE_INTELLIGENT_AGENTS": "use_intelligent_agents",

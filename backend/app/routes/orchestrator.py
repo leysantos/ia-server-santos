@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends
 from app.schemas import OrchestrateRequest, OrchestrateResponse
 from app.services import OrchestratorService
 from core.auth.dependencies import get_current_user
+from core.chat.chat_attachment_service import resolve_prompt_with_attachments
 from core.database.models import User
 from core.llm_override import llm_model_scope
 
@@ -18,9 +19,14 @@ def orchestrate(
     """
     Execução multidisciplinar via orchestrator v1.
     """
-    with llm_model_scope(request.llm_model):
+    enriched_text, effective_model = resolve_prompt_with_attachments(
+        request.text,
+        request.attachment_ids,
+        request.llm_model,
+    )
+    with llm_model_scope(effective_model):
         result = orchestrator_service.process(
-            text=request.text,
+            text=enriched_text,
             use_rag=request.use_rag,
             persist=request.persist,
             user=user,

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import ActionDialog from "@/components/ActionDialog";
 import BudgetAnaliticoTab from "@/components/BudgetAnaliticoTab";
+import BudgetAuditTab from "@/components/BudgetAuditTab";
 import BudgetCpuSearchTab from "@/components/BudgetCpuSearchTab";
 import BudgetCurvaAbcTab from "@/components/BudgetCurvaAbcTab";
 import BudgetCurvaSTab from "@/components/BudgetCurvaSTab";
@@ -13,16 +14,19 @@ import BudgetDadosTab from "@/components/BudgetDadosTab";
 import BudgetEtapasPanel from "@/components/BudgetEtapasPanel";
 import BudgetHistoricoTab from "@/components/BudgetHistoricoTab";
 import BudgetMemoryPanel from "@/components/BudgetMemoryPanel";
+import BudgetPipelinePanel, { type PipelineLogEntry, type PricingResolveEvent } from "@/components/BudgetPipelinePanel";
+import BudgetRevisionPanel from "@/components/BudgetRevisionPanel";
 import BudgetSchedulePanel from "@/components/BudgetSchedulePanel";
 import BudgetTechSpecPanel from "@/components/BudgetTechSpecPanel";
 import BudgetSpreadsheet from "@/components/BudgetSpreadsheet";
 import BudgetToolbar from "@/components/BudgetToolbar";
 import BudgetNewModal from "@/components/BudgetNewModal";
 import type { ProjectFormValues } from "@/components/BudgetProjectForm";
+import type { CommercialFormValues } from "@/components/BudgetCommercialPanel";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ShellHeader from "@/components/ShellHeader";
 import { useActivity } from "@/context/ActivityContext";
-import { api, BUDGET_SESSION_RESTORED, downloadApiFile, formatApiError, restoreBudgetSessionFromStorage, syncBudgetSessionSnapshot } from "@/services/api";
+import { api, BUDGET_SESSION_RESTORED, BudgetVersionConflictError, budgetGenerateStream, clearBudgetSessionSnapshot, downloadApiFile, formatApiError, restoreBudgetSessionFromStorage, syncBudgetSessionSnapshot } from "@/services/api";
 import type {
   BdiObraType,
   BudgetPriceBaseSelection,
@@ -30,7 +34,8 @@ import type {
   BudgetSkeleton,
   BudgetSummary,
 } from "@/types/api";
-import { cn } from "@/lib/utils";
+import { cn, generateId } from "@/lib/utils";
+import { useBudgetAutoSave } from "@/hooks/useBudgetAutoSave";
 import { prefetchBudgetServiceCompositions } from "@/hooks/useBudgetServiceCompositions";
 
 type BudgetTabId =
@@ -45,7 +50,8 @@ type BudgetTabId =
   | "curva_s"
   | "histograma"
   | "especificacao"
-  | "historico";
+  | "historico"
+  | "auditoria";
 
 type DialogState = {
   open: boolean;
@@ -67,14 +73,23 @@ const BUDGET_TABS: { id: BudgetTabId; label: string }[] = [
   { id: "curva_s", label: "Curva S" },
   { id: "histograma", label: "Histograma" },
   { id: "especificacao", label: "Especificação técnica" },
+  { id: "auditoria", label: "Auditoria" },
   { id: "historico", label: "Histórico" },
 ];
 
 const BUDGET_TAB_IDS = new Set<BudgetTabId>(BUDGET_TABS.map((t) => t.id));
 
+const BUDGET_LAST_TAB_KEY = "iaserver.budget.lastTab";
+
 function parseBudgetTab(value: string | null): BudgetTabId {
   if (value && BUDGET_TAB_IDS.has(value as BudgetTabId)) {
     return value as BudgetTabId;
+  }
+  if (typeof window !== "undefined") {
+    const last = sessionStorage.getItem(BUDGET_LAST_TAB_KEY);
+    if (last && BUDGET_TAB_IDS.has(last as BudgetTabId)) {
+      return last as BudgetTabId;
+    }
   }
   return "historico";
 }
@@ -99,6 +114,7 @@ function BudgetTabBar({
             key={tab.id}
             type="button"
             role="tab"
+            data-testid={`budget-tab-${tab.id}`}
             aria-selected={active === tab.id}
             onClick={() => onChange(tab.id)}
             className={cn(
@@ -139,6 +155,7 @@ function BudgetPageContent() {
   const [session, setSession] = useState<BudgetSessionResponse | null>(null);
   const [savedItems, setSavedItems] = useState<BudgetSummary[]>([]);
   const [activeDbId, setActiveDbId] = useState<string | null>(null);
+  const [documentVersion, setDocumentVersion] = useState<number | null>(null);
   const [bdiTypes, setBdiTypes] = useState<BdiObraType[]>([]);
   const [sinapiImported, setSinapiImported] = useState(false);
   const [obraType, setObraType] = useState("RF");
@@ -153,13 +170,23 @@ function BudgetPageContent() {
   });
   const [projectName, setProjectName] = useState<string | null>(null);
   const projectDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialSessionRestoreDone = useRef(false);
   const { pushActivity } = useActivity();
   const [showNewModal, setShowNewModal] = useState(false);
+  const [streaming, setStreaming] = useState(false);
+  const [pipelineLogs, setPipelineLogs] = useState<PipelineLogEntry[]>([]);
+  const [llmTokens, setLlmTokens] = useState("");
+  const [generatePrompt, setGeneratePrompt] = useState("");
+  const [useLlmGenerate, setUseLlmGenerate] = useState(true);
+  const lastInputRef = useRef("");
   const actionParam = searchParams.get("action");
 
   const setActiveTab = useCallback(
     (tab: BudgetTabId) => {
       setActiveTabState(tab);
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem(BUDGET_LAST_TAB_KEY, tab);
+      }
       const params = new URLSearchParams(searchParams.toString());
       if (tab === "historico") {
         params.delete("tab");
@@ -177,6 +204,7 @@ function BudgetPageContent() {
   }, [searchParams]);
 
   useEffect(() => {
+    if (!initialSessionRestoreDone.current || !session) return;
     syncBudgetSessionSnapshot(session);
   }, [session]);
 
@@ -195,10 +223,15 @@ function BudgetPageContent() {
       .then((restored) => {
         if (!cancelled && restored) {
           setSession(restored);
+          if (restored.db_id) setActiveDbId(restored.db_id);
+          if (restored.document_version != null) setDocumentVersion(restored.document_version);
         }
       })
       .finally(() => {
-        if (!cancelled) setRestoringSession(false);
+        if (!cancelled) {
+          initialSessionRestoreDone.current = true;
+          setRestoringSession(false);
+        }
       });
     return () => {
       cancelled = true;
@@ -249,6 +282,19 @@ function BudgetPageContent() {
   }, [projectId]);
 
   useEffect(() => {
+    if (!session?.session_id || restoringSession) return;
+    const sid = session.session_id;
+    void api.pricingAcquireBudgetLock(sid).catch(() => {});
+    const renewTimer = window.setInterval(() => {
+      void api.pricingRenewBudgetLock(sid).catch(() => {});
+    }, 120_000);
+    return () => {
+      window.clearInterval(renewTimer);
+      void api.pricingReleaseBudgetLock(sid).catch(() => {});
+    };
+  }, [session?.session_id, restoringSession]);
+
+  useEffect(() => {
     if (restoringSession) return;
     if (actionParam === "new") {
       setShowNewModal(true);
@@ -286,6 +332,8 @@ function BudgetPageContent() {
     async (result: BudgetSessionResponse, tab: BudgetTabId = "dados") => {
       const nextSession = await applyDefaultPriceBases(result);
       setSession(nextSession);
+      setActiveDbId(null);
+      setDocumentVersion(null);
       if (nextSession.project?.obra_type) setObraType(nextSession.project.obra_type);
       setActiveTab(tab);
       setShowNewModal(false);
@@ -313,6 +361,7 @@ function BudgetPageContent() {
   }, []);
 
   const priceBasesDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const commercialDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const persistProject = useCallback(
     (values: ProjectFormValues) => {
@@ -378,6 +427,38 @@ function BudgetPageContent() {
     persistProject(values);
   };
 
+  const persistCommercial = useCallback(
+    (values: CommercialFormValues) => {
+      if (!session) return;
+      if (commercialDebounce.current) clearTimeout(commercialDebounce.current);
+      commercialDebounce.current = setTimeout(async () => {
+        try {
+          const updated = await api.pricingUpdateProject(session.session_id, {
+            commercial_margin_pct: values.commercial_margin_pct,
+            commercial_client: values.commercial_client,
+          });
+          setSession(updated);
+        } catch {
+          /* debounced save */
+        }
+      }, 600);
+    },
+    [session]
+  );
+
+  const handleCommercialChange = (values: CommercialFormValues) => {
+    if (!session) return;
+    setSession({
+      ...session,
+      project: {
+        ...session.project,
+        commercial_margin_pct: values.commercial_margin_pct,
+        commercial_client: values.commercial_client,
+      },
+    });
+    persistCommercial(values);
+  };
+
   const handleObraTypeChange = async (newType: string) => {
     setObraType(newType);
     if (!session) return;
@@ -424,8 +505,199 @@ function BudgetPageContent() {
     }
   };
 
+  const handleExportXlsm = async () => {
+    if (!session) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await downloadApiFile(
+        `/pricing/budget/${session.session_id}/export/xlsm?sync=true`,
+        `PPD_${(session.project?.projeto || session.title || "Orcamento").replace(/\s+/g, "_").slice(0, 40)}_${session.session_id.slice(0, 8)}.xlsm`
+      );
+    } catch (err) {
+      showActionError(err, "Falha ao exportar PPD oficial (.xlsm)");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleExportCompliance = async () => {
+    if (!session) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await downloadApiFile(
+        `/pricing/budget/${session.session_id}/export/compliance-pack.json`,
+        `compliance_${session.session_id.slice(0, 8)}.json`
+      );
+    } catch (err) {
+      showActionError(err, "Falha ao baixar pacote compliance");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleNew = () => {
     setShowNewModal(true);
+  };
+
+  const pushPipelineLog = useCallback((entry: Omit<PipelineLogEntry, "id" | "timestamp">) => {
+    setPipelineLogs((prev) => [...prev, { ...entry, id: generateId(), timestamp: Date.now() }]);
+  }, []);
+
+  const handleGenerate = async () => {
+    const text = generatePrompt.trim();
+    if (!text || streaming) return;
+
+    lastInputRef.current = text;
+    setStreaming(true);
+    setError(null);
+    setPipelineLogs([]);
+    setLlmTokens("");
+
+    pushActivity({
+      source: "budget",
+      message: "Pipeline IA — gerando orçamento…",
+      status: "running",
+      phase: "generate",
+    });
+
+    try {
+      let finalSession: BudgetSessionResponse | null = null;
+
+      for await (const event of budgetGenerateStream({
+        text,
+        use_llm: useLlmGenerate,
+        source_priority: ["sinapi"],
+        obra_type: obraType,
+        existing_session_id: session?.session_id,
+      })) {
+        if (event.type === "status") {
+          pushPipelineLog({
+            type: "status",
+            message: String(event.data.message ?? "Processando…"),
+            step: String(event.data.step ?? event.data.phase ?? ""),
+            llmModel: event.data.llm_model ? String(event.data.llm_model) : undefined,
+          });
+        }
+
+        if (event.type === "token") {
+          const token = String(event.data.token ?? "");
+          if (token) setLlmTokens((prev) => prev + token);
+        }
+
+        if (event.type === "step") {
+          const step = String(event.data.step ?? "");
+          if (step === "wbs_planner" && event.data.intent) {
+            const intent = event.data.intent as Record<string, unknown>;
+            const etapas = intent.etapas as unknown[] | undefined;
+            pushPipelineLog({
+              type: "step",
+              step,
+              message: `scope=${String(intent.scope ?? "—")} · ${etapas?.length ?? 0} etapa(s)`,
+              llmModel: intent.llm_model ? String(intent.llm_model) : undefined,
+            });
+            setLlmTokens("");
+          } else if (step === "intent_parser" && event.data.intent) {
+            const intent = event.data.intent as Record<string, unknown>;
+            pushPipelineLog({
+              type: "step",
+              step,
+              message: `scope=${String(intent.scope ?? "—")} · parser=${String(intent.parser ?? "—")}`,
+              llmModel: intent.llm_model ? String(intent.llm_model) : undefined,
+            });
+            setLlmTokens("");
+          } else if (step === "quantity_engine" && event.data.memory) {
+            const mem = event.data.memory as Record<string, unknown>;
+            pushPipelineLog({
+              type: "step",
+              step,
+              message: `${String(mem.formula ?? "qty")} = ${String(mem.result ?? "—")} ${String(mem.unit ?? "")}`,
+            });
+          } else if (step === "pricing_engine") {
+            const faiss = event.data.faiss_index as Record<string, unknown> | undefined;
+            if (faiss) {
+              pushPipelineLog({
+                type: "step",
+                step,
+                message: "Índice FAISS de composições pronto",
+                faissIndex: {
+                  indexed: Number(faiss.indexed ?? faiss.count ?? 0),
+                  label: faiss.label ? String(faiss.label) : undefined,
+                  total_rows: faiss.total_rows ? Number(faiss.total_rows) : undefined,
+                },
+              });
+            } else if (event.data.items_priced !== undefined) {
+              pushPipelineLog({
+                type: "step",
+                step,
+                message:
+                  `${event.data.items_priced} itens precificados de ${event.data.total_rows} linhas` +
+                  (event.data.unresolved ? ` · ${event.data.unresolved} sem match` : ""),
+              });
+            }
+          } else if (event.data.message) {
+            pushPipelineLog({
+              type: "step",
+              step,
+              message: String(event.data.message),
+            });
+          }
+        }
+
+        if (event.type === "pricing_resolve") {
+          pushPipelineLog({
+            type: "pricing_resolve",
+            step: "pricing_engine",
+            message: "",
+            pricing: event.data as unknown as PricingResolveEvent,
+          });
+        }
+
+        if (event.type === "error") {
+          const msg = String(event.data.message ?? "Erro no pipeline");
+          pushPipelineLog({ type: "error", message: msg });
+          setError(msg);
+        }
+
+        if (event.type === "done") {
+          finalSession = event.data as unknown as BudgetSessionResponse;
+          pushPipelineLog({
+            type: "done",
+            message: `Orçamento gerado — R$ ${Number(finalSession.grand_total).toLocaleString("pt-BR")}`,
+          });
+        }
+      }
+
+      if (finalSession) {
+        const nextSession = await applyDefaultPriceBases(finalSession);
+        setSession(nextSession);
+        setActiveDbId(null);
+        setDocumentVersion(null);
+        if (nextSession.project?.obra_type) setObraType(nextSession.project.obra_type);
+        setActiveTab("dados");
+        setGeneratePrompt("");
+        pushActivity({
+          source: "budget",
+          message: `Orçamento gerado: ${nextSession.title}`,
+          status: "done",
+          phase: "generate",
+        });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Erro ao gerar orçamento";
+      setError(msg);
+      pushPipelineLog({ type: "error", message: msg });
+      pushActivity({
+        source: "budget",
+        message: msg,
+        status: "error",
+        phase: "generate",
+      });
+    } finally {
+      setStreaming(false);
+      setLlmTokens("");
+    }
   };
 
   const handleNewBlank = async () => {
@@ -437,6 +709,27 @@ function BudgetPageContent() {
       await finalizeNewSession(result, "dados");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao criar orçamento");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleImportPpd = async (file: File) => {
+    setLoading(true);
+    setError(null);
+    setActiveDbId(null);
+    setDocumentVersion(null);
+    try {
+      const result = await api.pricingImportPpd(file);
+      await finalizeNewSession(result, "dados");
+      pushActivity({
+        source: "budget",
+        message: `PPD importado: ${file.name}`,
+        status: "done",
+        phase: "import",
+      });
+    } catch (err) {
+      showActionError(err, "Falha ao importar PPD");
     } finally {
       setLoading(false);
     }
@@ -469,21 +762,25 @@ function BudgetPageContent() {
   );
 
   const persistBudget = useCallback(
-    async (opts?: { showDialog?: boolean; etapaName?: string }) => {
+    async (opts?: { showDialog?: boolean; etapaName?: string; silent?: boolean }) => {
       if (!session) return;
-      setLoading(true);
+      if (!opts?.silent) setLoading(true);
       try {
         const body = {
           title: session.title,
           input_text: "",
           payload: session,
           ...(linkedProjectId ? { project_id: linkedProjectId } : {}),
+          ...(activeDbId && documentVersion != null
+            ? { expected_version: documentVersion }
+            : {}),
         };
         const saved = activeDbId
           ? await api.pricingUpdateSaved(activeDbId, body)
           : await api.pricingSaveBudget(body);
         setSession(saved);
         setActiveDbId(saved.db_id ?? activeDbId);
+        if (saved.document_version != null) setDocumentVersion(saved.document_version);
         if (saved.project_id && saved.project_id !== projectId) {
           router.replace(`/budget?project=${saved.project_id}`);
         }
@@ -509,7 +806,16 @@ function BudgetPageContent() {
         }
         return saved;
       } catch (err) {
-        if (opts?.showDialog !== false) {
+        if (err instanceof BudgetVersionConflictError) {
+          setDialog({
+            open: true,
+            title: "Conflito de versão",
+            message:
+              "Outro usuário ou aba salvou este orçamento antes. Recarregue o documento do histórico e reaplique suas alterações.",
+            variant: "error",
+          });
+          if (err.currentVersion != null) setDocumentVersion(err.currentVersion);
+        } else if (opts?.showDialog !== false) {
           setDialog({
             open: true,
             title: "Falha ao salvar",
@@ -519,11 +825,19 @@ function BudgetPageContent() {
         }
         throw err;
       } finally {
-        setLoading(false);
+        if (!opts?.silent) setLoading(false);
       }
     },
-    [session, activeDbId, linkedProjectId, projectId, projectName, refreshSaved, router, pushActivity]
+    [session, activeDbId, documentVersion, linkedProjectId, projectId, projectName, refreshSaved, router, pushActivity]
   );
+
+  const { autoSaveHint } = useBudgetAutoSave({
+    session,
+    activeDbId,
+    baselineFrozen: session?.baseline_frozen,
+    loading,
+    persistBudget,
+  });
 
   const handleSave = () => persistBudget();
 
@@ -554,6 +868,7 @@ function BudgetPageContent() {
       const loaded = await api.pricingGetSaved(id);
       setSession(loaded);
       setActiveDbId(id);
+      setDocumentVersion(loaded.document_version ?? null);
       if (loaded.project?.obra_type) setObraType(loaded.project.obra_type);
       if (loaded.project_id && loaded.project_id !== projectId) {
         const params = new URLSearchParams(searchParams.toString());
@@ -587,7 +902,9 @@ function BudgetPageContent() {
           await api.pricingDeleteSaved(id);
           if (activeDbId === id) {
             setActiveDbId(null);
+            setDocumentVersion(null);
             setSession(null);
+            clearBudgetSessionSnapshot();
           }
           await refreshSaved();
         } catch (err) {
@@ -643,12 +960,38 @@ function BudgetPageContent() {
           <BudgetToolbar
             hasSession={!!session}
             loading={loading}
+            savedVersion={activeDbId ? documentVersion : null}
+            autoSaveHint={autoSaveHint}
             onNew={handleNew}
             onSave={session ? handleSave : undefined}
             onRenumber={session ? handleRenumberItemization : undefined}
             onExportExcel={session ? (key, label) => void handleExportExcel(key, label) : undefined}
             onExportPdf={session ? (key, label) => void handleExportPdf(key, label) : undefined}
+            onExportXlsm={session ? () => void handleExportXlsm() : undefined}
+            onExportCompliance={session ? () => void handleExportCompliance() : undefined}
           />
+
+          {session && activeDbId && (
+            <BudgetRevisionPanel
+              budgetId={activeDbId}
+              session={session}
+              disabled={loading}
+              onOpenRevision={(loaded) => {
+                setSession(loaded);
+                setActiveDbId(loaded.db_id ?? null);
+                setDocumentVersion(loaded.document_version ?? null);
+                setActiveTab("etapas");
+              }}
+              onSessionUpdate={setSession}
+              onError={showActionError}
+            />
+          )}
+
+          {session?.baseline_frozen && activeDbId && (
+            <div className="rounded-xl bg-teal-500/10 px-4 py-2 text-xs text-teal-200 ring-1 ring-teal-500/30">
+              Baseline congelada — este documento é somente leitura. Crie uma revisão (aditivo) para alterar valores.
+            </div>
+          )}
 
           {error && (
             <div className="rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-300 ring-1 ring-red-500/30">
@@ -684,16 +1027,70 @@ function BudgetPageContent() {
 
           <BudgetTabBar tabs={BUDGET_TABS} active={activeTab} onChange={setActiveTab} />
 
+          {session && (
+            <div className={cn(activeTab !== "auditoria" && "hidden")}>
+              <BudgetAuditTab sessionId={session.session_id} />
+            </div>
+          )}
+
+          {activeTab === "auditoria" && !session && !loading && !restoringSession && (
+            <p className="text-center text-sm text-slate-500 py-8">
+              Abra ou crie um orçamento para ver a trilha de auditoria.
+            </p>
+          )}
+
           {activeTab === "historico" && (
-            <BudgetHistoricoTab
-              savedItems={savedItems}
-              activeId={activeDbId}
-              projectFilterLabel={projectId ? projectName ?? "Projeto selecionado" : null}
-              onOpen={handleOpenSaved}
-              onDelete={handleDeleteSaved}
-              onNew={handleNew}
-              onClearProjectFilter={projectId ? () => router.push("/budget") : undefined}
-            />
+            <div className="space-y-4">
+              <section className="rounded-xl bg-slate-900/40 p-4 ring-1 ring-violet-500/20">
+                <h2 className="text-sm font-semibold text-violet-200">Gerar orçamento com IA</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  Descreva a obra — o pipeline monta WBS, quantitativos e precificação SINAPI em tempo real.
+                </p>
+                <textarea
+                  value={generatePrompt}
+                  onChange={(e) => setGeneratePrompt(e.target.value)}
+                  placeholder="Ex.: Passarela metálica 12 m sobre córrego, fundação em estaca, pintura anticorrosiva…"
+                  rows={3}
+                  disabled={streaming}
+                  className="mt-3 w-full resize-y rounded-lg border border-white/10 bg-surface-card px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:border-violet-500/40 focus:outline-none focus:ring-1 focus:ring-violet-500/30 disabled:opacity-50"
+                />
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-400">
+                    <input
+                      type="checkbox"
+                      checked={useLlmGenerate}
+                      onChange={(e) => setUseLlmGenerate(e.target.checked)}
+                      disabled={streaming}
+                      className="rounded border-white/10 bg-surface-card text-violet-500 focus:ring-violet-500/50"
+                    />
+                    Usar LLM (WBS planner)
+                  </label>
+                  <button
+                    type="button"
+                    disabled={streaming || !generatePrompt.trim()}
+                    onClick={() => void handleGenerate()}
+                    className={cn(
+                      "ml-auto rounded-lg bg-violet-600/25 px-4 py-2 text-sm text-violet-100 ring-1 ring-violet-500/40",
+                      "hover:bg-violet-600/35 disabled:cursor-not-allowed disabled:opacity-40"
+                    )}
+                  >
+                    {streaming ? "Gerando…" : "Gerar orçamento"}
+                  </button>
+                </div>
+              </section>
+
+              <BudgetPipelinePanel logs={pipelineLogs} streaming={streaming} llmTokens={llmTokens} />
+
+              <BudgetHistoricoTab
+                savedItems={savedItems}
+                activeId={activeDbId}
+                projectFilterLabel={projectId ? projectName ?? "Projeto selecionado" : null}
+                onOpen={handleOpenSaved}
+                onDelete={handleDeleteSaved}
+                onNew={handleNew}
+                onClearProjectFilter={projectId ? () => router.push("/budget") : undefined}
+              />
+            </div>
           )}
 
           {session && (
@@ -760,7 +1157,13 @@ function BudgetPageContent() {
           )}
 
           {activeTab === "busca_cpu" && (
-            <BudgetCpuSearchTab priceBases={sessionPriceBases} />
+            <BudgetCpuSearchTab
+              priceBases={sessionPriceBases}
+              session={session}
+              onSessionUpdate={setSession}
+              onPriceBasesChange={handlePriceBasesChange}
+              onError={showActionError}
+            />
           )}
 
           {session && activeTab !== "historico" && activeTab !== "analitico" && activeTab !== "busca_cpu" && activeTab !== "curva_abc" && activeTab !== "curva_s" && activeTab !== "histograma" && (
@@ -773,15 +1176,21 @@ function BudgetPageContent() {
 
               {activeTab === "dados" && (
                 <BudgetDadosTab
+                  sessionId={session.session_id}
                   project={session.project}
+                  grandTotal={session.grand_total ?? 0}
                   bdiTypes={bdiTypes}
                   priceBases={session.project?.price_bases ?? []}
                   savedItems={savedItems}
                   disabled={loading}
                   sinapiImported={sinapiImported}
                   onProjectChange={handleProjectChange}
+                  onCommercialChange={handleCommercialChange}
+                  onComplianceDownload={() => void handleExportCompliance()}
                   onObraTypeChange={handleObraTypeChange}
                   onPriceBasesChange={handlePriceBasesChange}
+                  onSessionUpdate={setSession}
+                  onError={showActionError}
                 />
               )}
 
@@ -877,6 +1286,7 @@ function BudgetPageContent() {
         onClose={() => setShowNewModal(false)}
         onSelectBlank={() => void handleNewBlank()}
         onSelectSkeleton={(sk, projeto) => void handleNewFromSkeleton(sk, projeto)}
+        onImportPpd={(file) => void handleImportPpd(file)}
       />
 
       <ActionDialog

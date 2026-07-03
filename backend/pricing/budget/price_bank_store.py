@@ -22,6 +22,24 @@ INSUMOS_NAME = "insumos.json"
 LABOR_CHARGES_NAME = "labor_charges.json"
 
 
+def resolve_open_composition_key(code: str, open_data: dict[str, Any]) -> str | None:
+    """Resolve código de CPU aberta; tolera truncamento de path (ex. 00084 → 00084/ORSE)."""
+    key = str(code).strip()
+    if not key:
+        return None
+    if key in open_data:
+        return key
+    if "/" not in key:
+        orse_key = f"{key}/ORSE"
+        if orse_key in open_data:
+            return orse_key
+        if key.isdigit():
+            padded = f"{key.zfill(5)}/ORSE"
+            if padded in open_data:
+                return padded
+    return None
+
+
 @dataclass
 class CompositionItem:
     item_type: str  # insumo | mao_obra | equipamento | composicao
@@ -302,8 +320,11 @@ class PriceBankStore:
             apply_uf_to_open_composition,
         )
 
-        key = str(code).strip()
-        raw = self.load_open().get(key)
+        open_data = self.load_open()
+        key = resolve_open_composition_key(code, open_data)
+        if not key:
+            return None
+        raw = open_data.get(key)
         if not raw:
             return None
         closed = self.load_closed()

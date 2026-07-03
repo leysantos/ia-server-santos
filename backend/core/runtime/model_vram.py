@@ -1,4 +1,4 @@
-"""Ajuste de modelo LLM conforme VRAM disponível (evita hang com qwen3.6 em GPU 8GB)."""
+"""Ajuste de modelo LLM conforme VRAM disponível (evita hang com modelos 14B+ em GPU 8GB)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ logger = logging.getLogger(__name__)
 
 # Estimativa mínima de VRAM (MB) para rodar o modelo inteiro na GPU sem swap extremo
 _MODEL_VRAM_REQUIREMENTS_MB: tuple[tuple[str, int], ...] = (
-    ("qwen3.6", 20_000),
     ("qwen3-coder", 16_000),
     ("deepseek-r1", 8_500),
     ("qwen3:14", 8_500),

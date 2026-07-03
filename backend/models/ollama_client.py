@@ -1,5 +1,7 @@
 import json
 import logging
+import threading
+import time
 from collections.abc import Iterator
 from typing import Optional
 
@@ -11,11 +13,12 @@ from config.settings import (
     OLLAMA_LLM_FALLBACK_MODEL,
     OLLAMA_LLM_MODEL,
 )
+from core.runtime.ollama_defaults import merge_llm_options, ollama_keep_alive
 
 logger = logging.getLogger(__name__)
 
 _PREFERRED_MODEL_SUBSTRINGS = (
-    "qwen3.6",
+    "qwen3:14",
     "gemma4",
     "deepseek-r1",
     "qwen2.5-coder",
@@ -24,7 +27,42 @@ _PREFERRED_MODEL_SUBSTRINGS = (
     "gemma3",
     "deepseek-coder",
     "phi3",
+    "qwen3:8",
 )
+
+_models_cache: list[str] = []
+_models_cache_at: float = 0.0
+_models_cache_lock = threading.Lock()
+_ping_ok_at: float = 0.0
+_ping_lock = threading.Lock()
+
+
+def _model_list_cache_ttl() -> float:
+    try:
+        from config import settings
+
+        return float(getattr(settings, "OLLAMA_MODEL_LIST_CACHE_SEC", 60))
+    except Exception:
+        return 60.0
+
+
+def _ping_cache_ttl() -> float:
+    try:
+        from config import settings
+
+        return float(getattr(settings, "OLLAMA_PING_CACHE_SEC", 15))
+    except Exception:
+        return 15.0
+
+
+def invalidate_ollama_client_cache() -> None:
+    """Invalida cache de modelos/ping (útil após pull/unload)."""
+    global _models_cache, _models_cache_at, _ping_ok_at
+    with _models_cache_lock:
+        _models_cache = []
+        _models_cache_at = 0.0
+    with _ping_lock:
+        _ping_ok_at = 0.0
 
 
 class OllamaClient:
@@ -55,21 +93,35 @@ class OllamaClient:
         idle = max(int(self.read_timeout), 600)
         return (self.connect_timeout, idle)
 
-    def ping(self) -> bool:
-        """Verifica se o Ollama responde (timeout curto — não bloqueia minutos)."""
+    def ping(self, *, force: bool = False) -> bool:
+        """Verifica se o Ollama responde (cache curto para evitar /api/tags a cada generate)."""
+        global _ping_ok_at
+        if not force:
+            with _ping_lock:
+                if _ping_ok_at and (time.time() - _ping_ok_at) < _ping_cache_ttl():
+                    return True
         try:
             response = requests.get(
                 f"{self.base_url}/api/tags",
                 timeout=(self.connect_timeout, 5),
             )
             response.raise_for_status()
+            with _ping_lock:
+                _ping_ok_at = time.time()
             return True
         except Exception as exc:
             logger.warning("Ollama ping falhou (%s): %s", self.base_url, exc)
             return False
 
-    def list_models(self) -> list[str]:
-        """Lista modelos instalados no Ollama."""
+    def list_models(self, *, force: bool = False) -> list[str]:
+        """Lista modelos instalados no Ollama (cache TTL configurável)."""
+        global _models_cache, _models_cache_at, _ping_ok_at
+        ttl = _model_list_cache_ttl()
+        if not force and ttl > 0:
+            with _models_cache_lock:
+                if _models_cache and (time.time() - _models_cache_at) < ttl:
+                    return list(_models_cache)
+
         try:
             response = requests.get(
                 f"{self.base_url}/api/tags",
@@ -77,9 +129,18 @@ class OllamaClient:
             )
             response.raise_for_status()
             data = response.json()
-            return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+            models = [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+            with _models_cache_lock:
+                _models_cache = models
+                _models_cache_at = time.time()
+            with _ping_lock:
+                _ping_ok_at = time.time()
+            return models
         except Exception as exc:
             logger.warning("Ollama list_models falhou: %s", exc)
+            with _models_cache_lock:
+                if _models_cache:
+                    return list(_models_cache)
             return []
 
     def _resolve_installed_models(
@@ -163,6 +224,28 @@ class OllamaClient:
             resolved = [self.primary_model, self.fallback_model]
         return [m for m in resolved if m]
 
+    def _build_generate_body(
+        self,
+        prompt: str,
+        model: str,
+        *,
+        stream: bool,
+        format_json: bool = False,
+        options: dict | None = None,
+    ) -> dict:
+        body: dict = {
+            "model": model,
+            "prompt": prompt,
+            "stream": stream,
+            "keep_alive": ollama_keep_alive(),
+        }
+        if format_json:
+            body["format"] = "json"
+        merged = merge_llm_options(options)
+        if merged:
+            body["options"] = merged
+        return body
+
     def _generate_with_model(
         self,
         prompt: str,
@@ -171,11 +254,9 @@ class OllamaClient:
         format_json: bool = False,
         options: dict | None = None,
     ) -> str:
-        body: dict = {"model": model, "prompt": prompt, "stream": False}
-        if format_json:
-            body["format"] = "json"
-        if options:
-            body["options"] = options
+        body = self._build_generate_body(
+            prompt, model, stream=False, format_json=format_json, options=options
+        )
         response = requests.post(
             f"{self.base_url}/api/generate",
             json=body,
@@ -251,11 +332,13 @@ class OllamaClient:
         for current_model in models_to_try:
             try:
                 logger.info("Ollama stream model=%s json=%s", current_model, format_json)
-                body: dict = {"model": current_model, "prompt": prompt, "stream": True}
-                if format_json:
-                    body["format"] = "json"
-                if options:
-                    body["options"] = options
+                body = self._build_generate_body(
+                    prompt,
+                    current_model,
+                    stream=True,
+                    format_json=format_json,
+                    options=options,
+                )
                 token_count = 0
                 with requests.post(
                     f"{self.base_url}/api/generate",

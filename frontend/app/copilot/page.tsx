@@ -10,6 +10,7 @@ import ShellHeader from "@/components/ShellHeader";
 import { useActivity } from "@/context/ActivityContext";
 import { api } from "@/services/api";
 import type { CopilotResponse } from "@/types/api";
+import { uploadPromptAttachments } from "@/lib/prompt-attachments";
 
 export default function CopilotPage() {
   const [loading, setLoading] = useState(false);
@@ -39,10 +40,12 @@ export default function CopilotPage() {
     ]);
 
     try {
+      const { attachmentIds } = await uploadPromptAttachments(options.files, options.llmModel);
       const response = await api.copilot({
         text,
         use_rag: options.useRag,
         persist: options.persist,
+        attachment_ids: attachmentIds,
       });
       setResult(response);
       setSteps([
@@ -83,7 +86,7 @@ export default function CopilotPage() {
       </ShellHeader>
 
       <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6">
-        <ChatBox onSend={handleSend} disabled={loading} placeholder="Descreva o problema de engenharia…" />
+        <ChatBox onSend={handleSend} loading={loading} placeholder="Descreva o problema de engenharia…" />
 
         {loading && (
           <div className="flex items-center gap-3 text-slate-400">

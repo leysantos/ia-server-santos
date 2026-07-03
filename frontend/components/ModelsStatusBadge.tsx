@@ -44,7 +44,7 @@ export default function ModelsStatusBadge({ className }: { className?: string })
   return (
     <p
       className={cn(
-        "models-status-badge shrink-0 rounded-xl border border-white/5 bg-surface-card px-3 py-1.5 text-left text-[10px] leading-tight text-slate-500 sm:py-2 sm:text-[11px] lg:whitespace-nowrap max-lg:whitespace-normal",
+        "models-status-badge min-w-0 max-w-full rounded-xl border border-white/5 bg-surface-card px-3 py-1.5 text-left text-[10px] leading-snug text-slate-500 sm:py-2 sm:text-[11px] whitespace-normal break-words",
         className
       )}
       aria-label={ariaLabel}

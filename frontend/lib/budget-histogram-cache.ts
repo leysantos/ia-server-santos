@@ -1,4 +1,4 @@
-import type { StackedHistogramModel } from "@/lib/budget-analytics";
+import type { HistogramReportModel } from "@/lib/budget-analytics";
 import type { OpenCompositionDetail, ProjectSchedule } from "@/types/api";
 
 /** Estado carregado de CPUs por serviço — reutilizado entre aberturas da aba Histograma. */
@@ -13,7 +13,7 @@ export interface ServiceCompositionBundle {
 }
 
 const bundleByKey = new Map<string, ServiceCompositionBundle>();
-const histogramModelByKey = new Map<string, StackedHistogramModel>();
+const histogramModelByKey = new Map<string, HistogramReportModel>();
 
 const MAX_BUNDLES = 12;
 const MAX_MODELS = 24;
@@ -60,11 +60,11 @@ export function histogramModelCacheKey(
   return `${sessionId}|${loadKey}|${priceMode}|${scheduleFingerprint(schedule)}`;
 }
 
-export function getCachedHistogramModel(key: string): StackedHistogramModel | undefined {
+export function getCachedHistogramModel(key: string): HistogramReportModel | undefined {
   return histogramModelByKey.get(key);
 }
 
-export function setCachedHistogramModel(key: string, model: StackedHistogramModel): void {
+export function setCachedHistogramModel(key: string, model: HistogramReportModel): void {
   histogramModelByKey.set(key, model);
   trimMap(histogramModelByKey, MAX_MODELS);
 }

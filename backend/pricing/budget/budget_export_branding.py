@@ -18,6 +18,9 @@ EXPORT_DOC_TYPES = (
     "curva_abc",
     "curva_s",
     "histograma",
+    "rel_insumos",
+    "rel_mao_obra",
+    "proposta_comercial",
 )
 
 

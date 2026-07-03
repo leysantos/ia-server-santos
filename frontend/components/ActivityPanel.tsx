@@ -30,7 +30,7 @@ export default function ActivityPanel() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border border-white/5 bg-surface-card px-4 py-2 text-sm text-slate-200 shadow-lg backdrop-blur"
+        className="fixed bottom-20 right-4 z-40 flex items-center gap-2 rounded-full border border-white/5 bg-surface-card px-4 py-2 text-sm text-slate-200 shadow-lg backdrop-blur lg:bottom-4"
       >
         {running > 0 && <span className="h-2 w-2 rounded-full bg-brand-400 animate-pulse" />}
         Atividade ({entries.length})
@@ -39,7 +39,7 @@ export default function ActivityPanel() {
   }
 
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col border-l border-white/5 bg-surface/95 backdrop-blur-xl">
+    <aside className="hidden h-full w-80 shrink-0 flex-col border-l border-white/5 bg-surface/95 backdrop-blur-xl lg:flex">
       <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
         <div>
           <h2 className="text-sm font-semibold text-white">Atividade</h2>

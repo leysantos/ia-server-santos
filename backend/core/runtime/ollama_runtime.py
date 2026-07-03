@@ -53,6 +53,9 @@ def unload_model(model: str) -> dict[str, Any]:
         )
         response.raise_for_status()
         payload = response.json()
+        from models.ollama_client import invalidate_ollama_client_cache
+
+        invalidate_ollama_client_cache()
         return {
             "ok": True,
             "model": name,

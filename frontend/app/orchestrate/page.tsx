@@ -10,6 +10,7 @@ import ShellHeader from "@/components/ShellHeader";
 import { useActivity } from "@/context/ActivityContext";
 import { api } from "@/services/api";
 import type { OrchestrateResponse } from "@/types/api";
+import { uploadPromptAttachments } from "@/lib/prompt-attachments";
 
 export default function OrchestratePage() {
   const [loading, setLoading] = useState(false);
@@ -38,11 +39,16 @@ export default function OrchestratePage() {
     ]);
 
     try {
+      const { attachmentIds, llmModel } = await uploadPromptAttachments(
+        options.files,
+        options.llmModel
+      );
       const response = await api.orchestrate({
         text,
         use_rag: options.useRag,
         persist: options.persist,
-        llm_model: options.llmModel !== "auto" ? options.llmModel : undefined,
+        llm_model: llmModel !== "auto" ? llmModel : undefined,
+        attachment_ids: attachmentIds,
       });
       setResult(response);
       setSteps([

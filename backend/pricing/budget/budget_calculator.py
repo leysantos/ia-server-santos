@@ -80,6 +80,24 @@ class BudgetCalculator:
         self._flatten(root, rows, [0])
         return rows
 
+    def find_row(self, root: BudgetItem, row_id: str, code: str | None = None) -> BudgetItem | None:
+        target = self._find_by_row_id(root, row_id) if row_id else None
+        if target is None and code:
+            target = self._find_by_code(root, code)
+        return target
+
+    def get_cell_value(
+        self,
+        root: BudgetItem,
+        row_id: str,
+        field: str,
+        code: str | None = None,
+    ) -> Any | None:
+        target = self.find_row(root, row_id, code=code)
+        if not target or field not in self.EDITABLE_FIELDS:
+            return None
+        return getattr(target, field, None)
+
     def _find_by_row_id(self, item: BudgetItem, row_id: str) -> BudgetItem | None:
         if item.row_id == row_id:
             return item

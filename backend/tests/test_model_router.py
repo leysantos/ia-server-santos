@@ -7,12 +7,24 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config.settings as settings_mod
+from core.models.installed_model_registry import INSTALLED_WSL_MODELS
 from core.models.model_router import (
     ModelRouter,
     estimate_pricing_complexity,
     get_model_router,
     routed_generate,
 )
+
+_WSL = frozenset(INSTALLED_WSL_MODELS)
+
+
+def _router_with_wsl_models():
+    """Router com model_map sincronizado aos modelos típicos do WSL (sem Ollama live)."""
+    with patch(
+        "core.models.installed_model_registry.get_installed_model_names",
+        return_value=set(_WSL),
+    ):
+        return ModelRouter()
 
 
 def test_estimate_pricing_complexity_high_keywords():
@@ -41,16 +53,16 @@ def test_legacy_mode_uses_settings():
 
 def test_router_enabled_model_map():
     with patch.object(settings_mod, "USE_MODEL_ROUTER", True):
-        router = ModelRouter()
-        assert router.get_model("engineering_primary") == "qwen3.6:latest"
+        router = _router_with_wsl_models()
+        assert router.get_model("engineering_primary") == "qwen3:14b"
         assert router.get_model("engineering_reasoning") == "deepseek-r1:14b"
         assert router.get_model("engineering_secondary") == "gemma4:latest"
         assert router.get_model("chat_natural") == "mistral:7b"
         assert router.get_model("chat_simple") == "phi3:mini"
-        assert router.get_model("aed_simulation") == "qwen3.6:latest"
+        assert router.get_model("aed_simulation") == "qwen3:14b"
         assert router.get_model("aed_evaluation") == "deepseek-r1:14b"
         assert router.get_model("orchestration_synthesis") == "deepseek-r1:14b"
-        assert router.get_model("budget_wbs_high") == "deepseek-r1:14b"
+        assert router.get_model("budget_wbs_high") == "qwen3-coder:latest"
 
 
 def test_is_light_task():
@@ -78,16 +90,16 @@ def test_resolve_chat_task():
 
 def test_engineering_fallback_chain():
     with patch.object(settings_mod, "USE_MODEL_ROUTER", True):
-        router = ModelRouter()
+        router = _router_with_wsl_models()
         fallbacks = router.get_fallback_models("engineering_primary")
         assert fallbacks[0] == "deepseek-r1:14b"
         assert "gemma4:latest" in fallbacks
-        assert "qwen2.5-coder" in fallbacks[-1]
+        assert fallbacks[-1] == "qwen3:8b"
 
 
 def test_engineering_reasoning_medium_complexity():
     with patch.object(settings_mod, "USE_MODEL_ROUTER", True):
-        router = ModelRouter()
+        router = _router_with_wsl_models()
         task = router.resolve_engineering_task_type("MEDIUM")
         assert task == "engineering_reasoning"
         assert router.get_model(task) == "deepseek-r1:14b"
@@ -102,14 +114,14 @@ def test_chat_natural_fallback_chain():
 
 def test_norms_steel_high_complexity_context():
     with patch.object(settings_mod, "USE_MODEL_ROUTER", True):
-        router = ModelRouter()
+        router = _router_with_wsl_models()
         task = router.resolve_engineering_task(
             "galpão metálico 40m",
             "ESTRUTURAL",
             complexity="HIGH",
         )
         model = router.get_model(task, {"complexity": "HIGH", "discipline": "ESTRUTURAL"})
-        assert model == "qwen3.6:latest"
+        assert model == "qwen3:14b"
 
 
 def test_routed_generate_records_inference():

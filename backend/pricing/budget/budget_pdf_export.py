@@ -43,7 +43,9 @@ DOC_TITLES = {
     "esp_tecnica": "ESPECIFICAÇÃO TÉCNICA",
     "curva_abc": "CURVA ABC — CLASSIFICAÇÃO PARETO",
     "curva_s": "CURVA S — AVANÇO FÍSICO-FINANCEIRO",
-    "histograma": "HISTOGRAMA DE DEMANDA MENSAL",
+    "histograma": "HISTOGRAMA DE MÃO DE OBRA E EQUIPAMENTOS",
+    "rel_insumos": "RELATÓRIO DE INSUMOS E MATERIAIS",
+    "rel_mao_obra": "RELATÓRIO DE MÃO DE OBRA",
 }
 
 
@@ -148,7 +150,7 @@ def _export_landscape_budget_pdf(
         )
     elif key == "cronograma":
         story = _build_cronograma_table(roots, schedule, usable_width=usable_width)
-    elif key in ("curva_abc", "curva_s", "histograma"):
+    elif key in ("curva_abc", "curva_s", "histograma", "rel_insumos", "rel_mao_obra"):
         story = _build_analytics_table(key, roots, meta=meta, schedule=schedule, usable_width=usable_width)
     else:
         raise ValueError(f"Documento paisagem não suportado: {key}")
@@ -449,7 +451,7 @@ def _analitico_cpu_row(
     return [
         "",
         para(_cpu_tipo_label(str(cpu_item.get("item_type") or "")), styles["cell_center"]),
-        para(str(cpu_item.get("code") or ""), styles["cell_code"]),
+        para(str(cpu_item.get("code") or ""), styles["cell_center"]),
         para(desc, styles["cell_mem"]),
         para(str(cpu_item.get("unit") or ""), styles["cell_center"]),
         _qty_right(styles, cpu_item.get("coefficient")),
@@ -471,19 +473,23 @@ def _build_orc_table(
 
     if analitico:
         header = ["Item", "Tipo", "Código", "Descrição", "Un", "Qtd", unit_hdr, total_hdr]
+        center_cols = (0, 1, 2, 4)
+        right_cols = (5, 6, 7)
     else:
         header = ["Item", "Código", "Descrição", "Un", "Qtd", unit_hdr, total_hdr]
+        center_cols = (0, 1, 3)
+        right_cols = (4, 5, 6)
 
     header_cells: list[Any] = []
     for idx, h in enumerate(header):
-        right_idx = {5, 6, 7} if analitico else {4, 5, 6}
-        if idx in right_idx:
+        if idx in right_cols:
             header_cells.append(para(h, styles["header_right"]))
-        else:
+        elif idx in center_cols:
             header_cells.append(para(h, styles["header"]))
+        else:
+            header_cells.append(para(h, styles["header_left"]))
     data: list[list[Any]] = [header_cells]
 
-    right_cols = (5, 6, 7) if analitico else (4, 5, 6)
     comp_cache: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
 
     for item, depth in _flatten_budget_rows(roots, include_memory=False):
@@ -502,9 +508,9 @@ def _build_orc_table(
 
         if analitico:
             row = [
-                para(item.code or "", styles["cell_bold"] if is_group else styles["cell"]),
+                para(item.code or "", styles["cell_bold"] if is_group else styles["cell_center"]),
                 para(_budget_row_tipo(item, is_group=is_group), styles["cell_center"]),
-                para(source_code, styles["cell_code"]) if source_code else "",
+                para(source_code, styles["cell_center"]) if source_code else "",
                 para(desc, styles["cell_bold"] if is_group else styles["cell"], bold=is_group),
                 para(item.unit or "", styles["cell_center"]) if not is_group and item.unit else "",
                 _money_right(styles, item.quantity) if not is_group else "",
@@ -513,8 +519,8 @@ def _build_orc_table(
             ]
         else:
             row = [
-                para(item.code or "", styles["cell_bold"] if is_group else styles["cell"]),
-                para(source_code, styles["cell_code"]) if source_code else "",
+                para(item.code or "", styles["cell_bold"] if is_group else styles["cell_center"]),
+                para(source_code, styles["cell_center"]) if source_code else "",
                 para(desc, styles["cell_bold"] if is_group else styles["cell"], bold=is_group),
                 para(item.unit or "", styles["cell_center"]) if not is_group and item.unit else "",
                 _money_right(styles, item.quantity) if not is_group else "",
@@ -554,7 +560,16 @@ def _build_orc_table(
     data.append(_summary_row("TOTAL COM BDI", grand_total))
 
     table = Table(data, colWidths=_orc_col_widths(usable_width, analitico), repeatRows=1)
-    table.setStyle(TableStyle(zebra_style_commands(len(data), summary_rows=3, right_cols=right_cols)))
+    table.setStyle(
+        TableStyle(
+            zebra_style_commands(
+                len(data),
+                summary_rows=3,
+                right_cols=right_cols,
+                center_cols=center_cols,
+            )
+        )
+    )
     return [table]
 
 
@@ -566,6 +581,14 @@ def _build_analytics_table(
     schedule: Any | None,
     usable_width: float,
 ) -> list[Any]:
+    key = doc_type.strip().lower()
+    if key == "histograma":
+        from pricing.budget.histogram.pdf_builder import build_histogram_pdf_story
+        from pricing.schedule.schedule_models import ProjectSchedule
+
+        sched = schedule if isinstance(schedule, ProjectSchedule) else ProjectSchedule.from_dict(schedule)
+        return build_histogram_pdf_story(roots, meta=meta, schedule=sched, usable_width=usable_width)
+
     from pricing.budget.budget_export_tables import build_export_table
     from pricing.budget.budget_pdf_charts import (
         analytics_chart_caption,
@@ -573,7 +596,7 @@ def _build_analytics_table(
         build_analytics_chart_flowable,
     )
 
-    table_data, extra_line, _ = build_export_table(
+    table_data, extra_line, body_lines = build_export_table(
         doc_type, roots, meta, schedule=schedule
     )
     if not table_data:
@@ -583,7 +606,13 @@ def _build_analytics_table(
     styles = cell_styles()
     if extra_line:
         story.append(Paragraph(f"<b>{html.escape(extra_line)}</b>", styles["cell"]))
+        story.append(Spacer(1, 4))
+    for line in body_lines or []:
+        story.append(Paragraph(html.escape(line), styles["cell"]))
+    if body_lines:
         story.append(Spacer(1, 6))
+    elif extra_line:
+        story.append(Spacer(1, 2))
 
     chart, include_bdi_ref = build_analytics_chart_flowable(
         doc_type,
@@ -613,20 +642,31 @@ def _build_analytics_table(
     col_widths = [usable_width * f for f in fracs]
 
     header_cells = [
-        para(h, styles["header_right"] if i in table_data.right_cols else styles["header"])
+        para(
+            h,
+            styles["header_right"]
+            if i in table_data.right_cols
+            else styles["header"]
+            if i in table_data.center_cols
+            else styles["header_left"],
+        )
         for i, h in enumerate(table_data.headers)
     ]
     data: list[list[Any]] = [header_cells]
 
     for row_idx, row in enumerate(table_data.rows):
-        is_bold = row_idx in table_data.bold_rows
+        is_bold = row_idx in table_data.bold_rows or (
+            table_data.summary_rows > 0 and row_idx >= len(table_data.rows) - table_data.summary_rows
+        )
         cells: list[Any] = []
         for col_idx, cell in enumerate(row):
             text = str(cell) if cell is not None else ""
             if col_idx in table_data.right_cols:
-                style = styles["cell_bold"] if is_bold else styles["cell_right"]
+                style = styles["cell_right"]
+            elif col_idx in table_data.center_cols:
+                style = styles["cell_center"]
             else:
-                style = styles["cell_bold"] if is_bold else styles["cell"]
+                style = styles["cell"]
             cells.append(para(text, style, bold=is_bold) if text else "")
         data.append(cells)
 
@@ -637,6 +677,7 @@ def _build_analytics_table(
                 len(data),
                 summary_rows=table_data.summary_rows,
                 right_cols=table_data.right_cols,
+                center_cols=table_data.center_cols,
             )
         )
     )
@@ -666,8 +707,12 @@ def _analytics_col_fracs(doc_type: str, col_count: int) -> list[float]:
         return [0.06, 0.10, 0.38, 0.14, 0.10, 0.12, 0.10]
     if key == "curva_s" and col_count == 7:
         return [0.14, 0.08, 0.12, 0.12, 0.16, 0.18, 0.20]
+    if key == "histograma" and col_count == 8:
+        return [0.12, 0.07, 0.11, 0.12, 0.11, 0.12, 0.11, 0.12]
     if key == "histograma" and col_count == 7:
         return [0.14, 0.08, 0.14, 0.14, 0.14, 0.14, 0.14]
+    if key in ("rel_insumos", "rel_mao_obra") and col_count == 7:
+        return [0.06, 0.10, 0.38, 0.06, 0.10, 0.12, 0.18]
     return [1.0 / col_count] * col_count
 
 
@@ -687,21 +732,38 @@ def _build_cronograma_table(
         story.append(Spacer(1, 6))
 
     header = ["Etapa", "Descrição", "Valor (R$)"]
-    data: list[list[Any]] = [[para(h, styles["header"]) for h in header]]
+    center_cols = (0,)
+    right_cols = (2,)
+    data: list[list[Any]] = [
+        [
+            para(header[0], styles["header"]),
+            para(header[1], styles["header_left"]),
+            para(header[2], styles["header_right"]),
+        ]
+    ]
     for root in roots:
         if root.row_type != ROW_TYPE_ETAPA and root.level != 0:
             continue
         code = root.code if "." in str(root.code) else f"{root.code}.0"
         total = root.total_price or root.effective_total()
         data.append([
-            code,
+            para(code, styles["cell_center"]),
             para(root.name or "", styles["cell"]),
             para(fmt_money(total), styles["cell_right"]),
         ])
 
     col_widths = [usable_width * 0.12, usable_width * 0.68, usable_width * 0.20]
     table = Table(data, colWidths=col_widths, repeatRows=1)
-    table.setStyle(TableStyle(zebra_style_commands(len(data), summary_rows=0, right_cols=(2,))))
+    table.setStyle(
+        TableStyle(
+            zebra_style_commands(
+                len(data),
+                summary_rows=0,
+                right_cols=right_cols,
+                center_cols=center_cols,
+            )
+        )
+    )
     story.append(table)
     return story
 

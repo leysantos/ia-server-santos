@@ -8,7 +8,9 @@ from typing import Any, Literal
 from pricing.budget.budget_export_tables import (
     ExportTableData,
     _cell_money,
+    _cell_qty,
     _fetch_open_composition_items,
+    _grand_total_for_mode,
     _resolve_open_composition_lookup,
     budget_desoneracao_mode,
 )
@@ -21,7 +23,11 @@ from pricing.schedule.schedule_curves import (
 )
 from pricing.schedule.schedule_models import ProjectSchedule, ScheduleTask
 
-ResourceCategory = Literal["equipamento", "insumo", "mao_obra"]
+from pricing.budget.budget_resource_classification import (
+    ResourceCategory,
+    resolve_resource_category,
+)
+
 PriceMode = Literal["comd", "semd"]
 AbcClass = Literal["A", "B", "C"]
 
@@ -42,11 +48,17 @@ class StackedHistogramMonth:
     month_index: int
     label: str
     period_day: int
+    equipamento_qty: float
     equipamento: float
-    insumo: float
+    mao_obra_qty: float
     mao_obra: float
-    total: float
-    total_with_bdi: float
+    insumo: float = 0.0
+    total: float = 0.0
+    total_qty: float = 0.0
+    total_with_bdi: float = 0.0
+
+
+HOURS_PER_WORKER_MONTH = 22 * 8
 
 
 def _is_service_item(item: BudgetItem) -> bool:
@@ -136,17 +148,6 @@ def _task_for_service(schedule: ProjectSchedule, row_id: str) -> ScheduleTask | 
     return None
 
 
-def _normalize_resource_category(item_type: str) -> ResourceCategory | None:
-    key = item_type.lower().replace(" ", "_")
-    if key == "equipamento":
-        return "equipamento"
-    if key in ("insumo", "material"):
-        return "insumo"
-    if key in ("mao_obra", "maodeobra"):
-        return "mao_obra"
-    return None
-
-
 def _item_cost_for_service(
     cpu_item: dict[str, Any],
     service_qty: float,
@@ -173,7 +174,7 @@ def _category_totals_from_composition(
     }
     composicao_cost = 0.0
     for item in items:
-        cat = _normalize_resource_category(str(item.get("item_type") or ""))
+        cat = resolve_resource_category(item)
         cost = _item_cost_for_service(item, service_qty, mode)
         if cat:
             totals[cat] += cost
@@ -219,6 +220,27 @@ def _overlap_days(
     return (end - start).days + 1
 
 
+def _is_hour_unit(unit: str) -> bool:
+    u = (unit or "").strip().upper()
+    return u in ("H", "HH", "CH", "H/H") or "HORA" in u
+
+
+def _item_coef_qty(cpu_item: dict[str, Any], service_qty: float) -> float:
+    return max(0.0, float(cpu_item.get("coefficient") or 0) * max(0.0, service_qty))
+
+
+def _histogram_item_quantity(
+    cpu_item: dict[str, Any],
+    service_qty: float,
+    category: ResourceCategory,
+) -> float:
+    qty = _item_coef_qty(cpu_item, service_qty)
+    unit = str(cpu_item.get("unit") or "")
+    if category == "mao_obra" and _is_hour_unit(unit):
+        return qty / HOURS_PER_WORKER_MONTH
+    return qty
+
+
 def build_stacked_histogram(
     roots: list[BudgetItem],
     meta: BudgetProjectMetadata,
@@ -226,7 +248,7 @@ def build_stacked_histogram(
     *,
     price_mode: PriceMode | None = None,
 ) -> tuple[list[StackedHistogramMonth], float, float, float, float, float]:
-    """Retorna meses, totais EQ/INS/MO/total/totalWithBdi, services_with_cpu."""
+    """Retorna meses MO+equipamento (qtd e R$), totais EQ/MO/total qty/total R$/legacy bdi=0."""
     if not schedule or not schedule.project_start:
         return [], 0.0, 0.0, 0.0, 0.0, 0.0
 
@@ -238,11 +260,10 @@ def build_stacked_histogram(
     project_start = schedule.project_start
     buckets: list[dict[str, float]] = [
         {
+            "equipamento_qty": 0.0,
             "equipamento": 0.0,
-            "insumo": 0.0,
+            "mao_obra_qty": 0.0,
             "mao_obra": 0.0,
-            "total": 0.0,
-            "total_with_bdi": 0.0,
         }
         for _ in schedule_months
     ]
@@ -260,63 +281,71 @@ def build_stacked_histogram(
         services_with_cpu += 1
 
         service_qty = float(service.quantity or 1)
-        category_totals = _category_totals_from_composition(items, service_qty, mode)
-        category_sum = sum(category_totals.values())
-        if category_sum <= 0:
-            continue
-        bdi_factor = _service_bdi_factor(service, category_sum)
         task = _task_for_service(schedule, service.row_id)
 
-        if not task or not task.early_start or not task.early_finish:
-            b = buckets[0]
-            b["equipamento"] += category_totals["equipamento"]
-            b["insumo"] += category_totals["insumo"]
-            b["mao_obra"] += category_totals["mao_obra"]
-            b["total"] += category_sum
-            b["total_with_bdi"] += category_sum * bdi_factor
-            continue
-
-        duration = max(1, task.duration_days)
-        for i, m in enumerate(schedule_months):
-            overlap = _overlap_days(
-                task.early_start,
-                task.early_finish,
-                m.month_start_iso,
-                m.month_end_iso,
-            )
-            if overlap <= 0:
+        for item in items:
+            cat = resolve_resource_category(item)
+            if cat not in ("mao_obra", "equipamento"):
                 continue
-            factor = overlap / duration
-            b = buckets[i]
-            b["equipamento"] += category_totals["equipamento"] * factor
-            b["insumo"] += category_totals["insumo"] * factor
-            b["mao_obra"] += category_totals["mao_obra"] * factor
-            b["total"] += category_sum * factor
-            b["total_with_bdi"] += category_sum * factor * bdi_factor
+            qty = _histogram_item_quantity(item, service_qty, cat)
+            val = _item_cost_for_service(item, service_qty, mode)
+            if qty <= 0 and val <= 0:
+                continue
+
+            def _apply(factor: float, bucket: dict[str, float]) -> None:
+                if cat == "equipamento":
+                    bucket["equipamento_qty"] += qty * factor
+                    bucket["equipamento"] += val * factor
+                else:
+                    bucket["mao_obra_qty"] += qty * factor
+                    bucket["mao_obra"] += val * factor
+
+            if not task or not task.early_start or not task.early_finish:
+                _apply(1.0, buckets[0])
+                continue
+
+            duration = max(1, task.duration_days)
+            for i, m in enumerate(schedule_months):
+                overlap = _overlap_days(
+                    task.early_start,
+                    task.early_finish,
+                    m.month_start_iso,
+                    m.month_end_iso,
+                )
+                if overlap <= 0:
+                    continue
+                _apply(overlap / duration, buckets[i])
 
     months: list[StackedHistogramMonth] = []
     for i, m in enumerate(schedule_months):
         period_day = _days_between(project_start, m.month_end_iso) + 1
         b = buckets[i]
+        eq_v = b["equipamento"]
+        mo_v = b["mao_obra"]
+        eq_q = b["equipamento_qty"]
+        mo_q = b["mao_obra_qty"]
         months.append(
             StackedHistogramMonth(
                 month_index=i,
                 label=m.label,
                 period_day=period_day,
-                equipamento=b["equipamento"],
-                insumo=b["insumo"],
-                mao_obra=b["mao_obra"],
-                total=b["total"],
-                total_with_bdi=b["total_with_bdi"],
+                equipamento_qty=eq_q,
+                equipamento=eq_v,
+                mao_obra_qty=mo_q,
+                mao_obra=mo_v,
+                insumo=0.0,
+                total=eq_v + mo_v,
+                total_qty=eq_q + mo_q,
+                total_with_bdi=0.0,
             )
         )
 
     totals_eq = sum(m.equipamento for m in months)
-    totals_ins = sum(m.insumo for m in months)
     totals_mo = sum(m.mao_obra for m in months)
     totals_all = sum(m.total for m in months)
-    totals_bdi = sum(m.total_with_bdi for m in months)
-    return months, totals_eq, totals_ins, totals_mo, totals_all, totals_bdi
+    totals_eq_qty = sum(m.equipamento_qty for m in months)
+    totals_mo_qty = sum(m.mao_obra_qty for m in months)
+    return months, totals_eq_qty, totals_mo_qty, totals_eq, totals_mo, totals_all
 
 
 def _fmt_pct(value: float) -> str:
@@ -350,16 +379,77 @@ def build_curva_abc_export_table(roots: list[BudgetItem]) -> ExportTableData:
     return ExportTableData(
         headers=headers,
         rows=rows,
+        center_cols=(0, 1, 6),
         right_cols=(3, 4, 5),
         summary_rows=1,
         bold_rows=bold_rows,
     )
 
 
+@dataclass
+class CurvaSDesoneracaoMeta:
+    adopted_mode: str
+    adopted_label: str
+    total_comd: float
+    total_semd: float
+    adopted_total: float
+    total_financial_curve: float
+    bdi_rate_comd: float
+    bdi_rate_semd: float
+
+
+def build_curva_s_desoneracao_meta(
+    roots: list[BudgetItem],
+    meta: BudgetProjectMetadata | None,
+    total_financial_curve: float,
+) -> CurvaSDesoneracaoMeta:
+    adopted_mode = budget_desoneracao_mode(roots)
+    total_comd = _grand_total_for_mode(roots, "comd")
+    total_semd = _grand_total_for_mode(roots, "semd")
+    adopted_total = total_semd if adopted_mode == "semd" else total_comd
+    bdi = meta.bdi if meta else BudgetProjectMetadata().bdi
+    adopted_label = (
+        "Sem desoneração" if adopted_mode == "semd" else "Com desoneração"
+    )
+    return CurvaSDesoneracaoMeta(
+        adopted_mode=adopted_mode,
+        adopted_label=adopted_label,
+        total_comd=total_comd,
+        total_semd=total_semd,
+        adopted_total=adopted_total,
+        total_financial_curve=total_financial_curve,
+        bdi_rate_comd=bdi.rate_com_desoneracao,
+        bdi_rate_semd=bdi.rate_sem_desoneracao,
+    )
+
+
+def format_curva_s_scenario_block(
+    scenario: CurvaSDesoneracaoMeta,
+) -> tuple[str, list[str]]:
+    mode_short = "SemD" if scenario.adopted_mode == "semd" else "ComD"
+    bdi_comd_pct = f"{scenario.bdi_rate_comd * 100:.2f}%".replace(".", ",")
+    bdi_semd_pct = f"{scenario.bdi_rate_semd * 100:.2f}%".replace(".", ",")
+    extra = (
+        f"Cenário adotado: {scenario.adopted_label} ({mode_short}) — "
+        "critério menor valor integral entre ComD e SemD"
+    )
+    body = [
+        f"Total com desoneração (ComD, BDI {bdi_comd_pct}): {_cell_money(scenario.total_comd)}",
+        f"Total sem desoneração (SemD, BDI {bdi_semd_pct}): {_cell_money(scenario.total_semd)}",
+        f"Total adotado ({mode_short}): {_cell_money(scenario.adopted_total)}",
+        (
+            "Base financeira da curva (soma efetiva por serviço, rateada pelo cronograma): "
+            f"{_cell_money(scenario.total_financial_curve)}"
+        ),
+    ]
+    return extra, body
+
+
 def build_curva_s_export_table(
     roots: list[BudgetItem],
     schedule: ProjectSchedule | None,
-) -> tuple[str | None, ExportTableData]:
+    meta: BudgetProjectMetadata | None = None,
+) -> tuple[str | None, list[str], ExportTableData]:
     if not schedule or not schedule.project_start:
         raise ValueError("Cronograma não sincronizado — sincronize na aba Cronograma antes de exportar.")
 
@@ -395,7 +485,9 @@ def build_curva_s_export_table(
         ])
 
     extra = f"Valor total do orçamento: {_cell_money(total_financial)}"
-    return extra, ExportTableData(
+    scenario = build_curva_s_desoneracao_meta(roots, meta, total_financial)
+    extra, body = format_curva_s_scenario_block(scenario)
+    return extra, body, ExportTableData(
         headers=headers,
         rows=rows,
         right_cols=(1, 2, 3, 4, 5, 6),
@@ -407,7 +499,7 @@ def build_histograma_export_table(
     meta: BudgetProjectMetadata,
     schedule: ProjectSchedule | None,
 ) -> tuple[str | None, ExportTableData]:
-    months, _, _, _, total_cpu, total_bdi = build_stacked_histogram(
+    months, _, _, total_eq, total_mo, total_val = build_stacked_histogram(
         roots, meta, schedule
     )
     if not months:
@@ -420,39 +512,226 @@ def build_histograma_export_table(
     headers = [
         "Mês",
         "Dia acum.",
-        "Insumos (R$)",
-        "Equipamentos (R$)",
-        "Mão de obra (R$)",
-        "Total CPU (R$)",
-        "Ref. com BDI (R$)",
+        "Equip. (qtd)",
+        "Equip. (R$)",
+        "MO (qtd)",
+        "MO (R$)",
+        "Total qtd",
+        "Total (R$)",
     ]
     rows: list[list[Any]] = []
     for m in months:
         rows.append([
             m.label,
             m.period_day,
-            _cell_money(m.insumo),
+            _cell_qty(m.equipamento_qty),
             _cell_money(m.equipamento),
+            _cell_qty(m.mao_obra_qty),
             _cell_money(m.mao_obra),
+            _cell_qty(m.total_qty),
             _cell_money(m.total),
-            _cell_money(m.total_with_bdi),
         ])
 
     rows.append([
         "TOTAL",
         "",
-        _cell_money(sum(m.insumo for m in months)),
-        _cell_money(sum(m.equipamento for m in months)),
-        _cell_money(sum(m.mao_obra for m in months)),
-        _cell_money(total_cpu),
-        _cell_money(total_bdi),
+        _cell_qty(sum(m.equipamento_qty for m in months)),
+        _cell_money(total_eq),
+        _cell_qty(sum(m.mao_obra_qty for m in months)),
+        _cell_money(total_mo),
+        _cell_qty(sum(m.total_qty for m in months)),
+        _cell_money(total_val),
     ])
 
-    extra = f"Preços: {mode_label} · Serviços com CPU rateados pelo cronograma"
+    extra = f"Preços: {mode_label} · MO e equipamentos rateados pelo cronograma"
     return extra, ExportTableData(
         headers=headers,
         rows=rows,
-        right_cols=(1, 2, 3, 4, 5, 6),
+        right_cols=(1, 2, 3, 4, 5, 6, 7),
         summary_rows=1,
         bold_rows={len(rows) - 1},
+    )
+
+
+@dataclass
+class AggregatedResourceLine:
+    code: str
+    description: str
+    unit: str
+    quantity: float
+    unit_price: float
+    direct_total: float
+    total_with_bdi: float
+
+
+def _matches_resource_target(item: dict[str, Any], target: ResourceCategory) -> bool:
+    return resolve_resource_category(item) == target
+
+
+def build_resource_rollup(
+    roots: list[BudgetItem],
+    meta: BudgetProjectMetadata,
+    *,
+    target: ResourceCategory,
+) -> tuple[list[AggregatedResourceLine], int, int, PriceMode]:
+    """Agrega insumos/materiais ou mão de obra de todas as CPUs dos serviços."""
+    mode: PriceMode = budget_desoneracao_mode(roots)  # type: ignore[assignment]
+    comp_cache: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    services = iter_service_items(roots)
+    services_with_cpu = 0
+
+    buckets: dict[tuple[str, str], dict[str, Any]] = {}
+
+    for service in services:
+        lookup = _resolve_open_composition_lookup(service, meta)
+        if not lookup or not service.source_code:
+            continue
+        items = _fetch_open_composition_items(service.source_code, lookup, comp_cache)
+        if not items:
+            continue
+
+        service_qty = float(service.quantity or 1)
+        category_totals = _category_totals_from_composition(items, service_qty, mode)
+        category_sum = sum(category_totals.values())
+        if category_sum <= 0:
+            continue
+
+        has_target = False
+        for item in items:
+            if not _matches_resource_target(item, target):
+                continue
+            has_target = True
+            code = str(item.get("code") or "").strip()
+            unit = str(item.get("unit") or "").strip()
+            key = (code, unit)
+            coef = float(item.get("coefficient") or 0)
+            qty = coef * service_qty
+            direct = _item_cost_for_service(item, service_qty, mode)
+            bdi_factor = _service_bdi_factor(service, category_sum)
+            with_bdi = direct * bdi_factor
+
+            if key not in buckets:
+                buckets[key] = {
+                    "code": code,
+                    "description": str(item.get("description") or "").strip(),
+                    "unit": unit,
+                    "quantity": 0.0,
+                    "direct_total": 0.0,
+                    "total_with_bdi": 0.0,
+                }
+            bucket = buckets[key]
+            if not bucket["description"]:
+                bucket["description"] = str(item.get("description") or "").strip()
+            bucket["quantity"] += qty
+            bucket["direct_total"] += direct
+            bucket["total_with_bdi"] += with_bdi
+
+        if has_target:
+            services_with_cpu += 1
+
+    lines: list[AggregatedResourceLine] = []
+    for bucket in sorted(buckets.values(), key=lambda b: (b["code"], b["unit"])):
+        qty = bucket["quantity"]
+        direct = bucket["direct_total"]
+        unit_price = direct / qty if qty > 0 else 0.0
+        lines.append(
+            AggregatedResourceLine(
+                code=bucket["code"],
+                description=bucket["description"],
+                unit=bucket["unit"],
+                quantity=qty,
+                unit_price=unit_price,
+                direct_total=direct,
+                total_with_bdi=bucket["total_with_bdi"],
+            )
+        )
+    return lines, len(services), services_with_cpu, mode
+
+
+def _build_resource_report_export_table(
+    roots: list[BudgetItem],
+    meta: BudgetProjectMetadata,
+    *,
+    target: ResourceCategory,
+    empty_message: str,
+) -> tuple[str | None, ExportTableData]:
+    lines, total_services, services_with_cpu, mode = build_resource_rollup(
+        roots, meta, target=target
+    )
+    if not lines:
+        raise ValueError(empty_message)
+
+    mode_label = "Com desoneração" if mode == "comd" else "Sem desoneração"
+    skipped = total_services - services_with_cpu
+    extra_parts = [f"Preços: {mode_label}", f"Serviços com CPU: {services_with_cpu}"]
+    if skipped > 0:
+        extra_parts.append(f"Serviços sem CPU: {skipped}")
+    extra = " · ".join(extra_parts)
+
+    headers = [
+        "Item",
+        "Código",
+        "Descrição",
+        "Un",
+        "Qtd",
+        "Valor unit.",
+        "Total linha (R$)",
+    ]
+    rows: list[list[Any]] = []
+    for idx, line in enumerate(lines):
+        rows.append([
+            str(idx + 1),
+            line.code,
+            line.description,
+            line.unit,
+            _cell_qty(line.quantity),
+            _cell_money(line.unit_price),
+            _cell_money(line.direct_total),
+        ])
+
+    direct_grand = sum(line.direct_total for line in lines)
+    with_bdi_grand = sum(line.total_with_bdi for line in lines)
+    bdi_val = with_bdi_grand - direct_grand
+
+    summary_start = len(rows)
+    rows.append(["", "", "TOTAL SEM BDI", "", "", "", _cell_money(direct_grand)])
+    rows.append(["", "", "VALOR BDI", "", "", "", _cell_money(bdi_val)])
+    rows.append(["", "", "TOTAL COM BDI", "", "", "", _cell_money(with_bdi_grand)])
+
+    return extra, ExportTableData(
+        headers=headers,
+        rows=rows,
+        right_cols=(4, 5, 6),
+        summary_rows=3,
+        bold_rows={summary_start, summary_start + 1, summary_start + 2},
+    )
+
+
+def build_insumos_export_table(
+    roots: list[BudgetItem],
+    meta: BudgetProjectMetadata,
+) -> tuple[str | None, ExportTableData]:
+    return _build_resource_report_export_table(
+        roots,
+        meta,
+        target="insumo",
+        empty_message=(
+            "Relatório de insumos indisponível — verifique CPUs dos serviços "
+            "(código de composição e bases de preço)."
+        ),
+    )
+
+
+def build_mao_obra_export_table(
+    roots: list[BudgetItem],
+    meta: BudgetProjectMetadata,
+) -> tuple[str | None, ExportTableData]:
+    return _build_resource_report_export_table(
+        roots,
+        meta,
+        target="mao_obra",
+        empty_message=(
+            "Relatório de mão de obra indisponível — verifique CPUs dos serviços "
+            "(código de composição e bases de preço)."
+        ),
     )

@@ -2,6 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from app.schemas.copilot import CopilotRequest, CopilotResponse
 from app.services.copilot_service import CopilotService
+from core.chat.chat_attachment_service import resolve_prompt_with_attachments
 from core.evaluation_v2.evaluation_engine import evaluate
 from core.evaluation_v2.evaluation_logger import save_evaluation
 
@@ -33,8 +34,12 @@ def copilot(request: CopilotRequest, background_tasks: BackgroundTasks):
     Evaluation Loop v2: scores na resposta; persistência PostgreSQL em background.
     """
     try:
+        enriched_text, _ = resolve_prompt_with_attachments(
+            request.text,
+            request.attachment_ids,
+        )
         result = copilot_service.process(
-            text=request.text,
+            text=enriched_text,
             use_rag=request.use_rag,
             persist=request.persist,
         )

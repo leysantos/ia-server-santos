@@ -679,11 +679,36 @@ class BudgetDocument(Base):
         nullable=True,
         index=True,
     )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    empresa_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     grand_total: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     obra_type: Mapped[str] = mapped_column(String(8), nullable=False, default="RF")
     input_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    baseline_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("budget_documents.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    revision_label: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    baseline_frozen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    baseline_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -701,13 +726,93 @@ class BudgetDocument(Base):
             "title": self.title,
             "orcamento": str(project.get("orcamento") or ""),
             "project_id": str(self.project_id) if self.project_id else None,
+            "user_id": str(self.user_id) if self.user_id else None,
+            "empresa_id": str(self.empresa_id) if self.empresa_id else None,
+            "version": self.version,
             "session_id": self.session_id,
             "grand_total": self.grand_total,
             "obra_type": self.obra_type,
             "input_text": self.input_text,
+            "baseline_document_id": str(self.baseline_document_id) if self.baseline_document_id else None,
+            "revision_number": self.revision_number or 0,
+            "revision_label": self.revision_label,
+            "baseline_frozen": self.baseline_frozen_at is not None,
+            "baseline_frozen_at": self.baseline_frozen_at.isoformat() if self.baseline_frozen_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class BudgetSessionLock(Base):
+    """Lock exclusivo de edição por session_id ativa (B28)."""
+
+    __tablename__ = "budget_session_locks"
+
+    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    budget_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("budget_documents.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    locked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class BudgetAuditLog(Base):
+    """Trilha de alterações em orçamento — células, BDI, CPU."""
+
+    __tablename__ = "budget_audit_log"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    budget_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("budget_documents.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    action: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    row_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    row_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    field: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    old_value: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    new_value: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+
+class BudgetSessionSnapshot(Base):
+    """Snapshot de sessão ativa — sobrevive restart da API (B18)."""
+
+    __tablename__ = "budget_session_snapshots"
+
+    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
 
 
 class ProjectActivityEvent(Base):

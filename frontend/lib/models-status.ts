@@ -7,7 +7,6 @@ export interface ModelsStatusDisplay {
 
 /** Ordem de exibição no rótulo WSL (alinhada ao backend). */
 const MODEL_DISPLAY_PRIORITY = [
-  "qwen3.6",
   "gemma4",
   "deepseek-r1",
   "qwen3-coder",

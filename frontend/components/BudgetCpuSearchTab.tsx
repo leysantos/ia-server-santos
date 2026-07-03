@@ -1,14 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/services/api";
-import type { BudgetPriceBaseSelection, OpenCompositionDetail, OpenCompositionSummary } from "@/types/api";
+import type { BudgetPriceBaseSelection, BudgetSessionResponse, OpenCompositionDetail, OpenCompositionSummary } from "@/types/api";
+import CpuExportPdfButton from "@/components/CpuExportPdfButton";
 import OpenCompositionLookupPanel from "@/components/OpenCompositionLookupPanel";
 import { useBudgetCpuFilters } from "@/components/BudgetCpuFiltersBar";
 import OpenCompositionPreview, { refLabelFromReference } from "@/components/OpenCompositionPreview";
 import { formatBrl } from "@/lib/open-composition-ui";
+import {
+  buildPriceBaseSelection,
+  priceBasesEqual,
+  upsertPriceBaseSelection,
+} from "@/lib/price-base-sources";
 import { referenceLabelFromKey } from "@/lib/brazil-ufs";
-import { budgetInput } from "@/lib/budget-ui";
+import { budgetBtn, budgetInput } from "@/lib/budget-ui";
 import { cn } from "@/lib/utils";
 
 const MIN_QUERY_LEN = 2;
@@ -17,9 +23,19 @@ const SEARCH_LIMIT = 20;
 
 interface BudgetCpuSearchTabProps {
   priceBases?: BudgetPriceBaseSelection[];
+  session?: BudgetSessionResponse | null;
+  onSessionUpdate?: (session: BudgetSessionResponse) => void;
+  onPriceBasesChange?: (next: BudgetPriceBaseSelection[]) => void;
+  onError?: (err: unknown, title?: string) => void;
 }
 
-export default function BudgetCpuSearchTab({ priceBases = [] }: BudgetCpuSearchTabProps) {
+export default function BudgetCpuSearchTab({
+  priceBases = [],
+  session,
+  onSessionUpdate,
+  onPriceBasesChange,
+  onError,
+}: BudgetCpuSearchTabProps) {
   const filters = useBudgetCpuFilters(priceBases);
   const [searchText, setSearchText] = useState("");
   const [results, setResults] = useState<OpenCompositionSummary[]>([]);
@@ -29,7 +45,22 @@ export default function BudgetCpuSearchTab({ priceBases = [] }: BudgetCpuSearchT
   const [searchPreviewLoading, setSearchPreviewLoading] = useState(false);
   const [selectedCode, setSelectedCode] = useState<string | null>(null);
   const [searchPriceMode, setSearchPriceMode] = useState<"comd" | "semd">("comd");
+  const [launchEtapaCode, setLaunchEtapaCode] = useState("");
+  const [launchQty, setLaunchQty] = useState("1");
+  const [launching, setLaunching] = useState(false);
   const searchSeqRef = useRef(0);
+
+  const etapas = useMemo(
+    () =>
+      (session?.rows ?? []).filter((r) => r.row_type === "ETAPA" && r.level === 0),
+    [session?.rows]
+  );
+
+  useEffect(() => {
+    if (!launchEtapaCode && etapas.length > 0) {
+      setLaunchEtapaCode(etapas[0].code);
+    }
+  }, [etapas, launchEtapaCode]);
 
   const periodLabel =
     filters.periodOptions.find((r) => r.reference === filters.reference)?.label ??
@@ -56,6 +87,61 @@ export default function BudgetCpuSearchTab({ priceBases = [] }: BudgetCpuSearchT
     },
     [filters.reference, filters.uf]
   );
+
+  const handleLaunchToEtapa = useCallback(async () => {
+    if (!session?.session_id || !searchPreview || !launchEtapaCode) return;
+    const qty = parseFloat(launchQty.replace(",", "."));
+    if (Number.isNaN(qty) || qty < 0) {
+      onError?.(new Error("Quantidade inválida"), "Lançar CPU");
+      return;
+    }
+    const unitPrice =
+      searchPriceMode === "semd"
+        ? searchPreview.total_price_sem ?? searchPreview.analytical_total_sem ?? searchPreview.total_price
+        : searchPreview.total_price;
+    setLaunching(true);
+    try {
+      const baseSelection = buildPriceBaseSelection(
+        filters.source,
+        filters.reference,
+        filters.uf,
+        filters.references
+      );
+      const nextBases = upsertPriceBaseSelection(priceBases, baseSelection);
+      if (!priceBasesEqual(priceBases, nextBases)) {
+        onPriceBasesChange?.(nextBases);
+      }
+
+      const updated = await api.pricingAddService(session.session_id, {
+        etapa_code: launchEtapaCode,
+        code: searchPreview.code,
+        description: searchPreview.description,
+        unit: searchPreview.unit,
+        price: unitPrice,
+        source: filters.source || "sinapi",
+        quantity: qty,
+      });
+      onSessionUpdate?.(updated);
+    } catch (err) {
+      onError?.(err, "Erro ao lançar composição na etapa");
+    } finally {
+      setLaunching(false);
+    }
+  }, [
+    session?.session_id,
+    searchPreview,
+    launchEtapaCode,
+    launchQty,
+    searchPriceMode,
+    filters.source,
+    filters.reference,
+    filters.uf,
+    filters.references,
+    priceBases,
+    onPriceBasesChange,
+    onSessionUpdate,
+    onError,
+  ]);
 
   useEffect(() => {
     const q = searchText.trim();
@@ -211,11 +297,66 @@ export default function BudgetCpuSearchTab({ priceBases = [] }: BudgetCpuSearchT
             </div>
             {searchPreviewLoading && <p className="text-sm text-slate-500">Carregando CPU…</p>}
             {searchPreview && (
-              <OpenCompositionPreview
-                preview={searchPreview}
-                priceMode={searchPriceMode}
-                referenceLabel={refLabelFromReference(filters.reference, periodLabel)}
-              />
+              <>
+                <div className="mb-3 flex justify-end">
+                  <CpuExportPdfButton
+                    code={searchPreview.code}
+                    uf={filters.uf}
+                    reference={filters.reference}
+                    priceMode={searchPriceMode}
+                  />
+                </div>
+                {session && etapas.length > 0 && onSessionUpdate && (
+                  <div
+                    className="mb-4 flex flex-wrap items-end gap-3 rounded-xl bg-cyan-500/5 p-3 ring-1 ring-cyan-500/20"
+                    data-testid="budget-cpu-launch-panel"
+                  >
+                    <label className="min-w-[10rem] flex-1 text-sm text-slate-400">
+                      Lançar na etapa
+                      <select
+                        value={launchEtapaCode}
+                        onChange={(e) => setLaunchEtapaCode(e.target.value)}
+                        className="mt-1 w-full rounded-lg border-0 bg-slate-800 px-3 py-2 text-sm text-white ring-1 ring-slate-700"
+                        data-testid="budget-cpu-launch-etapa"
+                      >
+                        {etapas.map((e) => (
+                          <option key={e.code} value={e.code}>
+                            {e.code} — {e.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="w-24 text-sm text-slate-400">
+                      Qtd.
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={launchQty}
+                        onChange={(e) => setLaunchQty(e.target.value)}
+                        className={cn(budgetInput, "mt-1 w-full")}
+                        data-testid="budget-cpu-launch-qty"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      disabled={launching || !launchEtapaCode}
+                      onClick={() => void handleLaunchToEtapa()}
+                      className={cn(
+                        budgetBtn,
+                        "bg-cyan-600/25 px-4 py-2 text-sm text-cyan-100 ring-cyan-500/40 hover:bg-cyan-600/35 disabled:opacity-40"
+                      )}
+                      data-testid="budget-cpu-launch-btn"
+                    >
+                      {launching ? "Lançando…" : "Lançar na etapa"}
+                    </button>
+                  </div>
+                )}
+                <OpenCompositionPreview
+                  preview={searchPreview}
+                  priceMode={searchPriceMode}
+                  referenceLabel={refLabelFromReference(filters.reference, periodLabel)}
+                />
+              </>
             )}
           </div>
         )}

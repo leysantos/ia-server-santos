@@ -7,6 +7,10 @@ class CopilotRequest(BaseModel):
     text: str = Field(..., min_length=1, description="Solicitação de engenharia civil")
     use_rag: bool = Field(default=True, description="Ativar RAG v2 por disciplina via dispatcher")
     persist: bool = Field(default=False, description="Persistir execuções no PostgreSQL")
+    attachment_ids: Optional[list[str]] = Field(
+        default=None,
+        description="IDs de anexos preparados via POST /chat/attachments",
+    )
 
 
 class CopilotEvaluation(BaseModel):

@@ -8,7 +8,6 @@ from config.settings import OLLAMA_BASE_URL
 
 
 _LLM_DISPLAY_PRIORITY = (
-    "qwen3.6",
     "gemma4",
     "deepseek-r1",
     "qwen3-coder",

@@ -38,7 +38,7 @@ def test_case1_steel_industrial_40m():
     assert norms == ["NBR 8800", "NBR 14762", "NBR 6123"]
 
     model = ModelSelector().select(result["system"], result["complexity"])
-    assert model == "qwen3.6:latest"
+    assert model == "qwen3:14b"
 
 
 def test_case2_residential_concrete():
@@ -52,7 +52,7 @@ def test_case2_residential_concrete():
     assert norms == ["NBR 6118", "NBR 8681"]
 
     model = ModelSelector().select(result["system"], result["complexity"])
-    assert model == "qwen2.5-coder:latest"
+    assert model == "qwen3:8b"
 
 
 def test_case3_timber_light_roof():
@@ -64,7 +64,7 @@ def test_case3_timber_light_roof():
     assert norms == ["NBR 7190"]
 
     model = ModelSelector().select(result["system"], result["complexity"])
-    assert model == "qwen2.5-coder:latest"
+    assert model == "qwen3:8b"
 
 
 def test_prompt_builder_includes_system_and_norms():
@@ -85,7 +85,7 @@ def test_engine_full_pipeline():
     )
 
     assert ctx.system == "STEEL_STRUCTURE"
-    assert ctx.model == "qwen3.6:latest"
+    assert ctx.model == "qwen3:14b"
     assert "NBR 8800" in ctx.norms
     assert "NBR 8800 trechos relevantes" in prompt
 
@@ -99,7 +99,7 @@ def test_dispatch_adapter_success(monkeypatch):
     agent = MagicMock()
     agent.use_rag = False
     agent.retrieve_context.return_value = ""
-    agent.llm_client.generate.return_value = ("Resposta técnica SIE", "qwen3.6:latest")
+    agent.llm_client.generate.return_value = ("Resposta técnica SIE", "qwen3:14b")
     agent.build_extra.return_value = {"normas_base": ["NBR 8800"]}
     agent.build_response.return_value = {
         "agent": "estruturas_agent",
@@ -117,7 +117,7 @@ def test_dispatch_adapter_success(monkeypatch):
     assert result is not None
     agent.llm_client.generate.assert_called_once()
     call_kwargs = agent.llm_client.generate.call_args
-    assert call_kwargs.kwargs.get("model") == "qwen3.6:latest" or call_kwargs[1].get("model") == "qwen3.6:latest"
+    assert call_kwargs.kwargs.get("model") == "qwen3:14b" or call_kwargs[1].get("model") == "qwen3:14b"
 
 
 def test_dispatch_adapter_fallback_on_failure():

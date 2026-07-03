@@ -8,7 +8,7 @@ from config.settings import OLLAMA_CHAT_MODEL, OLLAMA_LLM_MODEL
 
 
 class ModelSelector:
-    MODEL_LIGHT = OLLAMA_CHAT_MODEL  # qwen3:8b
+    MODEL_LIGHT = OLLAMA_CHAT_MODEL  # phi3:mini (chat leve)
     MODEL_HEAVY = OLLAMA_LLM_MODEL   # qwen3:14b
 
     def select(self, system: str, complexity: str) -> str:

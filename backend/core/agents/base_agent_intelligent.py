@@ -318,6 +318,9 @@ RESPOSTA TÉCNICA ESTRUTURADA:"""
         if vram_notice:
             self._llm_status_note = vram_notice
         model = effective or model
+        from core.runtime.ollama_defaults import merge_llm_options
+
+        stream_options = merge_llm_options(ollama_options)
         client = OllamaClient(timeout=timeout)
         tokens: list[str] = []
         try:
@@ -325,7 +328,7 @@ RESPOSTA TÉCNICA ESTRUTURADA:"""
                 prompt,
                 model=model,
                 fallback_models=fallbacks or None,
-                options=ollama_options or None,
+                options=stream_options or None,
             ):
                 self._last_model_used = model_used
                 tokens.append(token)

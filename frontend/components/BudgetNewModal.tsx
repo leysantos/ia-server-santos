@@ -20,6 +20,7 @@ export interface BudgetNewModalProps {
   onClose: () => void;
   onSelectBlank: () => void;
   onSelectSkeleton: (skeleton: BudgetSkeleton, projeto: string) => void;
+  onImportPpd?: (file: File) => void;
 }
 
 export default function BudgetNewModal({
@@ -29,6 +30,7 @@ export default function BudgetNewModal({
   onClose,
   onSelectBlank,
   onSelectSkeleton,
+  onImportPpd,
 }: BudgetNewModalProps) {
   const [skeletons, setSkeletons] = useState<BudgetSkeleton[]>([]);
   const [fetching, setFetching] = useState(false);
@@ -38,6 +40,7 @@ export default function BudgetNewModal({
   const [selection, setSelection] = useState<string>(BLANK_VALUE);
   const [pos, setPos] = useState({ x: 80, y: 80 });
   const [mounted, setMounted] = useState(false);
+  const ppdInputRef = useRef<HTMLInputElement>(null);
 
   const dragRef = useRef<{
     startX: number;
@@ -375,6 +378,37 @@ export default function BudgetNewModal({
               <p className="mt-1 text-[10px] text-slate-600">
                 {selectedSkeleton.etapas.length} etapa(s) · BDI {selectedSkeleton.obra_type}
               </p>
+            </div>
+          )}
+
+          {onImportPpd && (
+            <div className="rounded-lg border border-dashed border-violet-500/30 bg-violet-500/5 px-3 py-3">
+              <p className="text-xs font-medium text-violet-200">Importar planilha PPD</p>
+              <p className="mt-1 text-[10px] text-slate-500">
+                Arquivo .xlsm / .xlsx MC/OR — converte em sessão editável no sistema.
+              </p>
+              <input
+                ref={ppdInputRef}
+                type="file"
+                accept=".xlsm,.xlsx,.xls"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onImportPpd(file);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => ppdInputRef.current?.click()}
+                className={cn(
+                  budgetBtn,
+                  "mt-2 w-full border border-violet-500/40 bg-violet-500/10 px-3 py-2 text-xs text-violet-100 hover:bg-violet-500/20"
+                )}
+              >
+                Selecionar arquivo PPD…
+              </button>
             </div>
           )}
         </div>

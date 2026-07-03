@@ -60,12 +60,11 @@ def _active_gpu_jobs() -> list[dict[str, Any]]:
 
 
 _HEAVY_MODEL_MARKERS = (
-    "qwen3.6",
+    "qwen3:14",
+    "qwen3-coder",
     "gemma4",
     "gemma3:12",
     "deepseek-r1",
-    "qwen3-coder",
-    "qwen3:14",
 )
 
 
@@ -117,11 +116,11 @@ def resolve_llm_stream_config(
             router = get_model_router()
             fallbacks = [
                 router.model_map.get("engineering_secondary", "gemma4:latest"),
-                router.model_map.get("engineering_fallback", "qwen2.5-coder:latest"),
+                router.model_map.get("engineering_fallback", "qwen3:8b"),
                 router.model_map.get("chat_natural", "mistral:7b"),
             ]
         except Exception:
-            fallbacks = ["gemma4:latest", "qwen2.5-coder:latest", "mistral:7b"]
+            fallbacks = ["gemma4:latest", "qwen3:8b", "mistral:7b"]
 
     seen: set[str] = set()
     deduped: list[str] = []
@@ -146,8 +145,16 @@ def resolve_chat_runtime() -> ChatRuntimePlan:
     vram_threshold = float(getattr(settings, "OLLAMA_CHAT_GPU_BUSY_VRAM_PCT", 75.0))
 
     vision_jobs = [j for j in _active_gpu_jobs() if j.get("kind") == "vision"]
+    other_gpu_jobs = [
+        j
+        for j in _active_gpu_jobs()
+        if j.get("kind") in {"budget", "orchestrator", "review"}
+    ]
     vram_pct = _vram_pressure_percent()
-    gpu_busy = bool(vision_jobs) or (vram_pct is not None and vram_pct >= vram_threshold)
+
+    # Só desvia chat para CPU quando há jobs GPU explícitos (visão/orçamento/review).
+    # VRAM alta sozinha é normal com modelo já carregado — não forçar CPU (muito lento).
+    gpu_busy = bool(vision_jobs) or bool(other_gpu_jobs)
 
     if not gpu_busy:
         return ChatRuntimePlan(

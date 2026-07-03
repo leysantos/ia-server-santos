@@ -36,6 +36,16 @@
   }
 }
 
+@media (max-width: 1023px) {
+  :root {
+    --mobile-nav-h: 3.75rem;
+  }
+
+  .mobile-scroll-area {
+    padding-bottom: calc(var(--mobile-nav-h) + env(safe-area-inset-bottom, 0px));
+  }
+}
+
 @media (max-width: 767px) {
   :root {
     --shell-gutter-x: 1rem;

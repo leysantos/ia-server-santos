@@ -28,8 +28,84 @@ class ExportTableData:
     headers: list[str]
     rows: list[list[Any]]
     right_cols: tuple[int, ...] = ()
+    center_cols: tuple[int, ...] = ()
     summary_rows: int = 0
     bold_rows: set[int] = field(default_factory=set)
+
+    def __post_init__(self) -> None:
+        inferred_center, inferred_right = infer_export_table_alignments(self.headers)
+        center = set(self.center_cols or inferred_center)
+        right = set(self.right_cols or inferred_right)
+        for idx, header in enumerate(self.headers):
+            if _header_is_center_column(header):
+                center.add(idx)
+            if _header_is_numeric_column(header):
+                right.add(idx)
+        center -= right
+        self.center_cols = tuple(sorted(center))
+        self.right_cols = tuple(sorted(right))
+
+
+def _norm_header_label(header: str) -> str:
+    return re.sub(r"\s+", " ", (header or "").strip().lower())
+
+
+def _header_is_center_column(header: str) -> bool:
+    key = _norm_header_label(header)
+    return key in {
+        "item",
+        "código",
+        "codigo",
+        "un",
+        "und",
+        "unidade",
+        "classe",
+        "tipo",
+        "etapa",
+        "mês",
+        "mes",
+    }
+
+
+def _header_is_numeric_column(header: str) -> bool:
+    key = _norm_header_label(header)
+    if key.startswith("dia acum"):
+        return True
+    markers = (
+        "qtd",
+        "quantidade",
+        "(r$)",
+        "r$)",
+        "unit.",
+        "unit ",
+        "valor",
+        "total",
+        "financeiro",
+        "físico",
+        "fisico",
+        "ref.",
+        "ref ",
+    )
+    if any(m in key for m in markers):
+        return True
+    if "%" in key:
+        return True
+    return False
+
+
+def infer_export_table_alignments(
+    headers: list[str],
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Retorna (center_cols, right_cols) com base nos cabeçalhos."""
+    center: set[int] = set()
+    right: set[int] = set()
+    for idx, header in enumerate(headers):
+        if _header_is_center_column(header):
+            center.add(idx)
+        if _header_is_numeric_column(header):
+            right.add(idx)
+    center -= right
+    return tuple(sorted(center)), tuple(sorted(right))
 
 
 def flatten_budget_rows(
@@ -438,13 +514,23 @@ def build_export_table(
         from pricing.schedule.schedule_models import ProjectSchedule
 
         sched = schedule if isinstance(schedule, ProjectSchedule) else ProjectSchedule.from_dict(schedule)
-        extra, table = build_curva_s_export_table(roots, sched)
-        return table, extra, []
+        extra, body, table = build_curva_s_export_table(roots, sched, meta)
+        return table, extra, body
     if key == "histograma":
         from pricing.budget.budget_analytics import build_histograma_export_table
         from pricing.schedule.schedule_models import ProjectSchedule
 
         sched = schedule if isinstance(schedule, ProjectSchedule) else ProjectSchedule.from_dict(schedule)
         extra, table = build_histograma_export_table(roots, meta, sched)
+        return table, extra, []
+    if key == "rel_insumos":
+        from pricing.budget.budget_analytics import build_insumos_export_table
+
+        extra, table = build_insumos_export_table(roots, meta)
+        return table, extra, []
+    if key == "rel_mao_obra":
+        from pricing.budget.budget_analytics import build_mao_obra_export_table
+
+        extra, table = build_mao_obra_export_table(roots, meta)
         return table, extra, []
     raise ValueError(f"Tipo de documento inválido: {doc_type}")

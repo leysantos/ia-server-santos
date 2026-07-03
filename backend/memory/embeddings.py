@@ -5,6 +5,7 @@ import time
 import requests
 
 from config.settings import OLLAMA_BASE_URL, OLLAMA_EMBED_MODEL
+from core.runtime.ollama_defaults import ollama_keep_alive
 from memory.embedding_cache import EmbeddingCache
 
 logger = logging.getLogger(__name__)
@@ -16,7 +17,7 @@ _MAX_EMBED_CHARS = 4000
 _EMBED_RETRIES = 4
 _EMBED_RETRY_DELAYS = (0.5, 1.5, 3.0, 6.0)
 _EMBED_SERVER_ERROR_DELAYS = (2.0, 5.0, 10.0, 15.0)
-_MIN_EMBED_INTERVAL = 0.15
+_MIN_EMBED_INTERVAL = 0.05
 _EMBED_BATCH_SIZE = 4
 
 _throttle_lock = threading.Lock()
@@ -94,7 +95,7 @@ class NomicEmbedder:
         self._throttle()
         response = requests.post(
             f"{self.base_url}/api/embed",
-            json={"model": self.model, "input": prompts},
+            json={"model": self.model, "input": prompts, "keep_alive": ollama_keep_alive()},
             timeout=120,
         )
         response.raise_for_status()
@@ -110,7 +111,7 @@ class NomicEmbedder:
         self._throttle()
         response = requests.post(
             f"{self.base_url}/api/embeddings",
-            json={"model": self.model, "prompt": prompt},
+            json={"model": self.model, "prompt": prompt, "keep_alive": ollama_keep_alive()},
             timeout=90,
         )
         response.raise_for_status()

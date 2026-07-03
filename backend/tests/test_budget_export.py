@@ -282,7 +282,9 @@ def test_mcq_pdf_column_widths_and_qty_format():
     )
     table = build_mcq_table([etapa], usable_width=500.0)[0]
     row = table._cellvalues[2]  # serviço (header + etapa + serviço)
-    assert row[4] == "12,35"
+    qty_cell = row[4]
+    qty_text = qty_cell if isinstance(qty_cell, str) else getattr(qty_cell, "text", str(qty_cell))
+    assert qty_text == "12,35"
 
 
 def test_mcq_pdf_portrait_orientation(export_session):
@@ -412,7 +414,9 @@ def test_landscape_budget_template_covers_sintetico_analitico_cronograma():
     from pricing.budget.budget_pdf_landscape_template import LANDSCAPE_BUDGET_DOC_TYPES, TEMPLATE_ID
 
     assert TEMPLATE_ID == "landscape_budget_v1"
-    assert LANDSCAPE_BUDGET_DOC_TYPES == frozenset({"orc_sintetico", "orc_analitico", "cronograma"})
+    assert {"orc_sintetico", "orc_analitico", "cronograma", "curva_abc"}.issubset(
+        LANDSCAPE_BUDGET_DOC_TYPES
+    )
 
 
 def test_export_branding_persists_header_and_footer(export_session, tmp_path, monkeypatch):
@@ -689,3 +693,82 @@ def test_export_curva_s_xlsx(export_session_with_schedule):
 def test_export_curva_s_without_schedule_raises(export_session):
     with pytest.raises(ValueError, match="Cronograma"):
         export_session_pdf(export_session.id, "curva_s")
+
+
+@pytest.fixture
+def export_session_with_cpu(export_session):
+    from unittest.mock import patch
+
+    fake_cpu = {
+        "items": [
+            {
+                "item_type": "insumo",
+                "code": "88316",
+                "description": "Cimento Portland",
+                "unit": "kg",
+                "coefficient": 5.2,
+                "unit_price": 1.5,
+                "partial_cost": 7.8,
+            },
+            {
+                "item_type": "mao_obra",
+                "code": "0101",
+                "description": "Pedreiro",
+                "unit": "h",
+                "coefficient": 0.5,
+                "unit_price": 20.0,
+                "partial_cost": 10.0,
+            },
+        ]
+    }
+    export_session.roots[0].children[0].source_code = "12345"
+    export_session.project.price_bases = [
+        {"source": "sinapi", "label": "SINAPI", "enabled": True, "uf": "AM", "reference": "BR-2026-05"}
+    ]
+    patcher = patch(
+        "pricing.tools.budget_pricing_tools.BudgetPricingTools.get_open_composition",
+        return_value=fake_cpu,
+    )
+    export_session._cpu_patch = patcher
+    patcher.start()
+    yield export_session
+    patcher.stop()
+
+
+def test_export_rel_insumos_pdf(export_session_with_cpu):
+    pdf = export_session_pdf(export_session_with_cpu.id, "rel_insumos")
+    assert pdf[:4] == b"%PDF"
+
+
+def test_export_rel_mao_obra_pdf(export_session_with_cpu):
+    pdf = export_session_pdf(export_session_with_cpu.id, "rel_mao_obra")
+    assert pdf[:4] == b"%PDF"
+
+
+def test_export_rel_insumos_xlsx(export_session_with_cpu):
+    data = export_session_xlsx(export_session_with_cpu.id, "rel_insumos")
+    assert len(data) > 2000
+
+
+def test_export_rel_mao_obra_xlsx(export_session_with_cpu):
+    data = export_session_xlsx(export_session_with_cpu.id, "rel_mao_obra")
+    assert len(data) > 2000
+
+
+def test_export_proposta_comercial_pdf_and_xlsx(export_session):
+    """B20/B21 — export CPQ proposta comercial."""
+    export_session.project.commercial_margin_pct = 8.5
+    export_session.project.commercial_client = "Cliente Teste"
+    pdf = export_session_pdf(export_session.id, "proposta_comercial")
+    assert pdf[:4] == b"%PDF"
+    xlsx = export_session_xlsx(export_session.id, "proposta_comercial")
+    assert xlsx[:2] == b"PK"
+
+
+def test_compliance_pack_json_export(export_session):
+    """B20/B22 — pacote compliance licitação."""
+    from pricing.budget.budget_compliance_pack import compliance_pack_json
+
+    raw = compliance_pack_json(export_session)
+    assert b"checklist_lei_14133" in raw
+    assert b"L3" in raw

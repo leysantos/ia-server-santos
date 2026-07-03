@@ -7,6 +7,10 @@ class AedRequest(BaseModel):
     text: str = Field(..., min_length=1, description="Problema de engenharia para análise AED")
     use_rag: bool = Field(default=True, description="Usar RAG v2 na simulação normativa")
     persist: bool = Field(default=False, description="Persistir execução em aed_runs")
+    attachment_ids: Optional[list[str]] = Field(
+        default=None,
+        description="IDs de anexos preparados via POST /chat/attachments",
+    )
 
 
 class AedResponse(BaseModel):

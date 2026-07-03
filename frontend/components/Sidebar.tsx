@@ -106,7 +106,7 @@ export default function Sidebar() {
   const initials = (user?.full_name || user?.username || "U").slice(0, 1).toUpperCase();
 
   return (
-    <aside className="flex h-full w-56 shrink-0 flex-col border-r border-white/5 bg-surface/90 backdrop-blur-xl md:w-64">
+    <aside className="hidden h-full w-56 shrink-0 flex-col border-r border-white/5 bg-surface/90 backdrop-blur-xl md:w-64 lg:flex">
       <ShellHeader>
         <Link href="/" className="group flex min-w-0 items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-brand-600 shadow-brand-sm ring-1 ring-brand-400/20">

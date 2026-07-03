@@ -60,6 +60,12 @@ def init_db() -> None:
     """Cria todas as tabelas definidas nos models."""
     from core.database.migrate_auth import migrate_auth
     from core.database.migrate_user_roles import migrate_user_roles
+    from core.database.migrate_budget_ownership import migrate_budget_ownership
+    from core.database.migrate_budget_audit import migrate_budget_audit
+    from core.database.migrate_budget_session_snapshot import migrate_budget_session_snapshot
+    from core.database.migrate_budget_revisions import migrate_budget_revisions
+    from core.database.migrate_budget_tenant import migrate_budget_tenant
+    from core.database.migrate_budget_session_lock import migrate_budget_session_lock
     from core.database.migrate_audit_fks import migrate_audit_fks
     from core.database.migrate_project_memory import migrate_project_memory
     from core.database.migrate_project_review import migrate_project_review
@@ -71,9 +77,15 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     migrate_workspace(engine)
     migrate_audit_fks(engine)
+    migrate_budget_ownership(engine)
+    migrate_budget_audit(engine)
+    migrate_budget_session_snapshot(engine)
+    migrate_budget_revisions(engine)
     migrate_project_review(engine)
     migrate_project_memory(engine)
     migrate_workflow(engine)
+    migrate_budget_tenant(engine)
+    migrate_budget_session_lock(engine)
     migrate_auth(engine)
     migrate_user_roles(engine)
 

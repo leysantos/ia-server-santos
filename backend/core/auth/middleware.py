@@ -11,7 +11,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from config.settings import get_settings
 from core.auth.jwt_tokens import decode_access_token
-from core.database.connection import SessionLocal
 from core.database.models import User
 
 logger = logging.getLogger(__name__)
@@ -53,6 +52,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             )
 
         token = auth_header[7:].strip()
+        from core.database.connection import SessionLocal
+
         db = SessionLocal()
         try:
             payload = decode_access_token(token)

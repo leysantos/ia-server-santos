@@ -28,6 +28,14 @@ async def lifespan(app: FastAPI):
     run_auth_hardening_check(settings)
     if is_db_enabled():
         init_db()
+    if getattr(settings, "ollama_warmup_on_startup", False):
+        import asyncio
+
+        from core.runtime.ollama_warmup import warmup_default_models
+
+        loop = asyncio.get_running_loop()
+        loop.run_in_executor(None, warmup_default_models)
+        logger.info("Ollama warmup agendado no startup")
     yield
 
 

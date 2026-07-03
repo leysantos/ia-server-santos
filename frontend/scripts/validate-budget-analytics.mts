@@ -6,8 +6,8 @@ import { readFileSync } from "node:fs";
 import type { BudgetRow, OpenCompositionDetail, ProjectSchedule } from "../types/api";
 import {
   buildAbcCurve,
+  buildHistogramReport,
   buildScurvePoints,
-  buildStackedHistogram,
 } from "../lib/budget-analytics";
 
 interface BudgetPayload {
@@ -86,42 +86,22 @@ if (scurve.points.length > 0) {
 console.log("");
 
 // --- Histograma ---
-const hist = buildStackedHistogram(schedule, rows, compositions, "comd", payload.project);
-console.log("--- HISTOGRAMA (empilhado R$) ---");
-console.log(`Meses: ${hist.months.length}`);
+const hist = buildHistogramReport(schedule, rows, compositions, payload.project);
+console.log("--- HISTOGRAMA (MO + equipamentos por item) ---");
 console.log(`Serviços com CPU: ${hist.servicesWithCpu}`);
-console.log(
-  `Totais EQ/INS/MO: R$ ${hist.totals.equipamento.toFixed(2)} / R$ ${hist.totals.insumo.toFixed(2)} / R$ ${hist.totals.mao_obra.toFixed(2)}`
-);
-console.log(`Total histograma: R$ ${hist.totals.total.toFixed(2)}`);
-console.log(`Total ref. BDI: R$ ${hist.totals.totalWithBdi.toFixed(2)}`);
-console.log(
-  `Delta ref. BDI vs total efetivo serviços: R$ ${(hist.totals.totalWithBdi - serviceTotal).toFixed(2)}`
-);
+console.log(`Itens MO: ${hist.maoObra?.items.length ?? 0}`);
+console.log(`Itens EQ: ${hist.equipamento?.items.length ?? 0}`);
 
-let analiticExpected = 0;
-for (const s of services) {
-  const d = compositions.get(s.row_id);
-  if (!d) continue;
-  const qty = s.quantity ?? 1;
-  for (const item of d.items) {
-    const cat = item.item_type?.toLowerCase();
-    if (cat === "equipamento" || cat === "insumo" || cat === "mao_obra" || cat === "material") {
-      analiticExpected += (item.partial_cost ?? 0) * qty;
-    }
-  }
+const moTotal = hist.maoObra?.monthlyTotals.reduce((s, v) => s + v, 0) ?? 0;
+const eqTotal = hist.equipamento?.monthlyTotals.reduce((s, v) => s + v, 0) ?? 0;
+console.log(`Total MO (soma períodos): ${moTotal.toFixed(2)}`);
+console.log(`Total EQ (soma períodos): ${eqTotal.toFixed(2)}`);
+
+if (hist.maoObra?.items.length) {
+  console.log("Top MO:", hist.maoObra.items.slice(0, 3).map((i) => `${i.description}=${i.total.toFixed(2)}`));
 }
-console.log(`Soma analítica CPUs carregadas (ComD, qty serviço): R$ ${analiticExpected.toFixed(2)}`);
-console.log(`Delta histograma vs analítico: R$ ${(hist.totals.total - analiticExpected).toFixed(2)}`);
-
-const histMonthlySum = hist.months.reduce((s, m) => s + m.total, 0);
-const histPartsSum =
-  hist.totals.equipamento + hist.totals.insumo + hist.totals.mao_obra;
-console.log(`Σ meses total: R$ ${histMonthlySum.toFixed(2)} (delta totais: ${(histMonthlySum - hist.totals.total).toFixed(2)})`);
-console.log(`EQ+INS+MO = total: ${Math.abs(histPartsSum - hist.totals.total) < 0.02 ? "SIM" : "NÃO"}`);
-
-if (hist.months.length > 0) {
-  console.log("Amostra mês 0:", hist.months[0]);
+if (hist.equipamento?.items.length) {
+  console.log("Top EQ:", hist.equipamento.items.slice(0, 3).map((i) => `${i.description}=${i.total.toFixed(2)}`));
 }
 
 const missingCpu = services.filter((s) => !compositions.has(s.row_id));

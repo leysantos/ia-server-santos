@@ -103,6 +103,8 @@ def _doc_table_col_count(doc_type: str) -> int:
         "curva_abc": 7,
         "curva_s": 7,
         "histograma": 7,
+        "rel_insumos": 7,
+        "rel_mao_obra": 7,
     }.get(doc_type.strip().lower(), 8)
 
 
@@ -232,6 +234,8 @@ def _apply_export_column_widths(ws, doc_type: str) -> None:
         "curva_abc": {1: 6, 2: 10, 3: 38, 4: 14, 5: 12, 6: 12, 7: 8},
         "curva_s": {1: 14, 2: 10, 3: 14, 4: 14, 5: 16, 6: 18, 7: 14},
         "histograma": {1: 14, 2: 10, 3: 14, 4: 14, 5: 14, 6: 14, 7: 14},
+        "rel_insumos": {1: 6, 2: 10, 3: 38, 4: 6, 5: 10, 6: 12, 7: 18},
+        "rel_mao_obra": {1: 6, 2: 10, 3: 38, 4: 6, 5: 10, 6: 12, 7: 18},
     }
     widths = presets.get(doc_type.strip().lower())
     if not widths:
@@ -268,18 +272,30 @@ def export_budget_document_xlsx(
     if key not in EXPORT_DOC_TYPES:
         raise ValueError(f"Tipo de documento inválido: {doc_type}")
 
+    meta = metadata or BudgetProjectMetadata()
+    brand = branding or ExportBrandingConfig()
+    profile = company_profile or get_company_profile()
+    if logo_bytes is None and brand.show_logo:
+        logo_bytes = load_logo_bytes(brand.logo_storage_key)
+
+    if key == "histograma":
+        from pricing.budget.histogram.histograma_service import export_histogram_mo_xlsx
+
+        return export_histogram_mo_xlsx(
+            roots,
+            meta,
+            schedule,
+            branding=brand,
+            company_profile=profile,
+            logo_bytes=logo_bytes,
+        )
+
     try:
         import openpyxl
         from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
         from openpyxl.utils import get_column_letter
     except ImportError as exc:
         raise ImportError("openpyxl necessário") from exc
-
-    meta = metadata or BudgetProjectMetadata()
-    brand = branding or ExportBrandingConfig()
-    profile = company_profile or get_company_profile()
-    if logo_bytes is None and brand.show_logo:
-        logo_bytes = load_logo_bytes(brand.logo_storage_key)
 
     table_data, extra_line, body_lines = build_export_table(
         key, roots, meta, schedule=schedule, tech_spec=tech_spec
@@ -312,6 +328,8 @@ def export_budget_document_xlsx(
             "curva_abc",
             "curva_s",
             "histograma",
+            "rel_insumos",
+            "rel_mao_obra",
         ),
         table_cols=header_cols,
         doc_type=key,
@@ -319,7 +337,15 @@ def export_budget_document_xlsx(
 
     if extra_line:
         ws.cell(row=row_idx, column=1, value=extra_line)
-        row_idx += 2
+        row_idx += 1
+
+    if body_lines and table_data:
+        for line in body_lines:
+            ws.cell(row=row_idx, column=1, value=line)
+            row_idx += 1
+        row_idx += 1
+    elif extra_line:
+        row_idx += 1
 
     if key == "orc_sintetico":
         row_idx = _write_orc_sintetico_formula_table(
@@ -373,6 +399,8 @@ def export_budget_document_xlsx(
         "curva_abc",
         "curva_s",
         "histograma",
+        "rel_insumos",
+        "rel_mao_obra",
     ):
         _apply_export_column_widths(ws, key)
     else:
@@ -500,6 +528,14 @@ def _write_document_header(
     return 6
 
 
+def _xlsx_horizontal_align(col_idx_0: int, *, center_cols: tuple[int, ...], right_cols: tuple[int, ...]) -> str:
+    if col_idx_0 in right_cols:
+        return "right"
+    if col_idx_0 in center_cols:
+        return "center"
+    return "left"
+
+
 def _write_export_table(
     ws,
     data: ExportTableData,
@@ -520,7 +556,9 @@ def _write_export_table(
         cell.fill = header_fill
         cell.border = border
         cell.alignment = Alignment(
-            horizontal="right" if (col_idx - 1) in data.right_cols else "center",
+            horizontal=_xlsx_horizontal_align(
+                col_idx - 1, center_cols=data.center_cols, right_cols=data.right_cols
+            ),
             vertical="center",
         )
     row_idx += 1
@@ -539,10 +577,13 @@ def _write_export_table(
         for col_idx, value in enumerate(row_values, start=1):
             cell = ws.cell(row=row_idx, column=col_idx, value=value if value != "" else None)
             cell.border = border
+            h_align = _xlsx_horizontal_align(
+                col_idx - 1, center_cols=data.center_cols, right_cols=data.right_cols
+            )
             cell.alignment = Alignment(
-                horizontal="right" if (col_idx - 1) in data.right_cols else "left",
-                vertical="top",
-                wrap_text=col_idx == (4 if len(data.headers) >= 8 else 3),
+                horizontal=h_align,
+                vertical="center" if h_align != "left" else "top",
+                wrap_text=h_align == "left" and col_idx == (4 if len(data.headers) >= 8 else 3),
             )
             if row_fill:
                 cell.fill = row_fill
@@ -563,6 +604,10 @@ _ORC_SINT_COL_TOTAL = 7
 _ORC_SINT_COL_UNIT_COST = 8  # coluna auxiliar oculta (custo sem BDI)
 _ORC_BDI_REF_COL = 26  # Z1
 _ORC_BDI_REF_ROW = 1
+_ORC_SINT_CENTER_COLS = (0, 1, 3)
+_ORC_SINT_RIGHT_COLS = (4, 5, 6)
+_ORC_ANAL_CENTER_COLS = (0, 1, 2, 4)
+_ORC_ANAL_RIGHT_COLS = (5, 6, 7)
 
 
 def _orc_is_group(item: BudgetItem) -> bool:
@@ -607,6 +652,7 @@ def _apply_orc_table_row_style(
     *,
     col_count: int,
     desc_col: int,
+    center_cols: tuple[int, ...],
     right_cols: tuple[int, ...],
     border,
     row_fill,
@@ -618,7 +664,9 @@ def _apply_orc_table_row_style(
         cell = ws.cell(row=row, column=col_idx)
         cell.border = border
         cell.alignment = Alignment(
-            horizontal="right" if (col_idx - 1) in right_cols else "left",
+            horizontal=_xlsx_horizontal_align(
+                col_idx - 1, center_cols=center_cols, right_cols=right_cols
+            ),
             vertical="top",
             wrap_text=col_idx == desc_col,
         )
@@ -636,6 +684,7 @@ def _write_orc_bdi_footer(
     desc_col: int,
     total_col: int,
     col_count: int,
+    center_cols: tuple[int, ...],
     right_cols: tuple[int, ...],
     row_idx: int,
     service_total_refs: list[str],
@@ -658,6 +707,7 @@ def _write_orc_bdi_footer(
             r,
             col_count=col_count,
             desc_col=desc_col,
+            center_cols=center_cols,
             right_cols=right_cols,
             border=border,
             row_fill=summary_fill,
@@ -731,7 +781,8 @@ def _write_orc_sintetico_formula_table(
     ws.column_dimensions[get_column_letter(_ORC_SINT_COL_UNIT_COST)].hidden = True
 
     headers = ["Item", "Código", "Descrição", "Un", "Qtd", unit_hdr, total_hdr]
-    right_cols = (4, 5, 6)
+    center_cols = _ORC_SINT_CENTER_COLS
+    right_cols = _ORC_SINT_RIGHT_COLS
     row_idx = start_row
 
     for col_idx, label in enumerate(headers, start=1):
@@ -740,7 +791,9 @@ def _write_orc_sintetico_formula_table(
         cell.fill = header_fill
         cell.border = border
         cell.alignment = Alignment(
-            horizontal="right" if (col_idx - 1) in right_cols else "center",
+            horizontal=_xlsx_horizontal_align(
+                col_idx - 1, center_cols=center_cols, right_cols=right_cols
+            ),
             vertical="center",
         )
     row_idx += 1
@@ -771,6 +824,7 @@ def _write_orc_sintetico_formula_table(
                 current_row,
                 col_count=7,
                 desc_col=_ORC_SINT_COL_DESC,
+                center_cols=center_cols,
                 right_cols=right_cols,
                 border=border,
                 row_fill=row_fill,
@@ -797,6 +851,7 @@ def _write_orc_sintetico_formula_table(
                 current_row,
                 col_count=7,
                 desc_col=_ORC_SINT_COL_DESC,
+                center_cols=center_cols,
                 right_cols=right_cols,
                 border=border,
                 row_fill=row_fill,
@@ -841,6 +896,7 @@ def _write_orc_sintetico_formula_table(
             current_row,
             col_count=7,
             desc_col=_ORC_SINT_COL_DESC,
+            center_cols=center_cols,
             right_cols=right_cols,
             border=border,
             row_fill=row_fill,
@@ -857,6 +913,7 @@ def _write_orc_sintetico_formula_table(
         desc_col=_ORC_SINT_COL_DESC,
         total_col=_ORC_SINT_COL_TOTAL,
         col_count=7,
+        center_cols=center_cols,
         right_cols=right_cols,
         row_idx=row_idx,
         service_total_refs=service_total_refs,
@@ -896,7 +953,8 @@ def _write_orc_analitico_formula_table(
     ws.column_dimensions[get_column_letter(_ORC_ANAL_COL_UNIT_COST)].hidden = True
 
     headers = ["Item", "Tipo", "Código", "Descrição", "Un", "Qtd", unit_hdr, total_hdr]
-    right_cols = (5, 6, 7)
+    center_cols = _ORC_ANAL_CENTER_COLS
+    right_cols = _ORC_ANAL_RIGHT_COLS
     row_idx = start_row
     comp_cache: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
 
@@ -906,7 +964,9 @@ def _write_orc_analitico_formula_table(
         cell.fill = header_fill
         cell.border = border
         cell.alignment = Alignment(
-            horizontal="right" if (col_idx - 1) in right_cols else "center",
+            horizontal=_xlsx_horizontal_align(
+                col_idx - 1, center_cols=center_cols, right_cols=right_cols
+            ),
             vertical="center",
         )
     row_idx += 1
@@ -959,6 +1019,7 @@ def _write_orc_analitico_formula_table(
                 current_row,
                 col_count=8,
                 desc_col=_ORC_ANAL_COL_DESC,
+                center_cols=center_cols,
                 right_cols=right_cols,
                 border=border,
                 row_fill=row_fill,
@@ -989,6 +1050,7 @@ def _write_orc_analitico_formula_table(
                 current_row,
                 col_count=8,
                 desc_col=_ORC_ANAL_COL_DESC,
+                center_cols=center_cols,
                 right_cols=right_cols,
                 border=border,
                 row_fill=row_fill,
@@ -1015,6 +1077,7 @@ def _write_orc_analitico_formula_table(
                 current_row,
                 col_count=8,
                 desc_col=_ORC_ANAL_COL_DESC,
+                center_cols=center_cols,
                 right_cols=right_cols,
                 border=border,
                 row_fill=row_fill,
@@ -1060,6 +1123,7 @@ def _write_orc_analitico_formula_table(
             current_row,
             col_count=8,
             desc_col=_ORC_ANAL_COL_DESC,
+            center_cols=center_cols,
             right_cols=right_cols,
             border=border,
             row_fill=row_fill,
@@ -1084,6 +1148,7 @@ def _write_orc_analitico_formula_table(
         desc_col=_ORC_ANAL_COL_DESC,
         total_col=_ORC_ANAL_COL_TOTAL,
         col_count=8,
+        center_cols=center_cols,
         right_cols=right_cols,
         row_idx=row_idx,
         service_total_refs=service_total_refs,
