@@ -119,7 +119,7 @@ export function useBudgetServiceCompositions(
       setLoading(true);
     }
 
-    void loadBudgetServiceCompositions(lines, bundleKey, loadKey, {
+    void loadBudgetServiceCompositions(sessionId, lines, bundleKey, loadKey, {
       onProgress: (p) => {
         if (cancelled) return;
         setCompositions(new Map(p.compositions));
@@ -166,5 +166,5 @@ export async function prefetchBudgetServiceCompositions(
   const cached = getServiceCompositionBundle(bundleKey);
   if (cached && cached.loadKey === loadKey && !cached.loading) return;
 
-  await loadBudgetServiceCompositions(lines, bundleKey, loadKey);
+  await loadBudgetServiceCompositions(sessionId, lines, bundleKey, loadKey);
 }

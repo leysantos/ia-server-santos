@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -15,6 +16,8 @@ from core.database.models import BudgetDocument, User
 from pricing.budget.budget_session import SESSION_STORE, BudgetSession
 from pricing.models.budget_metadata import BudgetProjectMetadata
 from pricing.schedule.schedule_models import ProjectSchedule
+
+logger = logging.getLogger(__name__)
 
 
 class BudgetVersionConflictError(Exception):
@@ -135,6 +138,7 @@ def save_budget(
     *,
     tenant_id: uuid.UUID | None = None,
     empresa_id: uuid.UUID | None = None,
+    sync_composition_snapshots: bool = False,
 ) -> dict[str, Any]:
     from core.auth.tenant_context import company_exists, resolve_company_id
 
@@ -208,6 +212,14 @@ def save_budget(
         )
     except Exception:
         pass
+    try:
+        from pricing.budget.composition_snapshot_service import sync_snapshots_from_payload
+
+        if sync_composition_snapshots:
+            sync_snapshots_from_payload(db, doc.id, payload)
+    except Exception:
+        db.rollback()
+        logger.warning("sync_composition_snapshots failed", exc_info=True)
     return result
 
 

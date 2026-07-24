@@ -13,7 +13,7 @@ interface ActionDialogProps {
   cancelLabel?: string;
   destructive?: boolean;
   onConfirm?: () => void;
-  onCancel: () => void;
+  onCancel?: () => void;
 }
 
 const VARIANT_STYLES = {
@@ -92,7 +92,7 @@ export default function ActionDialog({
   cancelLabel = "Cancelar",
   destructive = false,
   onConfirm,
-  onCancel,
+  onCancel = () => {},
 }: ActionDialogProps) {
   const confirmRef = useRef<HTMLButtonElement>(null);
   const [mounted, setMounted] = useState(false);

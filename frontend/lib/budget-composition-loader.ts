@@ -2,9 +2,9 @@ import { api } from "@/services/api";
 import type { OpenCompositionDetail } from "@/types/api";
 import {
   compositionFetchKey,
+  fetchCompositionCached,
   getCachedComposition,
   setCachedComposition,
-  type CachedCompositionEntry,
 } from "@/lib/budget-analitico-cache";
 import {
   type ServiceCompositionBundle,
@@ -34,17 +34,43 @@ export interface CompositionLoadProgress {
   loading: boolean;
 }
 
+const inflightBatchBySession = new Map<string, Promise<void>>();
+
+/** Uma requisição HTTP — snapshots persistidos + backfill no servidor. */
+export async function primeCompositionCacheFromBatch(
+  sessionId: string,
+  options?: { backfill?: boolean }
+): Promise<void> {
+  const inflight = inflightBatchBySession.get(sessionId);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    const batch = await api.pricingBudgetCompositionBatch(sessionId, {
+      backfill: options?.backfill ?? false,
+    });
+    for (const [fetchKey, detail] of Object.entries(batch.snapshots ?? {})) {
+      setCachedComposition(fetchKey, { status: "loaded", detail });
+    }
+  })().finally(() => {
+    inflightBatchBySession.delete(sessionId);
+  });
+
+  inflightBatchBySession.set(sessionId, promise);
+  return promise;
+}
+
 /**
- * Carrega CPUs dos serviços — usa cache global de composição + bundle por sessão.
+ * Carrega CPUs dos serviços — batch snapshot (1 request) + fallback pontual.
  * Idempotente: chamadas concorrentes com o mesmo bundleKey compartilham a mesma promise.
  */
 const inflightByBundleKey = new Map<string, Promise<ServiceCompositionBundle>>();
 
 export function loadBudgetServiceCompositions(
+  sessionId: string,
   lines: BudgetAnaliticoLine[],
   bundleKey: string,
   loadKey: string,
-  options?: { onProgress?: (p: CompositionLoadProgress) => void }
+  options?: { onProgress?: (p: CompositionLoadProgress) => void; backfill?: boolean }
 ): Promise<ServiceCompositionBundle> {
   const existing = inflightByBundleKey.get(bundleKey);
   if (existing) return existing;
@@ -52,8 +78,6 @@ export function loadBudgetServiceCompositions(
   const promise = (async (): Promise<ServiceCompositionBundle> => {
     const total = lines.length;
     const next = new Map<string, OpenCompositionDetail>();
-    const pendingFetchKeys = new Set<string>();
-    const rowIdsByFetchKey = new Map<string, string[]>();
     let errors = 0;
 
     const emit = (loading: boolean) => {
@@ -65,6 +89,19 @@ export function loadBudgetServiceCompositions(
         loading,
       });
     };
+
+    if (sessionId && lines.length > 0) {
+      try {
+        await primeCompositionCacheFromBatch(sessionId, {
+          backfill: options?.backfill ?? false,
+        });
+      } catch {
+        // fallback para requests individuais abaixo
+      }
+    }
+
+    const pendingFetchKeys = new Set<string>();
+    const rowIdsByFetchKey = new Map<string, string[]>();
 
     for (const line of lines) {
       if (!line.base?.reference) {
@@ -115,12 +152,17 @@ export function loadBudgetServiceCompositions(
       if (!sampleLine?.base?.reference) continue;
 
       try {
-        const detail = await api.pricingSyncOpenComposition(sampleLine.composition_code, {
-          uf: sampleLine.base.uf,
-          reference: sampleLine.base.reference,
-        });
-        const entry: CachedCompositionEntry = { status: "loaded", detail };
-        setCachedComposition(fetchKey, entry);
+        const detail = await fetchCompositionCached(
+          sampleLine.composition_code,
+          sampleLine.base.reference,
+          sampleLine.base.uf,
+          () =>
+            api.pricingSyncOpenComposition(sampleLine.composition_code, {
+              uf: sampleLine.base.uf,
+              reference: sampleLine.base.reference,
+              comparePrevious: false,
+            })
+        );
         for (const rowId of rowIdsByFetchKey.get(fetchKey) ?? []) {
           next.set(rowId, detail);
         }

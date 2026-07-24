@@ -76,7 +76,8 @@ INSTRUÇÕES:
 - Cite NBRs e requisitos normativos quando aplicável
 - Organize a resposta em seções: Solução recomendada, Análise, Premissas, Recomendações, Normas citadas
 - Se o usuário pedir tabelas normativas, reproduza-as de forma organizada (markdown)
-- Se faltar dado, declare premissas explicitamente e liste até 3 perguntas objetivas
+- Se a solicitação trouxer CONTEXTO MULTI-TURN / DADOS ANTERIORES, trate esses valores como fatos já estabelecidos e NÃO peça de novo
+- Só peça dados que realmente não foram informados; se faltar algo essencial, declare premissas e no máximo 3 perguntas objetivas
 - Não invente valores numéricos sem base normativa ou contexto fornecido
 - Priorize segurança, conformidade normativa e boas práticas de engenharia civil
 
@@ -137,8 +138,12 @@ RESPOSTA TÉCNICA ESTRUTURADA:"""
             return ""
 
         try:
+            from core.conversation_context import extract_latest_user_message
+
+            # RAG deve buscar pela pergunta atual, não pelo blob de histórico.
+            query = extract_latest_user_message(text)
             context = self.rag_engine.build_context(
-                query=text,
+                query=query,
                 discipline=self.discipline,
                 doc_type="nbr",
             )

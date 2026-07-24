@@ -30,12 +30,19 @@ export default function BudgetHistoricoTab({
   const [previewLoading, setPreviewLoading] = useState(false);
 
   useEffect(() => {
-    if (activeId) setSelectedId(activeId);
-  }, [activeId]);
+    if (!activeId) return;
+    if (savedItems.some((item) => item.id === activeId)) {
+      setSelectedId(activeId);
+    } else if (savedItems.length > 0) {
+      setSelectedId(null);
+      setPreview(null);
+    }
+  }, [activeId, savedItems]);
 
   useEffect(() => {
-    if (!selectedId) {
+    if (!selectedId || !savedItems.some((item) => item.id === selectedId)) {
       setPreview(null);
+      setPreviewLoading(false);
       return;
     }
     let cancelled = false;
@@ -54,7 +61,7 @@ export default function BudgetHistoricoTab({
     return () => {
       cancelled = true;
     };
-  }, [selectedId]);
+  }, [selectedId, savedItems]);
 
   const handleDelete = (id: string) => {
     if (selectedId === id) {

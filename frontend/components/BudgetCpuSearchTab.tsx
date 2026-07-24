@@ -27,6 +27,7 @@ interface BudgetCpuSearchTabProps {
   onSessionUpdate?: (session: BudgetSessionResponse) => void;
   onPriceBasesChange?: (next: BudgetPriceBaseSelection[]) => void;
   onError?: (err: unknown, title?: string) => void;
+  onSuccess?: (message: string, title?: string) => void;
 }
 
 export default function BudgetCpuSearchTab({
@@ -35,6 +36,7 @@ export default function BudgetCpuSearchTab({
   onSessionUpdate,
   onPriceBasesChange,
   onError,
+  onSuccess,
 }: BudgetCpuSearchTabProps) {
   const filters = useBudgetCpuFilters(priceBases);
   const [searchText, setSearchText] = useState("");
@@ -122,6 +124,13 @@ export default function BudgetCpuSearchTab({
         quantity: qty,
       });
       onSessionUpdate?.(updated);
+
+      const etapa = etapas.find((e) => e.code === launchEtapaCode);
+      const etapaLabel = etapa ? `${etapa.code} — ${etapa.name}` : launchEtapaCode;
+      onSuccess?.(
+        `Composição ${searchPreview.code} lançada na etapa ${etapaLabel}.\nQuantidade: ${qty.toLocaleString("pt-BR")} ${searchPreview.unit}`,
+        "Composição lançada"
+      );
     } catch (err) {
       onError?.(err, "Erro ao lançar composição na etapa");
     } finally {
@@ -141,6 +150,8 @@ export default function BudgetCpuSearchTab({
     onPriceBasesChange,
     onSessionUpdate,
     onError,
+    onSuccess,
+    etapas,
   ]);
 
   useEffect(() => {

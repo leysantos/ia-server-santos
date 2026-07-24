@@ -80,10 +80,6 @@ export default function LoginPage() {
             {submitting ? "Entrando…" : "Entrar"}
           </button>
         </form>
-
-        <p className="mt-6 text-center text-xs text-slate-500">
-          Usuários iniciais: admin · dev_user1 · dev_user2
-        </p>
       </div>
     </div>
   );

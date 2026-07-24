@@ -182,6 +182,18 @@ export async function installBudgetApiMocks(page: Page, options: BudgetApiMockOp
       });
     }
 
+    if (path.includes("/compositions/batch") && method === "GET") {
+      const comp = mockOpenComposition();
+      return fulfillJson(route, {
+        session_id: "mock-session",
+        snapshots: { [`${comp.code}|2025-01|SP`]: comp },
+        total: 1,
+        from_db: 0,
+        from_bank: 1,
+        missing: [],
+      });
+    }
+
     if (path.includes("/composition/") && method === "GET") {
       return fulfillJson(route, mockOpenComposition());
     }

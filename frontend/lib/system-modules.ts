@@ -18,6 +18,7 @@ export const SYSTEM_MODULES: SystemModule[] = [
   { id: "aed", label: "AED", description: "Design autônomo" },
   { id: "projects", label: "Projetos", description: "Workspace" },
   { id: "budget", label: "Orçamento", description: "Pricing Engine" },
+  { id: "inspection_reports", label: "Laudos de Vistoria", description: "Geração de laudos com Gemini" },
   { id: "console", label: "Console", description: "Operações e GPU" },
   { id: "history", label: "Histórico", description: "Conversas salvas" },
   { id: "settings", label: "Configurações", description: "Administração" },
@@ -57,8 +58,14 @@ export function moduleAccessLabel(perm: ModulePermission): string {
 /** Mapeia href do menu para id do módulo */
 export function moduleIdFromPath(pathname: string): string | null {
   if (pathname === "/budget" || pathname.startsWith("/budget")) return "budget";
+  if (
+    pathname === "/inspection-reports" ||
+    pathname.startsWith("/inspection-reports")
+  ) {
+    return "inspection_reports";
+  }
   for (const mod of SYSTEM_MODULES) {
-    if (mod.id === "budget") continue;
+    if (mod.id === "budget" || mod.id === "inspection_reports") continue;
     const href = mod.id === "settings" ? "/settings" : `/${mod.id}`;
     if (pathname === href || pathname.startsWith(`${href}/`)) return mod.id;
   }

@@ -43,6 +43,32 @@ VALORES:
 - Cálculos com dados do usuário são permitidos e esperados
 """
 
+HIDROSSANITARIO_INSTRUCTIONS = """
+INSTRUÇÕES ESPECÍFICAS — HIDROSSANITÁRIO:
+
+NORMAS — NÃO CONFUNDIR (obrigatório):
+- NBR 5626 — instalações prediais de água fria (pressão, vazão, perda de carga, reservatórios)
+- NBR 8160 — sistemas prediais de esgoto sanitário (gravidade, declividade, ventilação, caixas)
+- NBR 7198 — instalações prediais de água quente (só se o usuário pedir água quente)
+- NBR 8809 — representação gráfica de instalações prediais
+- NÃO diga que a NBR 5626 cobre esgoto, nem que a NBR 8160 é impermeabilização ou água quente
+
+PEDIDOS DE CHECKLIST / ITENS DE PROJETO / DESENHO:
+Cubra no mínimo (separando água fria × esgoto):
+1. Dados de entrada (consumo/população/simultaneidade ou aparelhos; pressão disponível)
+2. Dimensionamento (diâmetros, perdas de carga / declividades por DN)
+3. Componentes (reservatórios, barrilete, registros, sifões, ventilação, caixas)
+4. Peças gráficas (plantas por pavimento, esquema vertical/isométrico, cortes, detalhes, legenda NBR 8809, carimbo)
+5. Memoriais (descritivo + cálculo) e quantitativo / especificação de materiais
+6. Interfaces (rede pública, separação sanitário×pluvial, anti-retorno)
+
+TERMINOLOGIA:
+- Água fria: ramais, colunas, barrilete — não chame de “rede coletora”
+- Esgoto: ramais, tubos de queda, coletores, ventilação
+
+Se o CONTEXTO MULTI-TURN já trouxe dados, use-os e não peça de novo.
+"""
+
 FOUNDATION_KEYWORDS = (
     "fundação",
     "fundacao",
@@ -72,6 +98,9 @@ def get_discipline_extra_instructions(discipline: str, user_text: str = "") -> s
     """Retorna bloco extra de instruções para a disciplina, se houver."""
     if discipline == "GEOTECNIA":
         return GEOTECNIA_INSTRUCTIONS
+
+    if discipline == "HIDROSSANITÁRIO":
+        return HIDROSSANITARIO_INSTRUCTIONS
 
     if discipline in ("ESTRUTURAL", "INFRAESTRUTURA") and is_foundation_query(user_text):
         return """

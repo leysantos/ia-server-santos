@@ -46,6 +46,41 @@ const IDLE: ChatStreamSession = {
   activityId: null,
 };
 
+/** Polla a conversa até aparecer resposta do assistant (após queda de SSE). */
+async function pollConversationAssistant(
+  conversationId: string,
+  userPrompt: string,
+  timeoutMs: number
+): Promise<string> {
+  const started = Date.now();
+  const needle = userPrompt.trim().slice(0, 80).toLowerCase();
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const conv = await api.conversation(conversationId);
+      const msgs = conv.messages ?? [];
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        if (m.role !== "assistant") continue;
+        const content = (m.content || "").trim();
+        if (content.length < 20) continue;
+        // Prefer assistant logo após a pergunta atual.
+        const prev = msgs[i - 1];
+        if (prev?.role === "user") {
+          const prevText = (prev.content || "").toLowerCase();
+          if (needle && !prevText.includes(needle.slice(0, 40))) {
+            continue;
+          }
+        }
+        return content;
+      }
+    } catch {
+      /* rede instável — tenta de novo */
+    }
+    await new Promise((r) => setTimeout(r, 2500));
+  }
+  return "";
+}
+
 interface ChatStreamContextValue extends ChatStreamSession {
   /** Inicia stream — sobrevive a navegação (sem AbortSignal). */
   sendMessage: (text: string, params: ChatStreamSendParams) => void;
@@ -186,6 +221,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         try {
           let accumulated = "";
           let finalResponse: ChatResponse | null = null;
+          let gotDone = false;
           let streamMeta: ChatMessage["meta"] = { streaming: true, streamStatus: "Conectando..." };
 
           let attachmentIds: string[] | undefined;
@@ -216,6 +252,21 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             if (event.type === "status") {
               const message = String(event.data.message ?? "Processando...");
               const model = event.data.llm_model ? String(event.data.llm_model) : undefined;
+              const convFromStatus = event.data.conversation_id
+                ? String(event.data.conversation_id)
+                : undefined;
+              if (convFromStatus) {
+                conversationIdRef.current = convFromStatus;
+                setSession((prev) => ({
+                  ...prev,
+                  conversationId: convFromStatus,
+                }));
+                if (!startConversationId && params.persist !== false) {
+                  const qs = new URLSearchParams({ c: convFromStatus });
+                  if (params.projectId) qs.set("project", params.projectId);
+                  router.replace(`/chat?${qs.toString()}`);
+                }
+              }
               const stepAgent = event.data.step
                 ? String((event.data.step as { agent?: string }).agent ?? "")
                 : undefined;
@@ -224,7 +275,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
                 : undefined;
               activity?.updateActivity(liveActivityId, {
                 message,
-                phase: stepDiscipline || stepAgent || "processing",
+                phase: stepDiscipline || stepAgent || String(event.data.phase ?? "processing"),
                 agent: stepAgent,
                 discipline: stepDiscipline,
               });
@@ -265,6 +316,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             }
 
             if (event.type === "done") {
+              gotDone = true;
               finalResponse = event.data as unknown as ChatResponse;
               accumulated = finalResponse.result || accumulated;
               if (finalResponse.conversation_id) {
@@ -288,16 +340,42 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           }
           pendingContentRef.current = null;
 
+          // SSE caiu (tunnel/mobile) sem evento done — tenta recuperar do histórico.
+          if (!gotDone && !accumulated.trim() && conversationIdRef.current && params.persist !== false) {
+            flushSync(() =>
+              updateAssistant(assistantId, {
+                meta: {
+                  streaming: true,
+                  streamStatus:
+                    "Conexão interrompida — aguardando conclusão no servidor (Console)…",
+                },
+              })
+            );
+            const recovered = await pollConversationAssistant(
+              conversationIdRef.current,
+              text,
+              90_000
+            );
+            if (recovered) {
+              accumulated = recovered;
+              gotDone = true;
+            }
+          }
+
           const finalModel =
             (finalResponse?.extra?.llm_model as string | undefined) ||
             (finalResponse?.extra?.model as string | undefined);
 
+          const finalContent =
+            accumulated ||
+            finalResponse?.result ||
+            finalResponse?.response ||
+            (gotDone
+              ? "Sem resposta do agente."
+              : "A resposta ainda está sendo gerada no servidor. Abra o Console ou recarregue esta conversa em alguns minutos.");
+
           updateAssistant(assistantId, {
-            content:
-              accumulated ||
-              finalResponse?.result ||
-              finalResponse?.response ||
-              "Sem resposta do agente.",
+            content: finalContent,
             meta: {
               streaming: false,
               streamStatus: undefined,
@@ -317,24 +395,54 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           }));
 
           activity?.updateActivity(liveActivityId, {
-            status: "done",
-            message: "Resposta concluída",
+            status: gotDone || accumulated ? "done" : "error",
+            message: gotDone || accumulated ? "Resposta concluída" : "Stream interrompido",
             agent: finalResponse?.agent || finalResponse?.route?.agent,
             discipline: finalResponse?.discipline || finalResponse?.route?.discipline,
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : "Erro ao comunicar com a API";
-          activity?.updateActivity(liveActivityId, { status: "error", message });
-          updateAssistant(assistantId, {
-            content: `Erro: ${message}. Verifique se o backend está rodando em http://localhost:8000`,
-            meta: { streaming: false, streamStatus: undefined },
-          });
-          setSession((prev) => ({
-            ...prev,
-            loading: false,
-            error: message,
-            lastPrompt: null,
-          }));
+          // Tenta recuperar se a conversa já foi criada antes da queda.
+          let recovered = "";
+          if (conversationIdRef.current && params.persist !== false) {
+            try {
+              recovered = await pollConversationAssistant(
+                conversationIdRef.current,
+                text,
+                45_000
+              );
+            } catch {
+              /* ignore */
+            }
+          }
+          if (recovered) {
+            updateAssistant(assistantId, {
+              content: recovered,
+              meta: { streaming: false, streamStatus: undefined },
+            });
+            setSession((prev) => ({
+              ...prev,
+              loading: false,
+              error: null,
+              lastPrompt: null,
+            }));
+            activity?.updateActivity(liveActivityId, {
+              status: "done",
+              message: "Resposta recuperada após queda de conexão",
+            });
+          } else {
+            activity?.updateActivity(liveActivityId, { status: "error", message });
+            updateAssistant(assistantId, {
+              content: `Erro: ${message}. Se o Console ainda mostra o job rodando, aguarde e recarregue a conversa.`,
+              meta: { streaming: false, streamStatus: undefined },
+            });
+            setSession((prev) => ({
+              ...prev,
+              loading: false,
+              error: message,
+              lastPrompt: null,
+            }));
+          }
         } finally {
           runningRef.current = false;
         }

@@ -6,9 +6,9 @@
 | Campo | Valor |
 |-------|-------|
 | **Versão do sistema** | 1.0.0 |
-| **Última atualização** | 2026-07-03 |
-| **Próximo foco** | Piloto §4.U humano (assinatura checklist na UI) · M10 `project.user_id` |
-| **Marco atual** | M1–M8 ✅ · Orçamento B1–B28 ✅ |
+| **Última atualização** | 2026-07-24 (laudos · capa 1ª folha em tabelas KV) |
+| **Próximo foco** | Piloto UI §4.U `/budget` · validação humana export oficial laudos |
+| **Marco atual** | M1–M8 ✅ · Orçamento B1–B30 ✅ |
 | **Repositório** | [github.com/leysantos/ia-server-santos](https://github.com/leysantos/ia-server-santos) |
 | **Branch principal** | `main` |
 | **Modo padrão de agentes** | Inteligente (`USE_INTELLIGENT_AGENTS=true`) |
@@ -70,10 +70,11 @@ ia-server-santos/
 | **Vision Analysis** | 🟢 Vision Engine — OCR → RAG CBMAM (modo PCI) → `gemma3:12b` → JSON → `qwen3:14b` → DOCX · checklist IT-11/NT-03 · SSE · `/projects/{id}/vision` |
 | **Workflow Projetos** | 🟡 Fase 3 — Wizard de Entrega (`/workflow/wizard`) · seleção manual arquivos · templates A4–A0 · nomenclatura `DISC-FLnn-TIPO-DESC-REV` · análise CAD/IA · GRD PDF · ZIP estruturado · Fase 2.1 (classificador, skip, presigned) mantida |
 | **Operational Transparency** | 🟢 ActivityPanel global · Operations Console `/console` (SSE live + fila Ollama + log `norm_bulk`/`knowledge`) · timeline `/projects/{id}/activity` · `project_decisions` + auto-capture |
-| **Orçamento `/budget`** | 🟢 **Produção interna alta** + **enterprise técnico** (B1–B28): 11 docs nativos + `proposta_comercial` + `.xlsm` oficial (`ppd_seminf_abril_2026.xlsm`) + compliance-pack · auditoria completa · snapshot PostgreSQL · tenant `empresa_id` · lock sessão concorrente · §8.1 |
+| **Orçamento `/budget`** | 🟢 **Produção interna alta** + **enterprise técnico** (B1–B30): 11 docs nativos + `proposta_comercial` + `.xlsm` oficial + **Lançar Preços** (import PDF hierárquico etapas/sub-etapas/composições · persistência imediata · abas PPD na mesma tela · Salvar/Editar/Excluir · matching SEMINF→SINAPI→SICRO→ORSE) · auditoria · tenant · lock · §8.1 |
+| **Laudos de Vistoria `/inspection-reports`** | 🟢 **Enterprise técnico** (§8.2 L1–L9 ✅): isolamento `user_id` · SSE geração+correção · tipologías com capítulos/prompt · georref no Gemini · limites upload · cancel · edição humana · `project_id`+activity · checklist CNPJ/CREA/ART · testes ampliados |
 | Chat streaming UX | 🟢 SSE instantâneo (`connected`) + tokens ~60fps · **anexos no prompt** (PDF/planilha/imagem/CAD) em `/chat`, `/orchestrate`, `/copilot`, `/aed` + roteamento auto por tipo |
 | Agente Geotecnia dedicado | 🟢 `GeotecniaIntelligentAgent` — NBR 6122/7185, classificação solo, A_min |
-| Frontend | 🟢 `/chat`, `/projects`, `/budget`, `/mobile/*` (telefone), `/orchestrate`, `/copilot`, `/aed`, `/console`, `/history`, `/settings`, `/projects/{id}/workflow` |
+| Frontend | 🟢 `/chat`, `/projects`, `/inspection-reports`, `/budget`, `/mobile/*` (telefone), `/orchestrate`, `/copilot`, `/aed`, `/console`, `/history`, `/settings`, `/projects/{id}/workflow` |
 | Auth SaaS | 🟢 JWT · middleware · papéis `admin` \| `dev_user` + **tipos customizados** · **permissões por módulo** (oculto/bloqueado) · `/settings/users` (**editar** + **excluir**/desativar) |
 
 ## Feature flags importantes (defaults)
@@ -770,6 +771,10 @@ Espelha a fórmula Excel da aba **Analítico com Custo**:
 - [x] **B26** — Validador BDI vs edital (`bdi_edital_validator.py` + `GET /bdi/validation` + alertas UI)
 - [x] **B27** — Tenant multi-empresa — `empresa_id` em `budget_documents` + header `X-Tenant-Id` + `BudgetTenantSelector` + MinIO `tenants/{id}/budgets/…`
 - [x] **B28** — Lock sessão concorrente — `BudgetSessionLock` TTL 300s + rotas lock/renew/release + guard PATCH cell/saved + heartbeat frontend
+- [x] **B29** — **Lançar Preços** — módulo independente `/budget/lancar-precos` (menu Orçamento) · import Excel/PDF · matching SEMINF→SINAPI→SICRO→ORSE · gera orçamento PPD completo (sintético, analítico, cronograma, curvas)
+- [x] **B30** — **Lançar Preços hierárquico** — import Excel · bases/períodos selecionáveis · sync preços · **histórico** · **busca manual** · matching reforçado (código importado · fallback relaxado · LLM · 2ª passagem) · export Excel/PDF hierárquico (PU/total s/ e c/ BDI · fórmulas BDI% + índice)
+- [x] **B31** — **Snapshot CPUs analítico** — tabela `budget_composition_snapshots` · persistência no save/`generate-budget` · `GET /budget/{id}/compositions/batch` + backfill · aba analítico/histograma/curvas via 1 request · export analítico lê snapshot
+- [x] **B32** — **Cache global CPUs** — tabela `composition_open_cache` (chave `code+reference+uf`, deduplicado) · migração lazy do legado B31 · `from_cache` na API batch · backfill lazy (`POST /compositions/backfill`) · save sem sync eager · benchmark real: **194 CPUs — cold ~299s (price_bank) vs warm ~60ms (cache)** · script `backend/scripts/bench_composition_cache.py`
 - [x] **B17+** — UI checklist §4.U — `BudgetPilotChecklist` (4.U1–4.U7) na aba Dados + export JSON assinatura
 - [ ] Piloto UI §4.U — **conferência humana** na `/budget` (marcar checklist + export assinatura; ver `docs/e2e_validation_checklist.md`)
 
@@ -915,6 +920,65 @@ IDEAL (enterprise licitação + privado)
 #### Conclusão
 
 O módulo orçamento atinge **maturidade técnica enterprise** para operação SEMINF/SEINFRA-like, defesa contratual e SaaS multi-equipe: ciclo **B1–B28** fecha gaps §8.1 e melhorias de produto (tenant, lock). Pendências são **operacionais** (validação humana §4.U, publicação PNCP).
+
+### 8.2 Análise enterprise — módulo Laudos de Vistoria (2026-07-24)
+
+> Revisão baseada em código: `backend/core/inspection_report/*`, `app/routes/inspection_reports.py`, `frontend/app/inspection-reports/`, `InspectionPartyList`, testes e decision log.
+
+#### Snapshot (o que está entregue)
+
+| Capacidade | Status | Evidência |
+|------------|--------|-----------|
+| Templates tipología (9 slugs) + capítulos SEMINF/Bariri 1–16 | 🟢 | `migrate.py` · `constants.DEFAULT_CHAPTERS` |
+| Gemini multimodal 2 passagens (diagnóstico ≤16 imgs + legendas lote 8) | 🟢 | `gemini_client.generate_laudo_content` · modelo `GEMINI_MODEL` |
+| SSE geração + modal % | 🟢 | `generate/stream` · UI `GENERATE_STAGES` |
+| Solicitante / RT+ART / responsáveis fotos | 🟢 | PATCH `content` · sobrevivem à regeneração |
+| Georref EXIF → ficha + imagem sob tabela + preview UI | 🟢 | `geo_utils` · kind `georef` · `GET …/file` |
+| Export Word/PDF institucional (logo, watermark 16,5 cm, analytics, 1 foto/página, assinaturas) | 🟢 | `docx_export` · `pdf_export` |
+| Progresso visual na exportação | 🟢 | modal círculo + `downloadApiFile` |
+| Correção profissional | 🟢 | SSE `/correct/stream` + resumo JSON ≤6k (L2) |
+| Isolamento por usuário | 🟢 | `user_id` no create + filtro list + 403 em get/export (L1) |
+| Capítulos por tipología | 🟢 | `CHAPTERS_BY_SLUG` / `PROMPT_EXTRAS_BY_SLUG` (L3) |
+| Georref no Gemini | 🟢 | Passagem 1 inclui imagem + coords (L4) |
+| Limites / cancel | 🟢 | 25 MB · 80 fotos · cancel generation (L6) |
+| Edição humana | 🟢 | PATCH chapters / photographic_report / caption asset (L7) |
+| Vínculo projeto | 🟢 | `project_id` + `record_activity` (L8) |
+| Checklist oficial | 🟢 | CNPJ/CREA/ART + export `?strict=1` (L9) |
+| Testes | 🟢 | georef→DOCX · PDF · parties · isolamento · tipología · checklist (L5) |
+
+#### Pontos positivos
+
+1. **Laudo institucional utilizável** — branding empresa, watermark, capítulos numerados, fotográfico 1/página, analytics de patologias, assinaturas tipográficas dos RT.
+2. **Pipeline multimodal pragmático** — amostragem + lotes evita estourar contexto/custo com dezenas de fotos.
+3. **Metadados humanos sobrevivem ao Gemini** — solicitante, RT/ART, fotógrafos e georref são reaplicados após a geração.
+4. **UX operacional** — SSE na geração, preview georref, confirmação ao editar/excluir responsáveis, loading na exportação.
+5. **Hardening útil** — repair JSON truncado, strip NUL de PDF, replace de georef único, fallback de legendas pedindo revisão humana.
+
+#### Pontos negativos / riscos
+
+| # | Problema | Impacto |
+|---|----------|---------|
+| 1 | Assinatura tipográfica (sem ICP-Brasil) | Não substitui assinatura digital legal |
+| 2 | Diagnóstico limitado a ≤16 fotos na passagem 1 | Laudos muito grandes podem subdiagnosticar |
+| 3 | Laudos legados com `user_id` NULL | Visíveis a todos até reatribuir dono |
+
+#### Melhorias sugeridas (backlog L) — ciclo L1–L9 ✅ 2026-07-24
+
+| ID | Prioridade | Melhoria | Status |
+|----|------------|----------|--------|
+| **L1** | P0 | Isolamento `user_id` + 403 | ✅ |
+| **L2** | P0 | SSE correção + truncar prompt | ✅ |
+| **L3** | P1 | Capítulos/prompt por tipología | ✅ |
+| **L4** | P1 | Georref na passagem 1 Gemini | ✅ |
+| **L5** | P1 | Testes georef/PDF/parties/isolamento | ✅ |
+| **L6** | P1 | Limites upload + cancel geração | ✅ |
+| **L7** | P2 | Edição humana capítulos/legendas | ✅ |
+| **L8** | P2 | `project_id` + activity | ✅ |
+| **L9** | P2 | Validação CNPJ/CREA/ART + checklist | ✅ |
+
+#### Conclusão
+
+O módulo Laudos atingiu **maturidade enterprise técnica** no ciclo **L1–L9**: isolamento multi-usuário, correção com progresso, tipologías diferenciadas, georref multimodal, limites/cancel, edição humana, vínculo a projeto e checklist pré-export oficial. Pendência residual: assinatura digital ICP-Brasil (fora de escopo curto).
 
 ## Intent Layer v2
 
@@ -1190,6 +1254,24 @@ input → project_understanding → design_generator (≥2 opções/disciplina)
 - [x] Persistência cronograma em sessão salva (`budget_db_service`)
 - [ ] Export Excel alinhado ao layout ComD/SemD da UI
 - [ ] Curva financeira do cronograma usando cenário adotado (ComD vs SemD) de forma explícita
+
+### Laudos de Vistoria 🟢 (Jul/24) — §8.2 L1–L9 ✅
+
+- [x] CRUD + templates seed (9 tipologías) + anexos PDF/fotos
+- [x] Gemini 2 passagens + SSE geração + RAG opcional
+- [x] Solicitante · RT/ART · responsáveis fotos · georref EXIF
+- [x] Export Word/PDF institucional + analytics + assinaturas + progresso export
+- [x] Sumário na página 2 (Word/PDF) + `ensure_sumario_chapter`
+- [x] **Capa 1ª folha** em blocos/tabelas KV (identificação · solicitante · RT) — rótulos em negrito
+- [x] **L1** Isolamento `user_id` (R-25 mitigado)
+- [x] **L2** SSE na correção + prompt truncado (R-26)
+- [x] **L3** Capítulos/prompt por tipología (R-27)
+- [x] **L4** Georref na passagem 1 Gemini
+- [x] **L5** Testes georef/PDF/parties/isolamento/tipología
+- [x] **L6** Limites upload + cancel geração
+- [x] **L7** Edição humana capítulos/legendas
+- [x] **L8** `project_id` + activity timeline
+- [x] **L9** Checklist CNPJ/CREA/ART + export strict
 
 ---
 
@@ -1658,6 +1740,10 @@ Settings completas: `backend/config/settings.py`
 | R-22 | ~~Média~~ Mitigado | BDI edital (B3) · auditoria completa (B7+B16) · compliance-pack (B22) |
 | R-23 | ~~Média~~ Mitigado | Sessão orçamento — B11 auto-save + B18 snapshot PostgreSQL + restore em `get()` |
 | R-24 | ~~Baixa~~ Mitigado | TCPO/ORSE na Busca CPU (B5) |
+| R-25 | ~~Alta~~ Mitigado | Laudos — isolamento multi-usuário (L1) |
+| R-26 | ~~Média~~ Mitigado | Laudos — correção sem SSE (L2) |
+| R-27 | ~~Média~~ Mitigado | Laudos — tipologías outline idêntico (L3) |
+| R-28 | ~~Baixa~~ Mitigado | Laudos — testes rasos (L5) |
 
 ---
 
@@ -1670,10 +1756,34 @@ Settings completas: `backend/config/settings.py`
 | 2026-06-20 | **Orçamento B11 — auto-save** | Heartbeat `restore` 60s · persist DB silencioso 3min · `sessionStorage` + indicador toolbar |
 | 2026-06-27 | **Relatórios insumos/MO (PDF/Excel)** | `rel_insumos` e `rel_mao_obra` — agregação de CPUs por código/unidade; total por linha (sem BDI); rodapé TOTAL SEM BDI · VALOR BDI · TOTAL COM BDI; cenário ComD/SemD adotado; toolbar `/budget` |
 | 2026-06-20 | **Orçamento B23–B26 — 100% gaps §8.1** | UI `.xlsm`/compliance · validador BDI · piloto 4.U5/4.U6 · Playwright API real |
+| 2026-07-04 | **Export analítico — performance** | `PriceBankStore` cache em memória (open/closed/insumos) · export usa `resolve_composition_detail` sem variação de período · pré-carga paralela de CPUs antes de Excel/PDF analítico |
+| 2026-07-04 | **Lançar Preços — polimento UX + matching** | Botão «Abrir módulo de orçamento» no histórico (`/budget?open=`) · scroll nas abas PPD/analítico/curvas · `description_match_score` semântico (tokens + unidade + senioridade) |
+| 2026-07-04 | **Lançar Preços — fix loading infinito ao abrir histórico** | `GET …/session?sync_prices=false` por default (evita re-sync de 244 linhas + lookup banco) · abertura em 2 fases: `getJob` imediato + sessão em background · `_unit_costs` usa `valor_unitario_base` da linha antes de varrer price_bank |
+| 2026-07-04 | **Lançar Preços — fix abrir do histórico** | Carregamento centralizado no workspace (`getSession` + `getJob` em paralelo) · sync explícito ao painel via `panelSyncToken` · backend re-fetch job com `rows` após persistir bases |
 | 2026-07-03 | **Orçamento — bases dinâmicas + auto-add na Busca CPU** | `BudgetPriceBasesPanel` lista fontes do `price_bank` (ORSE, TCPO, etc.) · `upsertPriceBaseSelection` ao lançar CPU |
-| 2026-07-03 | **ORSE — fix lookup CPU (código com `/`)** | `GET /sync/bank/composition?code=` · rota path `{code:path}` · `resolve_open_composition_key` (`00084` → `00084/ORSE`) · frontend/PDF via query param |
+| 2026-07-04 | **Lançar Preços — cobertura + precisão matching** | Dois níveis: auto ≥80% · sugestão ≥52% com preço (review) · `is_hard_mismatch` bloqueia pares errados · sinônimos (perfuração/furo/espera/epoxi) · busca dupla com/sem filtro de unidade |
 | 2026-07-03 | **ORSE — conector portal CEHOP** | `OrsePortalScraper` · `portal_sync` no sync ORSE · botão UI “Importar via portal CEHOP” · ~2k composições + CPUs + insumos sem ORSE 2 |
 | 2026-07-03 | **ORSE — fix detecção/validação import** | Rejeita planilhas SEMINF/SINAPI/PPD por engano · exige Composições+Insumos+Analítico · `ORSE_EXPORT_DIR` só lê subpasta `BR-ORSE-YYYY-MM` |
+| 2026-07-24 | **Módulo Laudos de Vistoria** | `/inspection-reports` · Gemini 3.6 Flash multimodal · templates por tipología · anexos PDF/fotos · RAG opcional · correção profissional · DOCX/PDF (logo, rodapé redes, 1 foto/página, recuo 1,5 cm) · `GEMINI_API_KEY` · módulo `inspection_reports` em permissões · testes `test_inspection_reports.py` |
+| 2026-07-24 | **Laudos — progresso SSE** | `POST /inspection-reports/{id}/generate/stream` · etapas prepare→attachments→knowledge→gemini→structure→persist · UI modal com % e checklist · JSON Gemini hardened (`_repair_truncated_json`, max_output_tokens 16384) |
+| 2026-07-24 | **Laudos — template Bariri** | Adotado layout do `LAUDO TECNICO N05 - PONTE DO BARIRI`: cabeçalho logo/brasão + linha institucional · rodapé endereço + Página X de Y · capítulos 1–16 SEMINF · Gemini 2 passagens (amostra + legendas detalhadas por lote) · campos legend/score/indicators |
+| 2026-07-24 | **Laudos — formatação Word/PDF** | Cabeçalho: logo esq. + empresa · dados/data-hora dir. · 2 linhas azul/cinza · rodapé com 2 linhas · brasão na capa · texto justificado · capítulos numerados · tabelas com wrap · indicadores legíveis (sem dict Python) · PDF≡DOCX |
+| 2026-07-24 | **Laudos — watermark + analytics** | Cabeçalho compacto · brasão marca d'água central (Word/PDF) · fotos com fit anti-página-em-branco · cards + tabelas ranking + gráficos barra/pizza de patologias |
+| 2026-07-24 | **Laudos — RT / imagens / brasão corpo** | UI lista+popup (incluir/alterar/excluir c/ confirmação) p/ `responsaveis_tecnicos` e `responsaveis_imagens` · PATCH persiste no `content` e sobrevive à regeneração Gemini · assinaturas RT antes do fotográfico · apresentação do laudo sob o título fotográfico (sem linha Fonte/imagem anexo) · brasão marca d'água na largura útil 16,5 cm (DOCX/PDF) |
+| 2026-07-24 | **Laudos — ART + capa + fonte foto** | Campo ART no RT · capa com RT (CREA/ART) e responsável pelas fotos abaixo da data · assinaturas 100% centralizadas · títulos das fotos centralizados · Fonte: autor + mês/ano |
+| 2026-07-24 | **Laudos — solicitante + georref** | Campos solicitante (empresa/CNPJ/endereço/contato) na capa e seção própria · upload `georef` com EXIF GPS · coordenadas na ficha técnica · imagem abaixo da tabela de dados do objeto (Word/PDF) |
+| 2026-07-24 | **Laudos — preview georref + export UX** | `GET …/assets/{id}/file` com auth · preview blob na UI · modal círculo % ao exportar Word/PDF (`downloadApiFile`) |
+| 2026-07-24 | **Análise enterprise · Laudos (§8.2)** | Revisão código: fortes (2 passagens, metadados sobrevivem Gemini, export institucional) · fracos (R-25/26/27/28) · backlog L1–L3 · passagem 1 usa `max_output_tokens=24576` (doc SSE antigo citava 16384) |
+| 2026-07-24 | **Fix preview logo/brasão Empresa** | `<img src={API}>` sem JWT → 401 · preview via `systemFetchCompanyLogo/Brasao` + blob URL + auth (`ExportBrandingSettingsPanel`) |
+| 2026-07-24 | **Fix redes sociais Empresa** | `CompanyProfileUpdateRequest` omitia `social_*` — Pydantic descartava no PATCH · campos agora no schema + teste de persistência |
+| 2026-07-24 | **Laudos L1–L9 backlog §8.2** | Isolamento user_id · SSE correção · tipologías · georref Gemini · limites/cancel · edição humana · project_id+activity · checklist CNPJ/CREA/ART · 13 testes verdes |
+| 2026-07-24 | **Laudos — sumário no export** | Sumário era pulado em `build_body_sections` · agora `build_sumario_entries` + página Sumário em Word/PDF · `ensure_sumario_chapter` na geração |
+| 2026-07-24 | **Laudos — capa 1ª folha** | Capa deixou de ser lista centralizada · `build_cover_layout` + tabelas rótulo|valor (negrito + fundo azul claro) em Word/PDF · blocos Identificação / Solicitante / Responsabilidade técnica / Conformidade |
+| 2026-07-19 | **P0 sticky discipline + NBR 8160** | Follow-ups curtos (“itens do projeto/desenho”) herdam disciplina do histórico (`infer_sticky_discipline`) — não caem mais no ChatAgent · NBR 8160 corrigida (esgoto, não água quente) + NBR 7198 · prompt hidrossanitário anti-confusão 5626/8160/7198 · keywords barrilete/caixa inspeção · `tests/test_sticky_discipline.py` |
+| 2026-07-19 | **Fix multi-turn — contexto compacto p/ LLM** | Histórico prioriza **dados do usuário** (dims/cargas) e corta respostas longas do assistente (~500 chars) — evita estouro de context window que fazia o modelo “esquecer” o 1º prompt · instrução explícita “não peça de novo” · RAG usa só a mensagem atual · `list_thread_turns` |
+| 2026-07-19 | **Fix multi-turn chat — histórico no prompt** | `build_thread_context` materializa msgs **dentro** da sessão (antes: `DetachedInstanceError` → histórico vazio silencioso) · `list_messages` pega as **últimas** N · plano mixed reanexa prefixo · ChatAgent não usa template quando há thread · `tests/test_thread_context.py` |
+| 2026-07-19 | **Chat SSE mobile — keepalive + recover** | Heartbeat SSE a cada 12s durante espera LLM · `conversation_id` cedo no status · persistência em thread mesmo se o cliente cair · UI faz poll da conversa se o stream terminar sem `done` (Cloudflare/mobile cortavam idle ~100s) |
+| 2026-07-05 | **Orçamento B32 — cache global CPUs** | `composition_open_cache` deduplicado `(code, reference, uf)` · migração do legado B31 · batch analítico lê cache global · save sem sync eager · benchmark 194 CPUs: cold ~299s vs warm ~60ms |
 | 2026-07-02 | **ORSE — sync UI + price_bank** | `/settings/price-bases` · download CEHOP `.ORSE` · import pasta Excel (composições+insumos+analítico) · `POST /sync/orse/upload/bundle/stream` · parser `orse_export_parser` · ref `BR-ORSE-YYYY-MM` |
 | 2026-07-02 | **Orçamento B27–B28 — tenant + lock sessão** | `empresa_id` + `X-Tenant-Id` + `BudgetTenantSelector` · `BudgetSessionLock` TTL + guard PATCH · `BudgetPilotChecklist` §4.U · pytest tenant/lock/pilot **11 passed** · fix middleware `SessionLocal` lazy + export filename ASCII |
 | 2026-07-02 | **Template `ppd_seminf_abril_2026.xlsm`** | Gerado de `00_MOD_MC_OR…v8.1.xlsm` via `make build-ppd-seminf-2026` — abas MCQ + ORC_SINTETICO + ORC_ANALITICO + CRONOGRAMA + ESP_TECNICA + Base Abril/2026; `make validate-budget-pilot` **23 OK** (4.U5 xlsm incluído) |

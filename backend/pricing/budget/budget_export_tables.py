@@ -7,9 +7,18 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pricing.budget.budget_pdf_landscape_template import fmt_money, fmt_num
+from pricing.budget.composition_codes import is_itemization_code
 from pricing.budget.ppd_layout import ROW_TYPE_ETAPA, ROW_TYPE_SERVICO, ROW_TYPE_SUB_ETAPA
 from pricing.models.budget_item import BudgetItem
 from pricing.models.budget_metadata import BudgetProjectMetadata
+
+# Cache de CPUs para exportação (mesmo processo) — evita reler JSON do price_bank.
+_EXPORT_COMPOSITION_CACHE: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+
+
+def clear_export_composition_cache() -> None:
+    _EXPORT_COMPOSITION_CACHE.clear()
+
 
 _CPU_TIPO_LABELS: dict[str, str] = {
     "mao_obra": "M.O.",
@@ -232,7 +241,7 @@ def _resolve_open_composition_lookup(
     enabled = [b for b in (meta.price_bases or []) if b.get("enabled") and b.get("reference")]
     uf = _meta_default_uf(meta)
     code = (item.source_code or "").strip()
-    if not code:
+    if not code or is_itemization_code(code):
         return None
 
     if not enabled:
@@ -267,18 +276,80 @@ def _fetch_open_composition_items(
     cache: dict[tuple[str, str, str], list[dict[str, Any]]],
 ) -> list[dict[str, Any]]:
     ref, uf = lookup
-    key = (code, ref, uf)
+    key = (code.strip(), ref, uf.upper())
     if key in cache:
         return cache[key]
+    if key in _EXPORT_COMPOSITION_CACHE:
+        cached = _EXPORT_COMPOSITION_CACHE[key]
+        cache[key] = cached
+        return cached
     try:
-        from pricing.tools.budget_pricing_tools import BudgetPricingTools
+        from pricing.budget.composition_lookup import resolve_composition_detail
 
-        comp = BudgetPricingTools.get_open_composition(code, uf=uf, reference=ref)
-        items = list(comp.get("items") or [])
+        comp = resolve_composition_detail(code, uf=uf, reference=ref)
+        items = list(comp.get("items") or []) if comp else []
     except (ValueError, OSError, KeyError):
         items = []
+    _EXPORT_COMPOSITION_CACHE[key] = items
     cache[key] = items
     return items
+
+
+def collect_export_composition_lookups(
+    roots: list[BudgetItem],
+    meta: BudgetProjectMetadata,
+) -> list[tuple[str, str, str]]:
+    """Códigos únicos (code, reference, uf) usados no orçamento analítico."""
+    keys: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item, _depth in flatten_budget_rows(roots, include_memory=False):
+        if not _is_service_row(item):
+            continue
+        source_code = (item.source_code or "").strip()
+        if not source_code or is_itemization_code(source_code):
+            continue
+        lookup = _resolve_open_composition_lookup(item, meta)
+        if not lookup:
+            continue
+        ref, uf = lookup
+        key = (source_code, ref, uf.upper())
+        if key in seen:
+            continue
+        seen.add(key)
+        keys.append(key)
+    return keys
+
+
+def warm_composition_cache_for_export(
+    roots: list[BudgetItem],
+    meta: BudgetProjectMetadata,
+    *,
+    max_workers: int = 6,
+) -> None:
+    """Pré-carrega CPUs em paralelo antes de montar Excel/PDF analítico."""
+    keys = collect_export_composition_lookups(roots, meta)
+    if not keys:
+        return
+
+    def _load_one(key: tuple[str, str, str]) -> None:
+        code, ref, uf = key
+        _fetch_open_composition_items(code, (ref, uf), _EXPORT_COMPOSITION_CACHE)
+
+    if len(keys) <= 2 or max_workers <= 1:
+        for key in keys:
+            _load_one(key)
+        return
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    workers = min(max_workers, len(keys))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_load_one, key) for key in keys]
+        for fut in as_completed(futures):
+            try:
+                fut.result()
+            except Exception:
+                pass
 
 
 def _cell_money(value: float | None) -> str:

@@ -565,8 +565,84 @@ export interface CompanyProfile {
   rt_crea: string;
   rt_email: string;
   rt_telefone: string;
+  social_instagram?: string;
+  social_linkedin?: string;
+  social_facebook?: string;
+  social_whatsapp?: string;
   has_logo?: boolean;
   has_brasao?: boolean;
+}
+
+export interface InspectionReportParty {
+  id: string;
+  nome: string;
+  profissao?: string;
+  crea?: string;
+  art?: string;
+  email?: string;
+  telefone?: string;
+}
+
+export interface InspectionReportSolicitante {
+  empresa?: string;
+  cnpj?: string;
+  endereco?: string;
+  contato?: string;
+}
+
+export interface InspectionReportTemplate {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  discipline_hint: string;
+  chapters: Array<{ id: string; title: string; required?: boolean }>;
+  system_prompt?: string | null;
+  active: boolean;
+}
+
+export interface InspectionReportAsset {
+  id: string;
+  report_id: string;
+  kind: "document" | "image" | "norm" | "georef" | string;
+  filename: string;
+  caption?: string | null;
+  photo_number?: number | null;
+  orientation?: string | null;
+  sort_order: number;
+  gps?: {
+    latitude?: number;
+    longitude?: number;
+    label?: string;
+    note?: string;
+  } | null;
+}
+
+export interface InspectionReport {
+  id: string;
+  title: string;
+  template_id?: string | null;
+  template?: InspectionReportTemplate | null;
+  status: string;
+  knowledge_mode: "attachments" | "attachments_and_kb" | string;
+  user_prompt: string;
+  content?: Record<string, unknown> | null;
+  correction_history?: Array<Record<string, unknown>>;
+  assets: InspectionReportAsset[];
+  user_id?: string | null;
+  project_id?: string | null;
+  gemini_model?: string | null;
+  gemini_available?: boolean;
+  error_message?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface InspectionReportGenerateProgress {
+  phase: string;
+  percent: number;
+  message: string;
+  report_id?: string;
 }
 
 export interface ExportBrandingConfig {
@@ -1131,6 +1207,7 @@ export interface BudgetRow {
   total_effective?: number;
   desoneracao_mode?: "comd" | "semd" | string;
   pricing_query?: string;
+  metadata?: { price_reference?: string; [key: string]: unknown };
 }
 
 export interface BudgetProjectInfo {
@@ -1504,6 +1581,84 @@ export interface OpenCompositionDetail {
   };
   period_variation?: CompositionPeriodVariation;
   items: OpenCompositionItem[];
+}
+
+export interface BudgetCompositionBatchResponse {
+  session_id: string;
+  budget_document_id?: string | null;
+  snapshots: Record<string, OpenCompositionDetail>;
+  total: number;
+  from_cache?: number;
+  from_db: number;
+  from_bank: number;
+  missing: string[];
+}
+
+export interface PriceMatchingRow {
+  id: string;
+  job_id: string;
+  row_index: number;
+  item: string;
+  descricao_original: string;
+  unidade: string;
+  quantidade: number;
+  base?: string | null;
+  codigo_base?: string | null;
+  descricao_base?: string | null;
+  valor_unitario?: number | null;
+  valor_total?: number | null;
+  valor_unitario_base?: number | null;
+  score_confianca?: number | null;
+  match_level?: string | null;
+  status: string;
+  reference?: string | null;
+  candidates?: Array<Record<string, unknown>>;
+}
+
+export interface PriceMatchingJob {
+  id: string;
+  title: string;
+  status: string;
+  bdi: number;
+  increase_index: number;
+  uf: string;
+  cliente?: string | null;
+  obra?: string | null;
+  source_filename?: string | null;
+  source_format?: string | null;
+  budget_document_id?: string | null;
+  session_id?: string | null;
+  hierarchy?: Array<Record<string, unknown>>;
+  rows_total: number;
+  rows_matched: number;
+  rows_processed?: number;
+  process_percent?: number;
+  rows?: PriceMatchingRow[];
+  model_used?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  processed_at?: string | null;
+  imported_count?: number;
+  budget_id?: string;
+  price_bases?: BudgetPriceBaseSelection[];
+  hierarchy_stats?: {
+    etapas: number;
+    sub_etapas: number;
+    servicos: number;
+    total: number;
+  };
+  session?: BudgetSessionResponse;
+}
+
+export interface PriceMatchingCatalogHit {
+  base: string;
+  source: string;
+  reference: string;
+  code: string;
+  description: string;
+  unit: string;
+  price: number;
+  default_uf: string;
 }
 
 export interface BudgetGenerateRequest {

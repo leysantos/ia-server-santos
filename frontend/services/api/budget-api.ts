@@ -13,9 +13,13 @@ import type {
   BudgetSkeleton,
   BudgetSkeletonEtapa,
   BudgetSummary,
+  BudgetCompositionBatchResponse,
   OpenCompositionDetail,
   OpenCompositionListResponse,
   OpenCompositionSearchResponse,
+  PriceMatchingCatalogHit,
+  PriceMatchingJob,
+  PriceMatchingRow,
   PriceBankInventory,
   PriceBankReference,
   PriceBankStats,
@@ -109,6 +113,24 @@ export const budgetApi = {
 
   pricingSession(sessionId: string): Promise<BudgetSessionResponse> {
     return request<BudgetSessionResponse>(`/pricing/budget/${sessionId}`);
+  },
+
+  pricingBudgetCompositionBatch(
+    sessionId: string,
+    options?: { backfill?: boolean }
+  ): Promise<BudgetCompositionBatchResponse> {
+    const params = new URLSearchParams();
+    if (options?.backfill === false) params.set("backfill", "false");
+    const qs = params.toString();
+    return request<BudgetCompositionBatchResponse>(
+      `/pricing/budget/${sessionId}/compositions/batch${qs ? `?${qs}` : ""}`
+    );
+  },
+
+  pricingBudgetCompositionBackfill(
+    sessionId: string
+  ): Promise<{ session_id: string; budget_document_id: string; required: number; stored: number; fetched: number }> {
+    return request(`/pricing/budget/${sessionId}/compositions/backfill`, { method: "POST" });
   },
 
   pricingUpdateCell(
@@ -314,12 +336,13 @@ export const budgetApi = {
 
   pricingSyncOpenComposition(
     code: string,
-    options?: { uf?: string; reference?: string }
+    options?: { uf?: string; reference?: string; comparePrevious?: boolean }
   ): Promise<OpenCompositionDetail> {
     const params = new URLSearchParams();
     params.set("code", code);
     if (options?.uf) params.set("uf", options.uf);
     if (options?.reference) params.set("reference", options.reference);
+    if (options?.comparePrevious === false) params.set("compare_previous", "false");
     return request(`/pricing/sync/bank/composition?${params.toString()}`);
   },
 
@@ -1196,6 +1219,193 @@ export const budgetApi = {
     return withBudgetSessionRecovery(sessionId, (sid) =>
       request(`/pricing/budget/${sid}/lock`, { method: "DELETE" })
     );
+  },
+
+  priceMatchingImport(
+    file: File,
+    params: {
+      bdi?: number;
+      increase_index?: number;
+      uf?: string;
+      cliente?: string;
+      obra?: string;
+      price_bases?: BudgetPriceBaseSelection[];
+    } = {}
+  ): Promise<PriceMatchingJob> {
+    const form = new FormData();
+    form.append("file", file);
+    const qs = new URLSearchParams();
+    if (params.bdi != null) qs.set("bdi", String(params.bdi));
+    if (params.increase_index != null) qs.set("increase_index", String(params.increase_index));
+    if (params.uf) qs.set("uf", params.uf);
+    if (params.cliente) qs.set("cliente", params.cliente);
+    if (params.obra) qs.set("obra", params.obra);
+    if (params.price_bases?.length) qs.set("price_bases", JSON.stringify(params.price_bases));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return apiFetch(`${getApiBaseUrl()}/pricing/budget/price-matching/import${suffix}`, {
+      method: "POST",
+      headers: getMultipartAuthHeaders(),
+      body: form,
+    }).then(async (r) => {
+      if (!r.ok) throw new Error(await parseFetchError(r));
+      return r.json() as Promise<PriceMatchingJob>;
+    });
+  },
+
+  priceMatchingGetJob(jobId: string): Promise<PriceMatchingJob> {
+    return request<PriceMatchingJob>(`/pricing/budget/price-matching/jobs/${jobId}`);
+  },
+
+  priceMatchingListJobs(limit = 50): Promise<{ jobs: PriceMatchingJob[] }> {
+    return request<{ jobs: PriceMatchingJob[] }>(
+      `/pricing/budget/price-matching/jobs?limit=${limit}`
+    );
+  },
+
+  priceMatchingUpdateJob(
+    jobId: string,
+    body: Partial<
+      Pick<PriceMatchingJob, "bdi" | "increase_index" | "cliente" | "obra" | "uf" | "price_bases">
+    >
+  ): Promise<PriceMatchingJob> {
+    return request<PriceMatchingJob>(`/pricing/budget/price-matching/jobs/${jobId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  },
+
+  priceMatchingProcess(jobId: string, useLlm = true, asyncMode = true): Promise<PriceMatchingJob> {
+    const qs = new URLSearchParams({
+      use_llm: String(useLlm),
+      async_mode: String(asyncMode),
+    });
+    return request<PriceMatchingJob>(
+      `/pricing/budget/price-matching/jobs/${jobId}/process?${qs.toString()}`,
+      { method: "POST" }
+    );
+  },
+
+  priceMatchingAcceptRow(jobId: string, rowId: string): Promise<PriceMatchingRow> {
+    return request<PriceMatchingRow>(
+      `/pricing/budget/price-matching/jobs/${jobId}/rows/${rowId}/accept`,
+      { method: "POST" }
+    );
+  },
+
+  priceMatchingReplaceRow(
+    jobId: string,
+    rowId: string,
+    body: {
+      base: string;
+      code: string;
+      reference?: string;
+      description?: string;
+      unit?: string;
+      price?: number;
+      source?: string;
+    }
+  ): Promise<PriceMatchingRow> {
+    return request<PriceMatchingRow>(
+      `/pricing/budget/price-matching/jobs/${jobId}/rows/${rowId}/replace`,
+      { method: "POST", body: JSON.stringify(body) }
+    );
+  },
+
+  priceMatchingSearch(params: {
+    q?: string;
+    code?: string;
+    base?: string;
+    unit?: string;
+    uf?: string;
+    job_id?: string;
+    limit?: number;
+  }): Promise<{ results: PriceMatchingCatalogHit[]; count: number }> {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set("q", params.q);
+    if (params.code) qs.set("code", params.code);
+    if (params.base) qs.set("base", params.base);
+    if (params.unit) qs.set("unit", params.unit);
+    if (params.uf) qs.set("uf", params.uf);
+    if (params.job_id) qs.set("job_id", params.job_id);
+    if (params.limit != null) qs.set("limit", String(params.limit));
+    return request(`/pricing/budget/price-matching/search?${qs.toString()}`);
+  },
+
+  priceMatchingGenerateBudget(jobId: string): Promise<{
+    session: BudgetSessionResponse;
+    session_id: string;
+    job_id: string;
+    budget_id?: string;
+    rows_imported: number;
+    rows_matched: number;
+    message: string;
+  }> {
+    return request(`/pricing/budget/price-matching/jobs/${jobId}/generate-budget`, {
+      method: "POST",
+    });
+  },
+
+  priceMatchingGetSession(
+    jobId: string,
+    options?: { syncPrices?: boolean }
+  ): Promise<{
+    session: BudgetSessionResponse;
+    job: PriceMatchingJob;
+    budget_id?: string;
+  }> {
+    const qs =
+      options?.syncPrices === true
+        ? "?sync_prices=true"
+        : "";
+    return request(`/pricing/budget/price-matching/jobs/${jobId}/session${qs}`);
+  },
+
+  priceMatchingSaveBudget(
+    jobId: string,
+    body: {
+      payload?: BudgetSessionResponse;
+      title?: string;
+      expected_version?: number;
+    } = {}
+  ): Promise<{ session: BudgetSessionResponse; job_id: string; budget_id?: string }> {
+    return request(`/pricing/budget/price-matching/jobs/${jobId}/save-budget`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  priceMatchingDeleteJob(
+    jobId: string,
+    deleteBudget = true
+  ): Promise<{ deleted: boolean; job_id: string; budget_deleted: boolean }> {
+    const qs = new URLSearchParams({ delete_budget: String(deleteBudget) });
+    return request(`/pricing/budget/price-matching/jobs/${jobId}?${qs.toString()}`, {
+      method: "DELETE",
+    });
+  },
+
+  async priceMatchingExportExcel(jobId: string): Promise<Blob> {
+    const response = await apiFetch(
+      `${getApiBaseUrl()}/pricing/budget/price-matching/jobs/${jobId}/export/excel`,
+      {
+      method: "POST",
+      headers: getAuthHeaders(),
+    }
+    );
+    if (!response.ok) throw new Error(await parseFetchError(response));
+    return response.blob();
+  },
+
+  async priceMatchingExportPdf(jobId: string): Promise<Blob> {
+    const response = await apiFetch(
+      `${getApiBaseUrl()}/pricing/budget/price-matching/jobs/${jobId}/export/pdf`,
+      {
+      method: "POST",
+      headers: getAuthHeaders(),
+    }
+    );
+    if (!response.ok) throw new Error(await parseFetchError(response));
+    return response.blob();
   },
 
 };

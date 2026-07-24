@@ -71,3 +71,25 @@ def test_composition_query_route(client):
     body = resp.json()
     assert body.get("code") == "00084/ORSE"
     assert body.get("items")
+
+
+@pytest.mark.skipif(not _orse_open_exists(), reason="ORSE price bank not imported locally")
+def test_composition_pdf_export_query_route(client):
+    """Rota /composition/export/pdf não deve ser capturada como code=export/pdf."""
+    resp = client.get(
+        "/pricing/sync/bank/composition/export/pdf",
+        params={"code": "00084/ORSE", "reference": ORSE_REF, "uf": "SE", "mode": "comd"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.headers.get("content-type", "").startswith("application/pdf")
+    assert resp.content[:4] == b"%PDF"
+
+
+def test_composition_pdf_route_not_composition_lookup(client):
+    """Garante que export/pdf não vira lookup de composição 'export/pdf'."""
+    resp = client.get(
+        "/pricing/sync/bank/composition/export/pdf",
+        params={"code": "00099/ORSE", "reference": "BR-ORSE-2099-01", "uf": "SE"},
+    )
+    assert resp.status_code == 404
+    assert "export/pdf" not in resp.json().get("detail", "")

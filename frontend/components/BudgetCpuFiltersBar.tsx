@@ -63,6 +63,22 @@ export function useBudgetCpuFilters(
 
   useEffect(() => {
     if (references.length === 0) return;
+
+    const currentPeriods = refsForSource(source, uf, references);
+    const selectionValid =
+      Boolean(source) &&
+      Boolean(reference) &&
+      currentPeriods.some((r) => r.reference === reference);
+
+    if (selectionValid) return;
+
+    const baseForSource = enabledBases.find((b) => b.source === source);
+    if (baseForSource) {
+      setReference(baseForSource.reference);
+      setUf(baseForSource.uf);
+      return;
+    }
+
     const primary = enabledBases[0];
     if (primary) {
       setSource(primary.source);
@@ -70,6 +86,7 @@ export function useBudgetCpuFilters(
       setUf(primary.uf);
       return;
     }
+
     const first = references[0];
     if (first) {
       const src = sourceKey(first);
@@ -77,7 +94,7 @@ export function useBudgetCpuFilters(
       setReference(first.reference);
       setUf(first.default_uf ?? defaultUfForSource(src, references));
     }
-  }, [references, enabledBases]);
+  }, [references, enabledBases, source, reference, uf]);
 
   const sourceOptions = useMemo(
     () => sourceOptionsFromReferences(references),

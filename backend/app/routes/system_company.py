@@ -37,6 +37,10 @@ class CompanyProfileUpdateRequest(BaseModel):
     rt_crea: str | None = None
     rt_email: str | None = None
     rt_telefone: str | None = None
+    social_instagram: str | None = None
+    social_linkedin: str | None = None
+    social_facebook: str | None = None
+    social_whatsapp: str | None = None
 
 
 class ExportBrandingUpdateRequest(BaseModel):

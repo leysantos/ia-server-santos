@@ -160,8 +160,10 @@ class RAGEngine:
         Compatível com o dispatcher existente.
         """
         from config import settings
+        from core.conversation_context import extract_latest_user_message
 
-        query = route_result.get("input", "")
+        # Query RAG = última mensagem; o histórico completo permanece em input p/ o LLM.
+        query = extract_latest_user_message(route_result.get("input", "") or "")
         discipline = route_result.get("discipline")
 
         if not query or discipline in ("CHAT", "GERAL", None):

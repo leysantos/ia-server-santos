@@ -180,6 +180,8 @@ function BudgetPageContent() {
   const [useLlmGenerate, setUseLlmGenerate] = useState(true);
   const lastInputRef = useRef("");
   const actionParam = searchParams.get("action");
+  const openBudgetId = searchParams.get("open");
+  const openBudgetHandled = useRef(false);
 
   const setActiveTab = useCallback(
     (tab: BudgetTabId) => {
@@ -208,14 +210,14 @@ function BudgetPageContent() {
     syncBudgetSessionSnapshot(session);
   }, [session]);
 
-  /** Pré-carrega CPUs do histograma em background quando há cronograma. */
+  /** Pré-carrega CPUs (snapshot DB) em background ao abrir orçamento. */
   useEffect(() => {
-    if (!session?.session_id || !session.schedule?.project_start) return;
+    if (!session?.session_id || !(session.rows?.length ?? 0)) return;
     const timer = window.setTimeout(() => {
       void prefetchBudgetServiceCompositions(session);
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [session]);
+  }, [session?.session_id, session?.rows?.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -269,6 +271,23 @@ function BudgetPageContent() {
     refreshSaved();
     refreshSinapiStatus();
   }, [refreshSinapiStatus, refreshSaved]);
+
+  /** Remove db_id obsoleto (orçamento excluído ou sessão de outro ambiente). */
+  useEffect(() => {
+    if (!activeDbId || savedItems.length === 0) return;
+    if (savedItems.some((s) => s.id === activeDbId)) return;
+    setActiveDbId(null);
+    setDocumentVersion(null);
+    setSession((prev) => {
+      if (!prev) return prev;
+      if (prev.db_id !== activeDbId) return prev;
+      const next = { ...prev };
+      delete next.db_id;
+      delete next.document_version;
+      syncBudgetSessionSnapshot(next);
+      return next;
+    });
+  }, [activeDbId, savedItems]);
 
   useEffect(() => {
     if (!projectId) {
@@ -357,6 +376,15 @@ function BudgetPageContent() {
       title,
       message: formatApiError(err instanceof Error ? err.message : String(err)),
       variant: "error",
+    });
+  }, []);
+
+  const showActionSuccess = useCallback((message: string, title = "Operação concluída") => {
+    setDialog({
+      open: true,
+      title,
+      message,
+      variant: "success",
     });
   }, []);
 
@@ -890,6 +918,16 @@ function BudgetPageContent() {
     }
   };
 
+  useEffect(() => {
+    if (restoringSession || !openBudgetId || openBudgetHandled.current) return;
+    openBudgetHandled.current = true;
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("open");
+    const qs = params.toString();
+    router.replace(qs ? `/budget?${qs}` : "/budget", { scroll: false });
+    void handleOpenSaved(openBudgetId);
+  }, [openBudgetId, restoringSession, router, searchParams]);
+
   const handleDeleteSaved = (id: string) => {
     const item = savedItems.find((s) => s.id === id);
     setDialog({
@@ -971,7 +1009,7 @@ function BudgetPageContent() {
             onExportCompliance={session ? () => void handleExportCompliance() : undefined}
           />
 
-          {session && activeDbId && (
+          {session && activeDbId && savedItems.some((s) => s.id === activeDbId) && (
             <BudgetRevisionPanel
               budgetId={activeDbId}
               session={session}
@@ -1163,6 +1201,7 @@ function BudgetPageContent() {
               onSessionUpdate={setSession}
               onPriceBasesChange={handlePriceBasesChange}
               onError={showActionError}
+              onSuccess={showActionSuccess}
             />
           )}
 

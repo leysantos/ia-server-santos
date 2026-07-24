@@ -38,11 +38,13 @@
 
 @media (max-width: 1023px) {
   :root {
-    --mobile-nav-h: 3.75rem;
+    /* Altura da barra inferior + folga (ícone + label + padding). */
+    --mobile-nav-h: 4.25rem;
+    --mobile-nav-offset: calc(var(--mobile-nav-h) + env(safe-area-inset-bottom, 0px));
   }
 
   .mobile-scroll-area {
-    padding-bottom: calc(var(--mobile-nav-h) + env(safe-area-inset-bottom, 0px));
+    padding-bottom: var(--mobile-nav-offset);
   }
 }
 
@@ -59,6 +61,20 @@
   padding-bottom: max(var(--shell-safe-bottom), env(safe-area-inset-bottom, 0px));
   padding-left: var(--shell-gutter-x);
   padding-right: var(--shell-gutter-x);
+}
+
+/* Mobile: reserva a altura da nav DENTRO do composer (não no main).
+   Assim o textarea não fica sob a barra mesmo se o flex estourar. */
+@media (max-width: 1023px) {
+  .shell-footer {
+    min-height: 0;
+    padding-top: 0.75rem;
+    padding-bottom: calc(0.75rem + var(--mobile-nav-offset));
+  }
+
+  .chat-message-pane {
+    min-height: 0;
+  }
 }
 
 .panel-collapse-btn {

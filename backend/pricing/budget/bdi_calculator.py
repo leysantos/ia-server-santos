@@ -11,7 +11,10 @@ class BdiCalculator:
         self.config = config or BdiConfig()
 
     def apply_to_item(self, item: BudgetItem) -> None:
-        if item.children:
+        priced_children = [
+            c for c in item.children if not c.metadata.get("is_memory_row")
+        ]
+        if priced_children:
             return
         if item.unit_cost <= 0 and item.unit_price > 0:
             item.unit_cost = item.unit_price

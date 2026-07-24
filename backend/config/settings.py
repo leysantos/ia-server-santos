@@ -210,6 +210,10 @@ class AppSettings(BaseSettings):
     minio_secure: bool = Field(default=False, validation_alias="MINIO_SECURE")
     minio_public_url: str | None = Field(default=None, validation_alias="MINIO_PUBLIC_URL")
 
+    # --- Gemini (Laudos de Vistoria) ---
+    gemini_api_key: str | None = Field(default=None, validation_alias="GEMINI_API_KEY")
+    gemini_model: str = Field(default="gemini-3.6-flash", validation_alias="GEMINI_MODEL")
+
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod
     def _parse_cors_origins(cls, value: Any) -> list[str]:

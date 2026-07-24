@@ -1,7 +1,18 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -800,6 +811,70 @@ class BudgetAuditLog(Base):
     )
 
 
+class BudgetCompositionSnapshot(Base):
+    """CPU aberta congelada por orçamento — legado B31 (substituído por CompositionOpenCache)."""
+
+    __tablename__ = "budget_composition_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "budget_document_id",
+            "composition_code",
+            "reference",
+            "uf",
+            name="uq_budget_comp_snap_doc_code_ref_uf",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    budget_document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("budget_documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    composition_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    reference: Mapped[str] = mapped_column(String(80), nullable=False)
+    uf: Mapped[str] = mapped_column(String(8), nullable=False, default="SP")
+    detail_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class CompositionOpenCache(Base):
+    """Cache global deduplicado de CPUs abertas (code + reference + uf)."""
+
+    __tablename__ = "composition_open_cache"
+    __table_args__ = (
+        UniqueConstraint(
+            "composition_code",
+            "reference",
+            "uf",
+            name="uq_comp_open_cache_code_ref_uf",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    composition_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    reference: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    uf: Mapped[str] = mapped_column(String(8), nullable=False, default="SP")
+    detail_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class BudgetSessionSnapshot(Base):
     """Snapshot de sessão ativa — sobrevive restart da API (B18)."""
 
@@ -920,6 +995,163 @@ class User(Base):
             data["created_at"] = self.created_at.isoformat() if self.created_at else None
             data["updated_at"] = self.updated_at.isoformat() if self.updated_at else None
         return data
+
+
+class BudgetPriceMatchingJob(Base):
+    """Job de lançamento de preços — importação + matching assíncrono."""
+
+    __tablename__ = "budget_price_matching_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False, default="Lançar Preços")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft", index=True)
+    bdi: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    increase_index: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    uf: Mapped[str] = mapped_column(String(4), nullable=False, default="AM")
+    cliente: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    obra: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    source_filename: Mapped[str | None] = mapped_column(String(260), nullable=True)
+    source_format: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    budget_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("budget_documents.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    empresa_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    model_used: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    rows_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rows_matched: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    hierarchy: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    price_bases: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": str(self.id),
+            "title": self.title,
+            "status": self.status,
+            "bdi": self.bdi,
+            "increase_index": self.increase_index,
+            "uf": self.uf,
+            "cliente": self.cliente,
+            "obra": self.obra,
+            "source_filename": self.source_filename,
+            "source_format": self.source_format,
+            "budget_document_id": str(self.budget_document_id) if self.budget_document_id else None,
+            "user_id": str(self.user_id) if self.user_id else None,
+            "empresa_id": str(self.empresa_id) if self.empresa_id else None,
+            "model_used": self.model_used,
+            "rows_total": self.rows_total,
+            "rows_matched": self.rows_matched,
+            "session_id": self.session_id,
+            "hierarchy": self.hierarchy or [],
+            "price_bases": self.price_bases or [],
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "processed_at": self.processed_at.isoformat() if self.processed_at else None,
+        }
+
+
+class BudgetPriceMatching(Base):
+    """Linha auditada de matching de preço (tabela budget_price_matching)."""
+
+    __tablename__ = "budget_price_matching"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("budget_price_matching_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    orcamento_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("budget_documents.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    row_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    row_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    item: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    descricao_original: Mapped[str] = mapped_column(Text, nullable=False)
+    unidade: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    quantidade: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    base: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    codigo_base: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    descricao_base: Mapped[str | None] = mapped_column(Text, nullable=True)
+    valor_unitario: Mapped[float | None] = mapped_column(Float, nullable=True)
+    valor_total: Mapped[float | None] = mapped_column(Float, nullable=True)
+    score_confianca: Mapped[float | None] = mapped_column(Float, nullable=True)
+    match_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    modelo_utilizado: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    reference: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    candidates: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    usuario: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    data_processamento: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": str(self.id),
+            "job_id": str(self.job_id),
+            "orcamento_id": str(self.orcamento_id) if self.orcamento_id else None,
+            "row_index": self.row_index,
+            "row_type": self.row_type,
+            "item": self.item,
+            "descricao_original": self.descricao_original,
+            "unidade": self.unidade,
+            "quantidade": self.quantidade,
+            "base": self.base,
+            "codigo_base": self.codigo_base,
+            "descricao_base": self.descricao_base,
+            "valor_unitario": self.valor_unitario,
+            "valor_total": self.valor_total,
+            "score_confianca": self.score_confianca,
+            "match_level": self.match_level,
+            "status": self.status,
+            "modelo_utilizado": self.modelo_utilizado,
+            "reference": self.reference,
+            "candidates": self.candidates or [],
+            "usuario": self.usuario,
+            "data_processamento": self.data_processamento.isoformat() if self.data_processamento else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
 
 
 class UserRoleDefinition(Base):

@@ -83,40 +83,6 @@ def price_sync_bank_composition_by_query(
     )
 
 
-@router.get("/sync/bank/composition/{code:path}")
-def price_sync_bank_composition(
-    code: str,
-    uf: str = Query(default="SP", min_length=2, max_length=2),
-    reference: str | None = Query(default=None),
-    compare_previous: bool = Query(default=True),
-):
-    return _price_sync_bank_composition_response(
-        code, uf=uf, reference=reference, compare_previous=compare_previous
-    )
-
-
-def _price_sync_bank_composition_response(
-    code: str,
-    *,
-    uf: str,
-    reference: str | None,
-    compare_previous: bool,
-) -> dict[str, Any]:
-    from pricing.budget.price_bank_index import PriceBankIndex
-    from pricing.budget.price_bank_period_variation import compute_period_variation_warnings
-    from pricing.sync.service import get_price_sync_service
-
-    ref = PriceBankIndex.resolve_reference(reference)
-    comp = get_price_sync_service().get_open_composition(code, uf=uf.upper(), reference=ref)
-    if not comp:
-        raise HTTPException(status_code=404, detail=f"Composição aberta '{code}' não encontrada")
-    if compare_previous:
-        comp["period_variation"] = compute_period_variation_warnings(
-            comp, uf=uf.upper(), reference=ref
-        )
-    return comp
-
-
 @router.get("/sync/bank/composition/export/pdf")
 def price_sync_bank_composition_export_pdf_by_query(
     code: str = Query(..., min_length=1),
@@ -139,6 +105,41 @@ def price_sync_bank_composition_export_pdf(
     return _price_sync_bank_composition_export_pdf_response(
         code, uf=uf, reference=reference, mode=mode
     )
+
+
+@router.get("/sync/bank/composition/{code:path}")
+def price_sync_bank_composition(
+    code: str,
+    uf: str = Query(default="SP", min_length=2, max_length=2),
+    reference: str | None = Query(default=None),
+    compare_previous: bool = Query(default=True),
+):
+    return _price_sync_bank_composition_response(
+        code, uf=uf, reference=reference, compare_previous=compare_previous
+    )
+
+
+def _price_sync_bank_composition_response(
+    code: str,
+    *,
+    uf: str,
+    reference: str | None,
+    compare_previous: bool,
+) -> dict[str, Any]:
+    from pricing.budget.composition_lookup import resolve_composition_detail
+    from pricing.budget.price_bank_index import PriceBankIndex
+    from pricing.budget.price_bank_period_variation import compute_period_variation_warnings
+
+    ref = PriceBankIndex.resolve_reference(reference)
+    comp = resolve_composition_detail(code, uf=uf.upper(), reference=ref)
+    if not comp:
+        raise HTTPException(status_code=404, detail=f"Composição aberta '{code}' não encontrada")
+    resolved_ref = str(comp.get("resolved_reference") or ref or "")
+    if compare_previous and resolved_ref:
+        comp["period_variation"] = compute_period_variation_warnings(
+            comp, uf=uf.upper(), reference=resolved_ref
+        )
+    return comp
 
 
 def _price_sync_bank_composition_export_pdf_response(

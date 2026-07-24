@@ -24,6 +24,7 @@ export default function SettingsCompanyPage() {
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [assetRev, setAssetRev] = useState(0);
   const [dialog, setDialog] = useState<{ open: boolean; title: string; message: string }>({
     open: false,
     title: "",
@@ -77,6 +78,10 @@ export default function SettingsCompanyPage() {
         rt_crea: profile.rt_crea,
         rt_email: profile.rt_email,
         rt_telefone: profile.rt_telefone,
+        social_instagram: profile.social_instagram || "",
+        social_linkedin: profile.social_linkedin || "",
+        social_facebook: profile.social_facebook || "",
+        social_whatsapp: profile.social_whatsapp || "",
       });
       setProfile(updated);
       setDialog({ open: true, title: "Salvo", message: "Dados da empresa atualizados." });
@@ -93,13 +98,24 @@ export default function SettingsCompanyPage() {
 
   const uploadImage = async (kind: "logo" | "brasao", file: File) => {
     setSaving(true);
+    // Otimista: libera o hook de preview (com blob local) antes do POST terminar
+    setProfile((prev) =>
+      prev
+        ? {
+            ...prev,
+            ...(kind === "logo" ? { has_logo: true } : { has_brasao: true }),
+          }
+        : prev
+    );
     try {
       const updated =
         kind === "logo"
           ? await api.systemUploadCompanyLogo(file)
           : await api.systemUploadCompanyBrasao(file);
       setProfile(updated);
+      setAssetRev((n) => n + 1);
     } catch (err) {
+      await load();
       setDialog({
         open: true,
         title: "Erro no upload",
@@ -118,14 +134,12 @@ export default function SettingsCompanyPage() {
     );
   }
 
-  const logoUrl = profile.has_logo ? api.systemCompanyLogoUrl() : null;
-  const brasaoUrl = profile.has_brasao ? api.systemCompanyBrasaoUrl() : null;
-
   return (
     <div className="space-y-6">
       <ExportBrandingSettingsPanel
-        logoUrl={logoUrl}
-        brasaoUrl={brasaoUrl}
+        hasLogo={Boolean(profile.has_logo)}
+        hasBrasao={Boolean(profile.has_brasao)}
+        assetRev={assetRev}
         disabled={saving}
         onUploadLogo={(file) => uploadImage("logo", file)}
         onUploadBrasao={(file) => uploadImage("brasao", file)}
@@ -157,6 +171,22 @@ export default function SettingsCompanyPage() {
           <label>
             <span className={labelClass()}>Site</span>
             <input className={fieldClass()} value={profile.site} onChange={(e) => patch("site", e.target.value)} />
+          </label>
+          <label>
+            <span className={labelClass()}>Instagram</span>
+            <input className={fieldClass()} value={profile.social_instagram || ""} onChange={(e) => patch("social_instagram", e.target.value)} placeholder="@empresa ou URL" />
+          </label>
+          <label>
+            <span className={labelClass()}>LinkedIn</span>
+            <input className={fieldClass()} value={profile.social_linkedin || ""} onChange={(e) => patch("social_linkedin", e.target.value)} />
+          </label>
+          <label>
+            <span className={labelClass()}>Facebook</span>
+            <input className={fieldClass()} value={profile.social_facebook || ""} onChange={(e) => patch("social_facebook", e.target.value)} />
+          </label>
+          <label>
+            <span className={labelClass()}>WhatsApp</span>
+            <input className={fieldClass()} value={profile.social_whatsapp || ""} onChange={(e) => patch("social_whatsapp", e.target.value)} />
           </label>
         </div>
       </section>

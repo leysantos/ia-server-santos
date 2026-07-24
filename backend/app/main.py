@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.routes import aed, auth, chat, console, copilot, devops, feedback, health, history, knowledge, maintenance, models, orchestrator, pricing, project_review, system, system_company, system_network, vision, workflow, workspace
+from app.routes import aed, auth, chat, console, copilot, devops, feedback, health, history, inspection_reports, knowledge, maintenance, models, orchestrator, pricing, project_review, system, system_company, system_network, vision, workflow, workspace
 from config.settings import get_settings
 from core.auth.middleware import AuthMiddleware
 from core.database import init_db, is_db_enabled
@@ -52,6 +52,8 @@ for origin in _network.suggested_cors_origins():
     if origin not in _cors:
         _cors.append(origin)
 
+app.add_middleware(AuthMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors,
@@ -65,8 +67,6 @@ app.add_middleware(
         "X-Tenant-Id",
     ],
 )
-
-app.add_middleware(AuthMiddleware)
 
 
 @app.exception_handler(Exception)
@@ -95,6 +95,7 @@ app.include_router(console.router)
 app.include_router(workspace.router)
 app.include_router(project_review.router)
 app.include_router(vision.router)
+app.include_router(inspection_reports.router)
 app.include_router(knowledge.router)
 app.include_router(maintenance.router)
 app.include_router(devops.router)
@@ -135,6 +136,7 @@ def root():
             "vision_analyze": "POST /projects/{id}/vision/analyze",
             "vision_analyze_stream": "POST /projects/{id}/vision/analyze/stream",
             "vision_report": "POST /projects/{id}/vision/report",
+            "inspection_reports": "GET/POST /inspection-reports",
             "project_file_preview": "GET /projects/{id}/files/{file_id}/preview",
         },
     }

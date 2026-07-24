@@ -234,13 +234,16 @@ def build_chat_extra(
 
 def is_conversational_short(text: str) -> bool:
     """Saudação curta (inclui compostas) — resposta template sem LLM."""
-    if is_instant_greeting(text):
+    from core.conversation_context import extract_latest_user_message
+
+    user_text = extract_latest_user_message(text)
+    if is_instant_greeting(user_text):
         return True
     from core.router import route_by_rules
 
-    if route_by_rules(text):
+    if route_by_rules(user_text):
         return False
-    normalized = _normalize(text)
+    normalized = _normalize(user_text)
     if len(normalized.split()) > 6:
         return False
     markers = ("oi", "bom dia", "boa tarde", "boa noite", "olá", "ola", "hey")
@@ -249,8 +252,14 @@ def is_conversational_short(text: str) -> bool:
 
 def should_answer_with_template(text: str, intent: ChatIntent | None = None) -> bool:
     """Perguntas conversacionais conhecidas — sem LLM (funciona com GPU ocupada)."""
+    from core.conversation_context import extract_latest_user_message
+
     resolved = intent or detect_intent(text)
     if resolved.name == "platform_evaluation":
+        return False
+    # Com histórico multi-turn, force LLM para seguir o contexto (exceto saudação pura).
+    has_thread = extract_latest_user_message(text) != (text or "").strip()
+    if has_thread and resolved.name not in ("greeting",):
         return False
     if is_conversational_short(text):
         return True

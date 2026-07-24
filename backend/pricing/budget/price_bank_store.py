@@ -149,6 +149,8 @@ class PriceBankManifest:
 
 
 class PriceBankStore:
+    _instances: dict[str, PriceBankStore] = {}
+
     def __init__(self, root: Path | None = None, reference: str | None = None) -> None:
         if root is not None:
             self.root = root
@@ -156,10 +158,34 @@ class PriceBankStore:
             PriceBankIndex.migrate_legacy_flat_bank()
             self.root = PriceBankIndex.reference_dir(reference)
         self.root.mkdir(parents=True, exist_ok=True)
+        self._disk_cache: dict[str, Any] = {}
 
     @classmethod
     def for_reference(cls, reference: str) -> PriceBankStore:
-        return cls(reference=reference)
+        ref = PriceBankIndex.resolve_reference(reference) or str(reference).strip().upper()
+        inst = cls._instances.get(ref)
+        if inst is None:
+            inst = cls(reference=ref)
+            cls._instances[ref] = inst
+        return inst
+
+    @classmethod
+    def clear_instance_cache(cls) -> None:
+        cls._instances.clear()
+
+    def invalidate_disk_cache(self) -> None:
+        self._disk_cache.clear()
+
+    def _read_json_cache(self, cache_key: str, filename: str, default: Any) -> Any:
+        if cache_key in self._disk_cache:
+            return self._disk_cache[cache_key]
+        path = self.root / filename
+        if not path.is_file():
+            self._disk_cache[cache_key] = default
+            return default
+        data = json.loads(path.read_text(encoding="utf-8"))
+        self._disk_cache[cache_key] = data
+        return data
 
     @property
     def manifest_path(self) -> Path:
@@ -237,39 +263,41 @@ class PriceBankStore:
             },
             set_active=set_active,
         )
+        self.invalidate_disk_cache()
         return manifest
 
     def load_manifest(self) -> PriceBankManifest | None:
         if not self.manifest_path.is_file():
             return None
-        data = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        data = self._read_json_cache("manifest", MANIFEST_NAME, None)
+        if data is None:
+            return None
         return PriceBankManifest(**data)
 
     def load_closed(self) -> list[dict[str, Any]]:
-        path = self.root / CLOSED_NAME
-        if not path.is_file():
-            return []
-        return json.loads(path.read_text(encoding="utf-8"))
+        return self._read_json_cache("closed", CLOSED_NAME, [])
 
     def load_open(self) -> dict[str, dict[str, Any]]:
-        path = self.root / OPEN_NAME
-        if not path.is_file():
-            return {}
-        return json.loads(path.read_text(encoding="utf-8"))
+        return self._read_json_cache("open", OPEN_NAME, {})
 
     def load_insumos(self) -> list[dict[str, Any]]:
-        path = self.root / INSUMOS_NAME
-        if not path.is_file():
-            return []
-        return json.loads(path.read_text(encoding="utf-8"))
+        return self._read_json_cache("insumos", INSUMOS_NAME, [])
 
     def load_labor_charges(self) -> dict[str, Any]:
+        cached = self._disk_cache.get("labor_charges")
+        if cached is not None:
+            return cached
         path = self.root / LABOR_CHARGES_NAME
         if path.is_file():
-            return json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self._disk_cache["labor_charges"] = data
+            return data
         manifest = self.load_manifest()
         if manifest and isinstance(manifest.metadata.get("labor_charges_snapshot"), dict):
-            return manifest.metadata["labor_charges_snapshot"]
+            snap = manifest.metadata["labor_charges_snapshot"]
+            self._disk_cache["labor_charges"] = snap
+            return snap
+        self._disk_cache["labor_charges"] = {}
         return {}
 
     @staticmethod

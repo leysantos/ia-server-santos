@@ -36,6 +36,9 @@ import {
   ORSE_PORTAL_URL,
   orseDefaultPeriod,
   orseMonthlyDownloadUrl,
+  orseReferenceKey,
+  parseOrseRefPeriod,
+  formatOrsePeriodLabel,
 } from "@/lib/orse-links";
 import {
   detectOrseBundleFromFolder,
@@ -263,6 +266,11 @@ function SourceHint({
           downloads — Atualização da Base
         </ExternalLink>
         . O pacote <code className="text-slate-400">.ORSE</code> atualiza o SQL Server do ORSE 2 (Windows).{" "}
+        Cada mês importado fica em uma referência própria (ex.{" "}
+        <code className="text-slate-400">BR-ORSE-2026-03</code>,{" "}
+        <code className="text-slate-400">BR-ORSE-2026-04</code>) — importar um mês anterior{" "}
+        <strong className="text-slate-400">não substitui</strong> os demais; só atualiza o período escolhido
+        em Mês/Ano.{" "}
         <strong className="text-slate-400">Baixar pacote CEHOP</strong> guarda o arquivo no servidor;{" "}
         <strong className="text-slate-400">Importar via portal CEHOP</strong> baixa composições, CPUs e insumos
         direto de orse.cehop.se.gov.br (sem ORSE 2). Leva ~15–25 min.{" "}
@@ -545,8 +553,15 @@ export default function SettingsPriceBasesPage() {
           setSuccess(`SICRO — ${syncedCount || "todas as"} UF(s) sincronizadas (ref. ${refKey}).`);
         }
       } else if (extra?.portalSync && name === "orse") {
+        const preserved =
+          orseImportedPeriods.filter(
+            (p) => !(p.year === syncYear && p.month === syncMonth)
+          ).length;
         setSuccess(
-          `${formatSyncSuccess("ORSE (portal CEHOP)", result)} — importação pode levar vários minutos.`
+          `${formatSyncSuccess("ORSE (portal CEHOP)", result)}.` +
+            (preserved > 0
+              ? ` Outros ${preserved} período(s) ORSE permanecem no banco.`
+              : "")
         );
       } else if (extra?.packageOnly && name === "orse") {
         const meta = result.download?.metadata as Record<string, unknown> | undefined;
@@ -555,6 +570,17 @@ export default function SettingsPriceBasesPage() {
         setSuccess(
           `Pacote ORSE ${String(syncMonth).padStart(2, "0")}/${syncYear} baixado${sizeKb ? ` (${sizeKb} KB)` : ""}. ` +
             "Aplique no ORSE 2 e use 'Importar pasta export ORSE' com os Excel exportados."
+        );
+      } else if (name === "orse") {
+        const preserved =
+          orseImportedPeriods.filter(
+            (p) => !(p.year === syncYear && p.month === syncMonth)
+          ).length;
+        setSuccess(
+          `${formatSyncSuccess(name, result)}.` +
+            (preserved > 0
+              ? ` Outros ${preserved} período(s) ORSE permanecem no banco.`
+              : "")
         );
       } else {
         setSuccess(formatSyncSuccess(name, result));
@@ -723,6 +749,21 @@ export default function SettingsPriceBasesPage() {
     return group?.periods.some((p) => p.reference.endsWith(suffix)) ?? false;
   }, [inventory, syncYear, syncMonth]);
 
+  const orsePeriodImported = useMemo(() => {
+    if (importSource !== "orse") return null;
+    const ref = orseReferenceKey(syncYear, syncMonth);
+    const group = inventory?.groups.find((g) => g.source === "orse");
+    return group?.periods.find((p) => p.reference === ref) ?? null;
+  }, [importSource, inventory, syncYear, syncMonth]);
+
+  const orseImportedPeriods = useMemo(() => {
+    const group = inventory?.groups.find((g) => g.source === "orse");
+    return (group?.periods ?? [])
+      .map((p) => parseOrseRefPeriod(p.reference))
+      .filter((x): x is { year: number; month: number } => x !== null)
+      .sort((a, b) => b.year * 100 + b.month - (a.year * 100 + a.month));
+  }, [inventory]);
+
   const seminfGenerateDisabledReason = useMemo((): string | null => {
     if (!isSeminfBundleSource(importSource)) return null;
     if (seminfRootForPeriod) {
@@ -823,7 +864,12 @@ export default function SettingsPriceBasesPage() {
           : null) ?? `BR-ORSE-${syncYear}-${String(syncMonth).padStart(2, "0")}`;
       setViewReference(refKey);
       setPreviewSource("orse");
-      setSuccess(formatSyncSuccess("ORSE", result));
+      const preserved =
+        orseImportedPeriods.filter((p) => !(p.year === syncYear && p.month === syncMonth)).length;
+      setSuccess(
+        `${formatSyncSuccess("ORSE", result)}.` +
+          (preserved > 0 ? ` Outros ${preserved} período(s) ORSE permanecem no banco.` : "")
+      );
       await refresh(refKey);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha na importação ORSE");
@@ -1338,6 +1384,18 @@ export default function SettingsPriceBasesPage() {
               </div>
               {orseBundlePreview && !syncing && "files" in orseBundlePreview && (
                 <p className="text-xs text-slate-500">{formatOrseBundleSummary(orseBundlePreview)}</p>
+              )}
+              {orsePeriodImported && (
+                <p className="text-xs text-amber-300/90">
+                  {formatOrsePeriodLabel(syncYear, syncMonth)} já importado — nova importação atualiza só este
+                  período; os demais meses ORSE permanecem disponíveis.
+                </p>
+              )}
+              {orseImportedPeriods.length > 0 && (
+                <p className="text-xs text-slate-500">
+                  Períodos ORSE no banco:{" "}
+                  {orseImportedPeriods.map((p) => formatOrsePeriodLabel(p.year, p.month)).join(", ")}
+                </p>
               )}
             </div>
           )}

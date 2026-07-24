@@ -157,46 +157,68 @@ def append_conversation_messages(
 
 def build_thread_context(
     conversation_id: str | uuid.UUID,
-    limit: int = 12,
+    limit: int = 8,
     user_id: Optional[uuid.UUID] = None,
     db: Optional[Session] = None,
 ) -> str:
-    """Monta histórico textual para continuidade multi-turn."""
-    if not is_db_enabled():
+    """Monta histórico textual compacto para continuidade multi-turn."""
+    turns = list_thread_turns(conversation_id, limit=limit, user_id=user_id, db=db)
+    if not turns:
         return ""
+    lines: list[str] = []
+    for msg in turns:
+        label = "Usuário" if msg["role"] == "user" else "Assistente"
+        lines.append(f"{label}: {msg['content']}")
+    return "\n\n".join(lines)
+
+
+def list_thread_turns(
+    conversation_id: str | uuid.UUID,
+    limit: int = 8,
+    user_id: Optional[uuid.UUID] = None,
+    db: Optional[Session] = None,
+    *,
+    user_max_chars: int = 2200,
+    assistant_max_chars: int = 500,
+) -> list[dict[str, str]]:
+    """
+    Últimas mensagens materializadas (role/content) para multi-turn.
+
+    Prioriza espaço para falas do usuário (dados de projeto). Respostas do
+    assistente ficam curtas para não estourar o context window do LLM.
+    """
+    if not is_db_enabled():
+        return []
 
     conv_id = _parse_uuid(conversation_id)
     if not conv_id:
-        return ""
+        return []
+
+    def _load(repo: DatabaseRepository) -> list[dict[str, str]]:
+        conversation = repo.get_conversation(conv_id)
+        if not conversation or not user_owns_conversation(conversation, user_id):
+            return []
+        messages = repo.list_messages(conv_id, limit=limit)
+        turns: list[dict[str, str]] = []
+        for msg in messages:
+            role = (msg.role or "").strip().lower()
+            content = (msg.content or "").strip()
+            if not content:
+                continue
+            max_chars = user_max_chars if role == "user" else assistant_max_chars
+            if len(content) > max_chars:
+                content = content[: max_chars - 1].rstrip() + "…"
+            turns.append({"role": "user" if role == "user" else "assistant", "content": content})
+        return turns
 
     try:
         if db is not None:
-            repo = DatabaseRepository(db)
-            conversation = repo.get_conversation(conv_id)
-            if not conversation or not user_owns_conversation(conversation, user_id):
-                return ""
-            messages = repo.list_messages(conv_id, limit=limit)
-        else:
-            with session_scope() as session:
-                repo = DatabaseRepository(session)
-                conversation = repo.get_conversation(conv_id)
-                if not conversation or not user_owns_conversation(conversation, user_id):
-                    return ""
-                messages = repo.list_messages(conv_id, limit=limit)
-
-        if not messages:
-            return ""
-
-        lines: list[str] = []
-        for msg in messages:
-            label = "Usuário" if msg.role == "user" else "Assistente"
-            content = (msg.content or "").strip()
-            if content:
-                lines.append(f"{label}: {content[:3000]}")
-        return "\n\n".join(lines)
+            return _load(DatabaseRepository(db))
+        with session_scope() as session:
+            return _load(DatabaseRepository(session))
     except Exception as exc:
-        logger.warning("Falha ao montar thread context: %s", exc)
-        return ""
+        logger.warning("Falha ao listar thread turns: %s", exc)
+        return []
 
 
 def list_conversations(

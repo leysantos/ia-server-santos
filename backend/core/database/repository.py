@@ -115,13 +115,16 @@ class DatabaseRepository:
         conversation_id: uuid.UUID,
         limit: int = 100,
     ) -> list[ConversationMessage]:
+        """Retorna as últimas `limit` mensagens em ordem cronológica."""
         stmt = (
             select(ConversationMessage)
             .where(ConversationMessage.conversation_id == conversation_id)
-            .order_by(ConversationMessage.created_at)
+            .order_by(desc(ConversationMessage.created_at))
             .limit(limit)
         )
-        return list(self.db.scalars(stmt).all())
+        rows = list(self.db.scalars(stmt).all())
+        rows.reverse()
+        return rows
 
     # --- projects ---
 

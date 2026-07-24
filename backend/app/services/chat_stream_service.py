@@ -1,3 +1,8 @@
+from __future__ import annotations
+
+import logging
+import queue
+import threading
 from typing import Generator, Optional
 
 from config.settings import USE_INTENT_LAYER
@@ -9,7 +14,12 @@ from core.project_rag import resolve_project_id
 from core.database.service import append_conversation_messages, ensure_conversation
 from core.intent_layer import iter_intent_events
 from core.runtime.job_tracking import label_from_text, track_stream_job
-from core.stream_events import format_sse
+from core.stream_events import format_sse, format_sse_keepalive
+
+logger = logging.getLogger(__name__)
+
+# Proxies (Cloudflare tunnel) e mobile cortam SSE ocioso ~100s — manter < 30s.
+_SSE_KEEPALIVE_SEC = 12.0
 
 
 class ChatStreamService:
@@ -44,9 +54,7 @@ class ChatStreamService:
                 user=user,
             )
         except Exception as exc:
-            import logging
-
-            logging.getLogger(__name__).exception("Chat stream interrompido")
+            logger.exception("Chat stream interrompido")
             yield format_sse(
                 "error",
                 {"message": f"Erro no streaming: {exc}", "phase": "error"},
@@ -114,6 +122,15 @@ class ChatStreamService:
                 return
             if conversation:
                 active_conversation_id = conversation.get("id")
+                # Envia cedo — se o SSE cair no mobile, o cliente ainda consegue pollar.
+                yield format_sse(
+                    "status",
+                    {
+                        "message": "Conversa registrada — gerando resposta...",
+                        "phase": "conversation_ready",
+                        "conversation_id": active_conversation_id,
+                    },
+                )
 
         active_project_id = resolve_project_id(active_conversation_id, project_id)
 
@@ -126,7 +143,6 @@ class ChatStreamService:
             return
 
         agent_input = compose_thread_input(enriched_text, active_conversation_id, user_id=user_id)
-        final_output: dict | None = None
 
         with track_stream_job(
             kind="chat",
@@ -167,26 +183,111 @@ class ChatStreamService:
                     },
                 )
 
-            for event_type, data in iter_intent_events(
-                agent_input,
+            # Pipeline em thread: keepalive SSE + persistência mesmo se o cliente desconectar.
+            yield from self._stream_intent_with_keepalive(
+                agent_input=agent_input,
                 use_rag=use_rag,
                 persist=persist,
-                conversation_id=active_conversation_id,
-                project_id=active_project_id,
-                llm_model=effective_llm_model,
-            ):
-                runtime_job.update_from_stream(event_type, data)
-                if event_type == "done":
-                    final_output = data
-                    data = {**data, "conversation_id": active_conversation_id}
-                yield format_sse(event_type, data)
-
-        if persist and active_conversation_id and final_output:
-            result_text = final_output.get("result") or final_output.get("response") or ""
-            append_conversation_messages(
-                active_conversation_id,
-                user_text=text,
-                assistant_text=result_text,
-                assistant_meta=build_assistant_meta(final_output),
+                active_conversation_id=active_conversation_id,
+                active_project_id=active_project_id,
+                effective_llm_model=effective_llm_model,
                 user_id=user_id,
+                user_text=text,
+                runtime_job=runtime_job,
             )
+
+    def _stream_intent_with_keepalive(
+        self,
+        *,
+        agent_input: str,
+        use_rag: bool,
+        persist: bool,
+        active_conversation_id: Optional[str],
+        active_project_id: Optional[str],
+        effective_llm_model: Optional[str],
+        user_id,
+        user_text: str,
+        runtime_job,
+    ) -> Generator[str, None, None]:
+        event_q: queue.Queue[tuple[str, object]] = queue.Queue()
+        wait_ticks = 0
+
+        def _worker() -> None:
+            final_output: dict | None = None
+            try:
+                for event_type, data in iter_intent_events(
+                    agent_input,
+                    use_rag=use_rag,
+                    persist=persist,
+                    conversation_id=active_conversation_id,
+                    project_id=active_project_id,
+                    llm_model=effective_llm_model,
+                ):
+                    runtime_job.update_from_stream(event_type, data)
+                    if event_type == "done":
+                        final_output = data
+                        data = {**data, "conversation_id": active_conversation_id}
+                    event_q.put(("event", (event_type, data)))
+            except Exception as exc:
+                logger.exception("Chat intent pipeline falhou")
+                event_q.put(("error", exc))
+            finally:
+                if persist and active_conversation_id and final_output:
+                    try:
+                        result_text = (
+                            final_output.get("result") or final_output.get("response") or ""
+                        )
+                        append_conversation_messages(
+                            active_conversation_id,
+                            user_text=user_text,
+                            assistant_text=result_text,
+                            assistant_meta=build_assistant_meta(final_output),
+                            user_id=user_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Falha ao persistir conversa %s após stream",
+                            active_conversation_id,
+                        )
+                event_q.put(("end", None))
+
+        thread = threading.Thread(target=_worker, daemon=True, name="chat-intent-stream")
+        thread.start()
+
+        try:
+            while True:
+                try:
+                    kind, payload = event_q.get(timeout=_SSE_KEEPALIVE_SEC)
+                except queue.Empty:
+                    wait_ticks += 1
+                    elapsed = int(wait_ticks * _SSE_KEEPALIVE_SEC)
+                    yield format_sse_keepalive()
+                    yield format_sse(
+                        "status",
+                        {
+                            "message": (
+                                f"Modelo ainda gerando… ({elapsed}s) — "
+                                "aguarde; conexões móveis precisam deste sinal."
+                            ),
+                            "phase": "llm_wait",
+                            "conversation_id": active_conversation_id,
+                            "elapsed_sec": elapsed,
+                        },
+                    )
+                    continue
+
+                if kind == "end":
+                    return
+
+                if kind == "error":
+                    raise payload  # type: ignore[misc]
+
+                event_type, data = payload  # type: ignore[misc]
+                yield format_sse(event_type, data)  # type: ignore[arg-type]
+        finally:
+            # Worker é daemon e persiste no próprio finally — não bloquear teardown do SSE.
+            if thread.is_alive():
+                logger.info(
+                    "SSE encerrado; pipeline chat segue em background (conversa=%s)",
+                    active_conversation_id,
+                )

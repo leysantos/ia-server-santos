@@ -100,7 +100,14 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Autenticação desabilitada no servidor")
 
     username = body.username.strip()
-    user = db.query(User).filter(User.username == username).first()
+    # Aceita e-mail no campo usuário e ignora diferença de maiúsculas/minúsculas.
+    user = (
+        db.query(User)
+        .filter(User.username.ilike(username))
+        .first()
+    )
+    if not user and "@" in username:
+        user = db.query(User).filter(User.email.ilike(username)).first()
     if not user or not user.is_active or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Usuário ou senha inválidos")
 

@@ -161,6 +161,71 @@ def _build_mixed_plan(
     ]
 
 
+def _thread_prior_block(composed_text: str) -> str:
+    """Trecho do histórico multi-turn (sem a mensagem atual)."""
+    from core.conversation_context import extract_latest_user_message
+
+    marker = "NOVA MENSAGEM DO USUÁRIO:\n"
+    if marker in composed_text:
+        return composed_text.split(marker, 1)[0]
+    # Sem marcador: se a mensagem composta ≠ latest, há prefixo de histórico.
+    latest = extract_latest_user_message(composed_text)
+    if latest and latest != composed_text.strip():
+        idx = composed_text.rfind(latest)
+        if idx > 0:
+            return composed_text[:idx]
+    return ""
+
+
+def _is_pure_chat_followup(routing_text: str) -> bool:
+    """Saudação / identidade / capacidades — não herdar disciplina do thread."""
+    from agents.chat import detect_intent, is_instant_greeting
+
+    if is_instant_greeting(routing_text) or route_by_chat(routing_text):
+        return True
+    intent = detect_intent(routing_text)
+    return intent.name in (
+        "greeting",
+        "identity",
+        "capabilities",
+        "help",
+        "how_it_works",
+    ) and intent.confidence >= 0.9
+
+
+def infer_sticky_discipline(composed_text: str) -> str | None:
+    """
+    Mantém a disciplina do histórico quando o follow-up é curto/genérico
+    (ex.: "liste os itens do projeto") e não é chat puro.
+    """
+    prior = _thread_prior_block(composed_text)
+    if not prior.strip():
+        return None
+    sticky = route_by_rules(prior)
+    if sticky:
+        return sticky
+    # Fallback: palavras-chave no texto completo (inclui DADOS ANTERIORES).
+    return route_by_rules(composed_text)
+
+
+def _engineering_plan(text: str, discipline: str, confidence: float) -> IntentAnalysis:
+    return IntentAnalysis(
+        mode="engineering_only",
+        confidence=confidence,
+        input=text,
+        technical_discipline=discipline,
+        execution_plan=[
+            ExecutionStep(
+                step=1,
+                domain="engineering",
+                discipline=discipline,
+                agent=get_agent_name(discipline),
+                input=text,
+            ),
+        ],
+    )
+
+
 def analyze_intent(text: str) -> IntentAnalysis:
     """
     Classifica intenção global da mensagem (determinístico + router técnico).
@@ -178,7 +243,7 @@ def analyze_intent(text: str) -> IntentAnalysis:
             ],
         )
 
-    from core.conversation_context import extract_latest_user_message
+    from core.conversation_context import extract_latest_user_message, reattach_thread_prefix
     from core.platform_knowledge import resolve_platform_evaluation_intent
 
     if resolve_platform_evaluation_intent(text):
@@ -209,30 +274,19 @@ def analyze_intent(text: str) -> IntentAnalysis:
             chat_segment=chat_segment,
             technical_segment=technical_segment,
             execution_plan=_build_mixed_plan(
-                chat_segment, technical_segment, discipline
+                reattach_thread_prefix(text, chat_segment),
+                reattach_thread_prefix(text, technical_segment),
+                discipline,
             ),
         )
 
     discipline = route_by_rules(routing_text)
     if discipline:
-        return IntentAnalysis(
-            mode="engineering_only",
-            confidence=0.90,
-            input=text,
-            technical_discipline=discipline,
-            execution_plan=[
-                ExecutionStep(
-                    step=1,
-                    domain="engineering",
-                    discipline=discipline,
-                    agent=get_agent_name(discipline),
-                    input=text,
-                ),
-            ],
-        )
+        return _engineering_plan(text, discipline, 0.90)
 
-    if route_by_chat(routing_text):
-        chat_intent = detect_chat_intent(text)
+    # Chat puro (saudação/identidade) mesmo dentro de thread técnica.
+    if _is_pure_chat_followup(routing_text):
+        chat_intent = detect_chat_intent(routing_text)
         return IntentAnalysis(
             mode="chat_only",
             confidence=chat_intent.confidence,
@@ -242,6 +296,11 @@ def analyze_intent(text: str) -> IntentAnalysis:
                 ExecutionStep(1, "chat", "CHAT", CHAT_AGENT_NAME, text),
             ],
         )
+
+    # Sticky discipline: follow-up genérico herda HIDROSSANITÁRIO/ESTRUTURAL/etc. do histórico.
+    sticky = infer_sticky_discipline(text)
+    if sticky:
+        return _engineering_plan(text, sticky, 0.84)
 
     route_result = route_engineering_only(routing_text)
     discipline = route_result.get("discipline", "GERAL")
@@ -263,7 +322,12 @@ def analyze_intent(text: str) -> IntentAnalysis:
             ],
         )
 
-    chat_intent = detect_chat_intent(text)
+    # Última chance: sticky se o LLM caiu em GERAL mas o thread é técnico.
+    sticky = infer_sticky_discipline(text)
+    if sticky:
+        return _engineering_plan(text, sticky, 0.80)
+
+    chat_intent = detect_chat_intent(routing_text)
     return IntentAnalysis(
         mode="chat_only",
         confidence=min(chat_intent.confidence, 0.85),

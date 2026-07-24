@@ -26,6 +26,8 @@ interface BudgetToolbarProps {
   loading: boolean;
   savedVersion?: number | null;
   autoSaveHint?: string | null;
+  title?: string | null;
+  titleMeta?: string | null;
   onNew: () => void;
   onSave?: () => void;
   onExportExcel?: (docKey: string, label: string) => void;
@@ -40,6 +42,8 @@ export default function BudgetToolbar({
   loading,
   savedVersion,
   autoSaveHint,
+  title,
+  titleMeta,
   onNew,
   onSave,
   onExportExcel,
@@ -65,7 +69,23 @@ export default function BudgetToolbar({
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2" data-testid="budget-toolbar">
+    <div
+      className={cn(
+        "flex flex-nowrap items-center gap-2 overflow-x-auto",
+        title != null && "rounded-xl border border-white/5 bg-surface-card/40 px-3 py-2"
+      )}
+      data-testid="budget-toolbar"
+    >
+      {title ? (
+        <span className="min-w-0 max-w-[12rem] shrink truncate text-sm text-slate-200 sm:max-w-xs" title={title}>
+          {title}
+        </span>
+      ) : null}
+      {titleMeta ? (
+        <span className="shrink-0 text-xs text-slate-500">{titleMeta}</span>
+      ) : null}
+
+      <div className="ml-auto flex shrink-0 items-center gap-2">
       <button
         type="button"
         disabled={loading}
@@ -183,6 +203,7 @@ export default function BudgetToolbar({
           Pacote compliance
         </button>
       )}
+      </div>
     </div>
   );
 }

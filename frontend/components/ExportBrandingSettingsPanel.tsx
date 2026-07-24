@@ -14,16 +14,70 @@ function labelClass() {
 }
 
 interface ExportBrandingSettingsPanelProps {
-  logoUrl: string | null;
-  brasaoUrl: string | null;
+  /** Indica se há logo cadastrada no servidor (não usar URL direta — endpoints exigem JWT). */
+  hasLogo: boolean;
+  hasBrasao: boolean;
+  /** Incrementar após upload para forçar recarregar o blob autenticado. */
+  assetRev?: number;
   onUploadLogo: (file: File) => Promise<void>;
   onUploadBrasao: (file: File) => Promise<void>;
   disabled?: boolean;
 }
 
+function useAuthImagePreview(enabled: boolean, fetchBlob: () => Promise<Blob>, rev: number) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    let cancelled = false;
+
+    if (!enabled) {
+      setPreviewUrl((prev) => {
+        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+        return null;
+      });
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    fetchBlob()
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setPreviewUrl((prev) => {
+          if (prev?.startsWith("blob:") && prev !== objectUrl) URL.revokeObjectURL(prev);
+          return objectUrl;
+        });
+      })
+      .catch(() => {
+        // Mantém preview local (se houver) em caso de falha da API
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, fetchBlob, rev]);
+
+  const setLocalPreview = useCallback((file: File) => {
+    const localUrl = URL.createObjectURL(file);
+    setPreviewUrl((prev) => {
+      if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+      return localUrl;
+    });
+  }, []);
+
+  return { previewUrl, loading, setLocalPreview };
+}
+
 export default function ExportBrandingSettingsPanel({
-  logoUrl,
-  brasaoUrl,
+  hasLogo,
+  hasBrasao,
+  assetRev = 0,
   onUploadLogo,
   onUploadBrasao,
   disabled,
@@ -33,6 +87,20 @@ export default function ExportBrandingSettingsPanel({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const fetchLogo = useCallback(() => api.systemFetchCompanyLogo(), []);
+  const fetchBrasao = useCallback(() => api.systemFetchCompanyBrasao(), []);
+
+  const {
+    previewUrl: logoPreview,
+    loading: logoLoading,
+    setLocalPreview: setLocalLogo,
+  } = useAuthImagePreview(hasLogo, fetchLogo, assetRev);
+  const {
+    previewUrl: brasaoPreview,
+    loading: brasaoLoading,
+    setLocalPreview: setLocalBrasao,
+  } = useAuthImagePreview(hasBrasao, fetchBrasao, assetRev);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -87,6 +155,10 @@ export default function ExportBrandingSettingsPanel({
     );
   }
 
+  const showLogoSlot = branding.show_logo !== false;
+  const logoSrc = showLogoSlot ? logoPreview : null;
+  const brasaoSrc = brasaoPreview;
+
   return (
     <section className="rounded-2xl bg-slate-900/40 p-6 ring-1 ring-slate-800">
       <h3 className="text-base font-semibold text-white">Personalização de exportação (PDF e Excel)</h3>
@@ -100,12 +172,16 @@ export default function ExportBrandingSettingsPanel({
           <div>
             <p className={labelClass()}>Logo (cabeçalho — canto esquerdo)</p>
             <div className="flex items-center gap-3">
-              {logoUrl && branding.show_logo !== false ? (
+              {logoSrc ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={logoUrl} alt="Logo" className="h-12 max-w-[120px] rounded border border-slate-600 bg-white/90 p-1 object-contain" />
+                <img
+                  src={logoSrc}
+                  alt="Logo"
+                  className="h-12 max-w-[120px] rounded border border-slate-600 bg-white/90 p-1 object-contain"
+                />
               ) : (
                 <div className="flex h-12 w-24 items-center justify-center rounded border border-dashed border-slate-600 text-xs text-slate-500">
-                  Sem logo
+                  {logoLoading ? "…" : "Sem logo"}
                 </div>
               )}
               <label className="cursor-pointer rounded-lg bg-slate-800 px-3 py-2 text-sm text-slate-200 ring-1 ring-slate-700 hover:bg-slate-700">
@@ -117,7 +193,10 @@ export default function ExportBrandingSettingsPanel({
                   disabled={disabled || saving}
                   onChange={(e) => {
                     const f = e.target.files?.[0];
-                    if (f) void onUploadLogo(f);
+                    if (f) {
+                      setLocalLogo(f);
+                      void onUploadLogo(f);
+                    }
                     e.target.value = "";
                   }}
                 />
@@ -138,12 +217,16 @@ export default function ExportBrandingSettingsPanel({
           <div>
             <p className={labelClass()}>Brasão (corpo da página — centralizado)</p>
             <div className="flex items-center gap-3">
-              {brasaoUrl ? (
+              {brasaoSrc ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={brasaoUrl} alt="Brasão" className="h-12 max-w-[120px] rounded border border-slate-600 bg-white/90 p-1 object-contain" />
+                <img
+                  src={brasaoSrc}
+                  alt="Brasão"
+                  className="h-12 max-w-[120px] rounded border border-slate-600 bg-white/90 p-1 object-contain"
+                />
               ) : (
                 <div className="flex h-12 w-24 items-center justify-center rounded border border-dashed border-slate-600 text-xs text-slate-500">
-                  Sem brasão
+                  {brasaoLoading ? "…" : "Sem brasão"}
                 </div>
               )}
               <label className="cursor-pointer rounded-lg bg-slate-800 px-3 py-2 text-sm text-slate-200 ring-1 ring-slate-700 hover:bg-slate-700">
@@ -155,7 +238,10 @@ export default function ExportBrandingSettingsPanel({
                   disabled={disabled || saving}
                   onChange={(e) => {
                     const f = e.target.files?.[0];
-                    if (f) void onUploadBrasao(f);
+                    if (f) {
+                      setLocalBrasao(f);
+                      void onUploadBrasao(f);
+                    }
                     e.target.value = "";
                   }}
                 />

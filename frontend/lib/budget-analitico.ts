@@ -34,6 +34,24 @@ export function isSeminfCompositionCode(code: string): boolean {
   return /\.seminf$/i.test((code || "").trim());
 }
 
+/** Código WBS do orçamento (ex.: 4.1.7) — não é código de composição na base de preços. */
+export function isBudgetItemizationCode(code: string): boolean {
+  return /^\d+(?:\.\d+)+$/.test((code || "").trim());
+}
+
+/** Código de composição (SINAPI/SICRO/etc.) — nunca o código WBS da linha. */
+export function resolveCompositionCode(row: BudgetRow): string {
+  const candidates = [
+    (row.source_code || "").trim(),
+    String(row.metadata?.codigo_base ?? row.metadata?.code_base ?? "").trim(),
+  ];
+  for (const raw of candidates) {
+    if (!raw || isBudgetItemizationCode(raw)) continue;
+    return raw;
+  }
+  return "";
+}
+
 function isSeminfPriceBaseSource(source: string): boolean {
   const key = normSource(source);
   return key === "dpseminf" || key === "ppdseminf" || key === "seminf";
@@ -109,7 +127,26 @@ export function resolvePriceBaseForRow(
 ): BudgetPriceBaseSelection | null {
   const enabled = priceBases.filter((b) => b.enabled && b.reference);
   const bankReferences = options.bankReferences ?? [];
-  const compositionCode = (row.source_code || row.code || "").trim();
+  const compositionCode = resolveCompositionCode(row);
+
+  const metaRef = row.metadata?.price_reference?.trim();
+  if (metaRef) {
+    const fromMeta = enabled.find((b) => b.reference.toUpperCase() === metaRef.toUpperCase());
+    if (fromMeta) return fromMeta;
+    const ufHint = enabled.find((b) => b.uf)?.uf || "AM";
+    const upper = metaRef.toUpperCase();
+    let source = "sinapi";
+    if (upper.includes("SICRO")) source = "sicro";
+    else if (upper.includes("ORSE")) source = "orse";
+    else if (upper.includes("SEMINF")) source = "seminf";
+    return {
+      source,
+      label: metaRef.replace(/^BR-/, "").replace(/-/g, "/"),
+      enabled: true,
+      uf: ufHint,
+      reference: metaRef,
+    };
+  }
 
   // Códigos regionais (*.SEMINF) existem só no banco DP/SEMINF — nunca consultar SINAPI Caixa.
   if (isSeminfCompositionCode(compositionCode)) {
@@ -142,7 +179,25 @@ export function resolvePriceBaseForRow(
   const partial = enabled.find(
     (b) => key.includes(normSource(b.source)) || normSource(b.source).includes(key)
   );
-  return partial ?? enabled[0];
+  if (partial) return partial;
+
+  // Ex.: source_base SINAPI mas só SICRO nas bases — não usar SICRO para código SINAPI.
+  if (key === "sinapi" || key === "tcpo") {
+    const sinapiBase = bankReferences.find(
+      (r) => normSource(r.source || "") === "sinapi" || /^BR-\d{4}-\d{2}$/i.test(r.reference || "")
+    );
+    if (sinapiBase?.reference) {
+      return {
+        source: "sinapi",
+        label: sinapiBase.label || "SINAPI",
+        enabled: true,
+        uf: enabled.find((b) => b.uf)?.uf || sinapiBase.default_uf || "AM",
+        reference: sinapiBase.reference,
+      };
+    }
+  }
+
+  return enabled[0] ?? null;
 }
 
 export function lineFromService(
@@ -151,7 +206,7 @@ export function lineFromService(
   options: ResolvePriceBaseOptions = {}
 ): BudgetAnaliticoLine | null {
   if (row.row_type !== "S" || row.is_memory_row) return null;
-  const compositionCode = (row.source_code || row.code || "").trim();
+  const compositionCode = resolveCompositionCode(row);
   if (!compositionCode) return null;
 
   const base = resolvePriceBaseForRow(row, priceBases, options);

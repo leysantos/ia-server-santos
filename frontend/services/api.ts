@@ -88,6 +88,11 @@ import type {
   DecisionListResponse,
   CompanyProfile,
   ExportBrandingConfig,
+  InspectionReport,
+  InspectionReportGenerateProgress,
+  InspectionReportParty,
+  InspectionReportSolicitante,
+  InspectionReportTemplate,
   AuthUser,
   AuthStatusResponse,
   AuthMeResponse,
@@ -663,6 +668,271 @@ export const api = {
     });
   },
 
+  inspectionReportStatus(): Promise<{ gemini_available: boolean; gemini_model: string }> {
+    return request("/inspection-reports/status");
+  },
+
+  inspectionReportTemplates(): Promise<{ items: InspectionReportTemplate[] }> {
+    return request("/inspection-reports/templates");
+  },
+
+  createInspectionReportTemplate(
+    body: Partial<InspectionReportTemplate> & { name: string }
+  ): Promise<InspectionReportTemplate> {
+    return request("/inspection-reports/templates", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  listInspectionReports(): Promise<{ items: InspectionReport[] }> {
+    return request("/inspection-reports");
+  },
+
+  getInspectionReport(id: string): Promise<InspectionReport> {
+    return request(`/inspection-reports/${id}`);
+  },
+
+  createInspectionReport(body: {
+    title?: string;
+    template_id?: string | null;
+    user_prompt?: string;
+    knowledge_mode?: string;
+    project_id?: string | null;
+  }): Promise<InspectionReport> {
+    return request("/inspection-reports", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  updateInspectionReport(
+    id: string,
+    body: {
+      title?: string;
+      template_id?: string | null;
+      user_prompt?: string;
+      knowledge_mode?: string;
+      project_id?: string | null;
+      responsaveis_tecnicos?: InspectionReportParty[];
+      responsaveis_imagens?: InspectionReportParty[];
+      solicitante?: InspectionReportSolicitante;
+      chapters?: Array<Record<string, unknown>>;
+      photographic_report?: Array<Record<string, unknown>>;
+      content_patch?: Record<string, unknown>;
+    }
+  ): Promise<InspectionReport> {
+    return request(`/inspection-reports/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  },
+
+  async uploadInspectionReportAsset(
+    reportId: string,
+    file: File,
+    opts?: { kind?: string; caption?: string }
+  ): Promise<InspectionReport["assets"][number]> {
+    const form = new FormData();
+    form.append("file", file);
+    if (opts?.kind) form.append("kind", opts.kind);
+    if (opts?.caption) form.append("caption", opts.caption);
+    const response = await apiFetch(`${getApiBaseUrl()}/inspection-reports/${reportId}/assets`, {
+      method: "POST",
+      headers: getMultipartAuthHeaders(),
+      body: form,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `Upload falhou (${response.status})`);
+    }
+    return response.json();
+  },
+
+  deleteInspectionReport(id: string): Promise<{ ok: boolean }> {
+    return request(`/inspection-reports/${id}`, { method: "DELETE" });
+  },
+
+  deleteInspectionReportAsset(reportId: string, assetId: string): Promise<{ ok: boolean }> {
+    return request(`/inspection-reports/${reportId}/assets/${assetId}`, { method: "DELETE" });
+  },
+
+  async fetchInspectionReportAssetFile(reportId: string, assetId: string): Promise<Blob> {
+    const response = await apiFetch(
+      `${getApiBaseUrl()}/inspection-reports/${reportId}/assets/${assetId}/file`,
+      { headers: getMultipartAuthHeaders() }
+    );
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `Falha ao carregar anexo (${response.status})`);
+    }
+    return response.blob();
+  },
+
+  generateInspectionReport(id: string): Promise<InspectionReport> {
+    return request(`/inspection-reports/${id}/generate`, { method: "POST" });
+  },
+
+  async generateInspectionReportWithProgress(
+    id: string,
+    onProgress: (progress: InspectionReportGenerateProgress) => void,
+    signal?: AbortSignal
+  ): Promise<InspectionReport> {
+    onProgress({
+      phase: "prepare",
+      percent: 8,
+      message: "Abrindo stream de progresso…",
+      report_id: id,
+    });
+
+    const response = await apiFetch(
+      `${getApiBaseUrl()}/inspection-reports/${id}/generate/stream`,
+      {
+        method: "POST",
+        headers: {
+          ...getAuthHeaders(),
+          Accept: "text/event-stream",
+          "Cache-Control": "no-cache",
+        },
+        signal,
+        cache: "no-store",
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(formatApiError(errorText, response.status));
+    }
+
+    for await (const event of readSseStream(response)) {
+      if (event.type === "progress") {
+        onProgress(event.data as InspectionReportGenerateProgress);
+      } else if (event.type === "done") {
+        const payload = event.data as { ok?: boolean; report?: InspectionReport };
+        onProgress({
+          phase: "done",
+          percent: 100,
+          message: "Laudo gerado com sucesso.",
+          report_id: id,
+        });
+        if (payload.report) return payload.report;
+        throw new Error("Geração concluída sem conteúdo do laudo");
+      } else if (event.type === "error") {
+        const payload = event.data as { message?: string; percent?: number; phase?: string };
+        onProgress({
+          phase: "error",
+          percent: payload.percent ?? 100,
+          message: payload.message || "Falha na geração do laudo",
+          report_id: id,
+        });
+        throw new Error(payload.message || "Falha na geração do laudo");
+      }
+    }
+
+    throw new Error("Stream encerrado sem resultado final");
+  },
+
+  correctInspectionReport(id: string, correction_prompt: string): Promise<InspectionReport> {
+    return request(`/inspection-reports/${id}/correct`, {
+      method: "POST",
+      body: JSON.stringify({ correction_prompt }),
+    });
+  },
+
+  async correctInspectionReportWithProgress(
+    id: string,
+    correction_prompt: string,
+    onProgress: (progress: InspectionReportGenerateProgress) => void,
+    signal?: AbortSignal
+  ): Promise<InspectionReport> {
+    onProgress({
+      phase: "prepare",
+      percent: 8,
+      message: "Preparando correção…",
+      report_id: id,
+    });
+
+    const response = await apiFetch(
+      `${getApiBaseUrl()}/inspection-reports/${id}/correct/stream`,
+      {
+        method: "POST",
+        headers: {
+          ...getAuthHeaders(),
+          Accept: "text/event-stream",
+          "Cache-Control": "no-cache",
+        },
+        body: JSON.stringify({ correction_prompt }),
+        signal,
+        cache: "no-store",
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(formatApiError(errorText, response.status));
+    }
+
+    for await (const event of readSseStream(response)) {
+      if (event.type === "progress") {
+        onProgress(event.data as InspectionReportGenerateProgress);
+      } else if (event.type === "done") {
+        const payload = event.data as { ok?: boolean; report?: InspectionReport };
+        onProgress({
+          phase: "done",
+          percent: 100,
+          message: "Correção concluída.",
+          report_id: id,
+        });
+        if (payload.report) return payload.report;
+        throw new Error("Correção concluída sem conteúdo do laudo");
+      } else if (event.type === "error") {
+        const payload = event.data as { message?: string; percent?: number; phase?: string };
+        onProgress({
+          phase: "error",
+          percent: payload.percent ?? 100,
+          message: payload.message || "Falha na correção do laudo",
+          report_id: id,
+        });
+        throw new Error(payload.message || "Falha na correção do laudo");
+      }
+    }
+
+    throw new Error("Stream encerrado sem resultado final");
+  },
+
+  cancelInspectionReportGeneration(id: string): Promise<{ ok: boolean; message?: string }> {
+    return request(`/inspection-reports/${id}/generate/cancel`, { method: "POST" });
+  },
+
+  updateInspectionReportAssetCaption(
+    reportId: string,
+    assetId: string,
+    caption: string
+  ): Promise<InspectionReport["assets"][number]> {
+    return request(`/inspection-reports/${reportId}/assets/${assetId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ caption }),
+    });
+  },
+
+  inspectionReportExportChecklist(id: string): Promise<{
+    ok: boolean;
+    blocking: boolean;
+    issues: Array<{ code: string; message: string }>;
+    warnings: Array<{ code: string; message: string }>;
+    ready_for_official_export: boolean;
+  }> {
+    return request(`/inspection-reports/${id}/export/checklist`);
+  },
+
+  inspectionReportExportDocxUrl(id: string, strict = false): string {
+    return `${getApiBaseUrl()}/inspection-reports/${id}/export/docx${strict ? "?strict=true" : ""}`;
+  },
+
+  inspectionReportExportPdfUrl(id: string, strict = false): string {
+    return `${getApiBaseUrl()}/inspection-reports/${id}/export/pdf${strict ? "?strict=true" : ""}`;
+  },
+
   history(limit = 50, conversationId?: string): Promise<HistoryResponse> {
     const params = new URLSearchParams({ limit: String(limit) });
     if (conversationId) {
@@ -1096,6 +1366,28 @@ export const api = {
 
   systemCompanyBrasaoUrl(): string {
     return `${getApiBaseUrl()}/system/company-profile/brasao`;
+  },
+
+  async systemFetchCompanyLogo(): Promise<Blob> {
+    const response = await apiFetch(`${getApiBaseUrl()}/system/company-profile/logo`, {
+      headers: getMultipartAuthHeaders(),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `HTTP ${response.status}`);
+    }
+    return response.blob();
+  },
+
+  async systemFetchCompanyBrasao(): Promise<Blob> {
+    const response = await apiFetch(`${getApiBaseUrl()}/system/company-profile/brasao`, {
+      headers: getMultipartAuthHeaders(),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `HTTP ${response.status}`);
+    }
+    return response.blob();
   },
 
   async systemUploadCompanyLogo(file: File): Promise<CompanyProfile> {

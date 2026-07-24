@@ -35,6 +35,10 @@ class CompanyProfile:
     rt_crea: str = ""
     rt_email: str = ""
     rt_telefone: str = ""
+    social_instagram: str = ""
+    social_linkedin: str = ""
+    social_facebook: str = ""
+    social_whatsapp: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

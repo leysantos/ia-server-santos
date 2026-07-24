@@ -142,3 +142,24 @@ def test_orse_package_only(mock_dl: MagicMock, tmp_path: Path):
     )
     assert result.item_count == 0
     assert result.metadata.get("package_only") is True
+
+
+def test_orse_multiple_periods_coexist_in_index(tmp_path: Path, monkeypatch):
+    """Cada mês ORSE é referência distinta — importar 03/2026 não remove 04/2026."""
+    monkeypatch.setattr("pricing.budget.price_bank_index.PRICE_BANK_ROOT", tmp_path / "price_bank")
+    from pricing.budget.price_bank_index import PriceBankIndex
+
+    idx = PriceBankIndex.load()
+    for ref, month in (("BR-ORSE-2026-04", 4), ("BR-ORSE-2026-03", 3)):
+        idx.register(
+            ref,
+            source="orse",
+            default_uf="SE",
+            synced_at="2026-01-01T00:00:00Z",
+            counts={"compositions_closed": 1, "compositions_open": 1, "insumos": 1},
+            set_active=False,
+        )
+        (tmp_path / "price_bank" / ref).mkdir(parents=True, exist_ok=True)
+
+    refs = {r.reference for r in idx.references}
+    assert refs >= {"BR-ORSE-2026-04", "BR-ORSE-2026-03"}

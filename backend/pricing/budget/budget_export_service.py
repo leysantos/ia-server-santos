@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from core.system.company_profile import get_company_profile, load_company_brasao, load_company_logo
@@ -40,6 +41,17 @@ def get_export_branding_status() -> dict[str, Any]:
     return export_branding_status()
 
 
+def _preload_snapshots_for_export(session: BudgetSession) -> None:
+    try:
+        from core.database.connection import session_scope
+        from pricing.budget.composition_snapshot_service import preload_export_cache
+
+        with session_scope() as db:
+            preload_export_cache(db, session.roots, session.project)
+    except Exception:
+        pass
+
+
 def _resolve_logo_bytes(branding: ExportBrandingConfig) -> bytes | None:
     if not branding.show_logo:
         return None
@@ -59,7 +71,17 @@ def export_session_xlsx(session_id: str, doc_type: str) -> bytes:
     branding = get_global_export_branding()
     logo = _resolve_logo_bytes(branding)
     profile = get_company_profile()
-    if doc_type.strip().lower() == "proposta_comercial":
+    key = doc_type.strip().lower()
+    if key == "orc_analitico":
+        from pricing.budget.budget_export_tables import (
+            clear_export_composition_cache,
+            warm_composition_cache_for_export,
+        )
+
+        clear_export_composition_cache()
+        _preload_snapshots_for_export(session)
+        warm_composition_cache_for_export(session.roots, session.project)
+    if key == "proposta_comercial":
         from pricing.budget.budget_commercial_export import export_proposta_comercial_xlsx
 
         return export_proposta_comercial_xlsx(
@@ -107,7 +129,17 @@ def export_session_pdf(session_id: str, doc_type: str) -> bytes:
     logo = _resolve_logo_bytes(branding)
     brasao = _resolve_brasao_bytes(branding)
     profile = get_company_profile()
-    if doc_type.strip().lower() == "proposta_comercial":
+    key = doc_type.strip().lower()
+    if key == "orc_analitico":
+        from pricing.budget.budget_export_tables import (
+            clear_export_composition_cache,
+            warm_composition_cache_for_export,
+        )
+
+        clear_export_composition_cache()
+        _preload_snapshots_for_export(session)
+        warm_composition_cache_for_export(session.roots, session.project)
+    if key == "proposta_comercial":
         from pricing.budget.budget_commercial_export import export_proposta_comercial_pdf
 
         return export_proposta_comercial_pdf(

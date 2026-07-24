@@ -77,3 +77,64 @@ export function resetBankReferencesCache(): void {
   bankReferencesCache = null;
   bankReferencesPromise = null;
 }
+
+const MAX_CONCURRENT_COMPOSITION_FETCHES = 4;
+let activeCompositionFetches = 0;
+const compositionFetchWaitQueue: Array<() => void> = [];
+const inflightCompositionFetches = new Map<string, Promise<OpenCompositionDetail>>();
+
+function acquireCompositionFetchSlot(): Promise<void> {
+  if (activeCompositionFetches < MAX_CONCURRENT_COMPOSITION_FETCHES) {
+    activeCompositionFetches += 1;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    compositionFetchWaitQueue.push(() => {
+      activeCompositionFetches += 1;
+      resolve();
+    });
+  });
+}
+
+function releaseCompositionFetchSlot(): void {
+  activeCompositionFetches -= 1;
+  const next = compositionFetchWaitQueue.shift();
+  if (next) next();
+}
+
+/** Fila global + dedup in-flight — evita centenas de requests paralelos ao abrir orçamento. */
+export async function fetchCompositionCached(
+  code: string,
+  reference: string,
+  uf: string,
+  fetcher: () => Promise<OpenCompositionDetail>
+): Promise<OpenCompositionDetail> {
+  const key = compositionFetchKey(code, reference, uf);
+  const cached = getCachedComposition(key);
+  if (cached?.status === "loaded") return cached.detail;
+
+  const inflight = inflightCompositionFetches.get(key);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    await acquireCompositionFetchSlot();
+    try {
+      const again = getCachedComposition(key);
+      if (again?.status === "loaded") return again.detail;
+
+      const detail = await fetcher();
+      setCachedComposition(key, { status: "loaded", detail });
+      return detail;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Erro ao carregar composição";
+      setCachedComposition(key, { status: "error", message });
+      throw e;
+    } finally {
+      releaseCompositionFetchSlot();
+      inflightCompositionFetches.delete(key);
+    }
+  })();
+
+  inflightCompositionFetches.set(key, promise);
+  return promise;
+}

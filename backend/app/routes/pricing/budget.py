@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import uuid
 from pathlib import Path
 from typing import Any, Optional
 
@@ -474,6 +475,66 @@ def get_budget_session(session_id: str):
     return session.to_dict()
 
 
+@router.get("/budget/{session_id}/compositions/batch")
+def get_budget_compositions_batch(
+    session_id: str,
+    backfill: bool = Query(
+        default=False,
+        description="Persiste CPUs ausentes no snapshot (lento — use POST /compositions/backfill)",
+    ),
+    db: Session = Depends(get_db),
+):
+    """Retorna todas as CPUs abertas do orçamento (cache global + fallback price_bank)."""
+    engine = _get_budget_engine()
+    session = engine.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+
+    from pricing.budget.composition_snapshot_service import get_batch_compositions
+
+    budget_id = session.db_id or (session.to_dict().get("db_id"))
+    try:
+        result = get_batch_compositions(
+            db,
+            roots=session.roots,
+            meta=session.project,
+            budget_document_id=budget_id,
+            backfill=backfill,
+        )
+    except Exception as exc:
+        logger.exception("compositions/batch failed for session %s", session_id)
+        raise HTTPException(status_code=500, detail=f"Erro ao carregar composições: {exc}") from exc
+    return {
+        "session_id": session_id,
+        "budget_document_id": budget_id,
+        **result,
+    }
+
+
+@router.post("/budget/{session_id}/compositions/backfill")
+def backfill_budget_composition_snapshots(
+    session_id: str,
+    db: Session = Depends(get_db),
+):
+    """Popula cache global com CPUs ausentes do orçamento (lazy backfill)."""
+    engine = _get_budget_engine()
+    session = engine.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+
+    budget_id = session.db_id or session.to_dict().get("db_id")
+    if not budget_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Orçamento não salvo — salve o orçamento antes de gerar snapshots",
+        )
+
+    from pricing.budget.composition_snapshot_service import sync_missing_snapshots
+
+    stats = sync_missing_snapshots(db, uuid.UUID(str(budget_id)), session.roots, session.project)
+    return {"session_id": session_id, "budget_document_id": str(budget_id), **stats}
+
+
 @router.patch("/budget/{session_id}/bdi")
 def update_budget_bdi(
     session_id: str,
@@ -921,6 +982,26 @@ def replace_budget_service(
         raise HTTPException(status_code=404, detail="Sessão não encontrada") from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    budget_id = session.db_id or session.to_dict().get("db_id")
+    if budget_id:
+        try:
+            from pricing.budget.budget_export_tables import _resolve_open_composition_lookup
+            from pricing.budget.budget_structure import find_item
+            from pricing.budget.composition_snapshot_service import upsert_snapshot_for_service
+
+            replaced, _, _ = find_item(session.roots, row_id=row_id)
+            if replaced is not None:
+                lookup = _resolve_open_composition_lookup(replaced, session.project)
+                source_code = (replaced.source_code or price_data.get("code") or "").strip()
+                if lookup and source_code:
+                    ref, uf = lookup
+                    upsert_snapshot_for_service(
+                        db, budget_id, code=source_code, reference=ref, uf=uf
+                    )
+        except Exception:
+            pass
+
     _persist_audit_delta(db, session, session_id, audit_before, user)
     return session.to_dict()
 

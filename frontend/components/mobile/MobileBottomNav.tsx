@@ -101,7 +101,7 @@ export default function MobileBottomNav() {
       style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom, 0px))" }}
       aria-label="Navegação principal"
     >
-      <div className="mx-auto flex max-w-lg items-stretch justify-around px-1 pt-1">
+      <div className="mx-auto flex h-[var(--mobile-nav-h,4.25rem)] max-w-lg items-stretch justify-around px-1 pt-1">
         {visible.map((item) => {
           const active = item.match(pathname);
           return (

@@ -104,8 +104,8 @@ export default function ChatBox({
   return (
     <ShellFooter className="bg-surface/90 backdrop-blur-xl" innerClassName="items-start">
       <form onSubmit={handleSubmit} className="mx-auto w-full max-w-4xl">
-        <div className="flex w-full flex-col gap-3.5">
-          <div className="flex min-h-[1.75rem] flex-wrap items-center justify-center gap-x-6 gap-y-2 sm:justify-start">
+        <div className="flex w-full flex-col gap-2.5 sm:gap-3.5">
+          <div className="flex min-h-[1.75rem] flex-wrap items-center justify-center gap-x-4 gap-y-2 sm:justify-start sm:gap-x-6 max-lg:order-2">
             <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-400">
               <input
                 type="checkbox"
@@ -133,11 +133,11 @@ export default function ChatBox({
             id={modelSelectId}
             value={model}
             onChange={setModel}
-            className="px-1"
+            className="px-1 max-lg:order-3"
           />
 
           {allowAttachments && files.length > 0 && (
-            <ul className="flex flex-wrap gap-2 px-1">
+            <ul className="flex flex-wrap gap-2 px-1 max-lg:order-4">
               {files.map((file, index) => (
                 <li
                   key={`${file.name}-${file.size}-${index}`}
@@ -160,9 +160,10 @@ export default function ChatBox({
             </ul>
           )}
 
-          {fileError && <p className="px-1 text-xs text-amber-300">{fileError}</p>}
+          {fileError && <p className="px-1 text-xs text-amber-300 max-lg:order-5">{fileError}</p>}
 
-          <div className="flex items-end gap-2 rounded-2xl border border-white/5 bg-surface-card p-2 focus-within:border-brand-500/40 focus-within:ring-1 focus-within:ring-brand-500/30">
+          {/* No mobile (order-first) o prompt fica no topo do composer, acima da nav. */}
+          <div className="flex items-end gap-2 rounded-2xl border border-white/5 bg-surface-card p-2 focus-within:border-brand-500/40 focus-within:ring-1 focus-within:ring-brand-500/30 max-lg:order-first">
             {allowAttachments && (
               <>
                 <input
@@ -229,15 +230,11 @@ export default function ChatBox({
           </div>
 
           {allowAttachments && (
-            <p className="text-center text-[11px] text-slate-600 sm:text-left">
+            <p className="hidden text-[11px] text-slate-600 sm:block sm:text-left">
               Anexe PDF, Word, Excel, imagens, CAD/BIM, código etc. — modo Auto escolhe o modelo conforme o
               tipo de arquivo.
             </p>
           )}
-
-          <p className="text-center text-xs text-slate-600 sm:hidden">
-            Enter envia · Shift+Enter nova linha
-          </p>
         </div>
       </form>
     </ShellFooter>

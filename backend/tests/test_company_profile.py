@@ -49,3 +49,20 @@ def test_company_profile_endereco_linha():
     line = p.endereco_linha()
     assert "Av. Teste" in line
     assert "Manaus/AM" in line
+
+
+def test_company_profile_social_fields_persist():
+    update_company_profile(
+        {
+            "razao_social": "Teste LTDA",
+            "social_instagram": "@fsantos.eng",
+            "social_linkedin": "linkedin.com/company/fsantos",
+            "social_facebook": "facebook.com/fsantos",
+            "social_whatsapp": "92992262786",
+        }
+    )
+    loaded = get_company_profile()
+    assert loaded.social_instagram == "@fsantos.eng"
+    assert loaded.social_linkedin == "linkedin.com/company/fsantos"
+    assert loaded.social_facebook == "facebook.com/fsantos"
+    assert loaded.social_whatsapp == "92992262786"

@@ -7,6 +7,7 @@ import OpenCompositionItemsTable from "@/components/OpenCompositionItemsTable";
 import { BudgetTotalsDetailPanel } from "@/components/BudgetTotalsSummary";
 import {
   compositionFetchKey,
+  fetchCompositionCached,
   getAnaliticoUiState,
   getCachedComposition,
   loadBankReferencesCached,
@@ -14,6 +15,7 @@ import {
   setCachedComposition,
   type CachedCompositionEntry,
 } from "@/lib/budget-analitico-cache";
+import { primeCompositionCacheFromBatch } from "@/lib/budget-composition-loader";
 import {
   buildAnaliticoTree,
   countAnaliticoServices,
@@ -257,6 +259,14 @@ export default function BudgetAnaliticoTab({ session }: BudgetAnaliticoTabProps)
     const services = visibleServices;
 
     async function loadCompositions() {
+      if (sessionId) {
+        try {
+          await primeCompositionCacheFromBatch(sessionId, { backfill: true });
+        } catch {
+          // fallback para requests individuais
+        }
+      }
+
       const next = new Map<string, CompositionLoadState>();
       const pendingFetchKeys = new Set<string>();
       const fetchKeyByRowId = new Map<string, string>();
@@ -312,10 +322,17 @@ export default function BudgetAnaliticoTab({ session }: BudgetAnaliticoTabProps)
 
         const { line } = sample;
         try {
-          const detail = await api.pricingSyncOpenComposition(line.composition_code, {
-            uf: line.base.uf,
-            reference: line.base.reference,
-          });
+          const detail = await fetchCompositionCached(
+            line.composition_code,
+            line.base.reference,
+            line.base.uf,
+            () =>
+              api.pricingSyncOpenComposition(line.composition_code, {
+                uf: line.base.uf,
+                reference: line.base.reference,
+                comparePrevious: false,
+              })
+          );
           const entry: CachedCompositionEntry = { status: "loaded", detail };
           setCachedComposition(fetchKey, entry);
           for (const [rowId, key] of fetchKeyByRowId) {
@@ -347,7 +364,7 @@ export default function BudgetAnaliticoTab({ session }: BudgetAnaliticoTabProps)
     return () => {
       cancelled = true;
     };
-  }, [compositionLoadKey, visibleServices]);
+  }, [compositionLoadKey, visibleServices, sessionId]);
 
   const basesSummary = formatBudgetBasesSummary(priceBases);
   const loading = loadProgress.total > 0 && loadProgress.done < loadProgress.total;

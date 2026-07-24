@@ -191,5 +191,8 @@ class BudgetCalculator:
                 "pricing_query": item.pricing_query or "",
             }
         )
+        price_ref = item.metadata.get("price_reference")
+        if price_ref:
+            rows[-1]["metadata"] = {"price_reference": str(price_ref)}
         for child in item.children:
             self._flatten(child, rows, index)

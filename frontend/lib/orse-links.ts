@@ -18,3 +18,13 @@ export function orseMonthlyDownloadUrl(year: number, month: number): string {
 export function orseReferenceKey(year: number, month: number): string {
   return `BR-ORSE-${year}-${String(month).padStart(2, "0")}`;
 }
+
+export function parseOrseRefPeriod(reference: string): { year: number; month: number } | null {
+  const m = reference.match(/^BR-ORSE-(\d{4})-(\d{2})$/i);
+  if (!m) return null;
+  return { year: Number(m[1]), month: Number(m[2]) };
+}
+
+export function formatOrsePeriodLabel(year: number, month: number): string {
+  return `${String(month).padStart(2, "0")}/${year}`;
+}

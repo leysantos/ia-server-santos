@@ -24,6 +24,7 @@ SYSTEM_MODULES: list[SystemModule] = [
     {"id": "aed", "label": "AED", "description": "Design autônomo"},
     {"id": "projects", "label": "Projetos", "description": "Workspace"},
     {"id": "budget", "label": "Orçamento", "description": "Pricing Engine"},
+    {"id": "inspection_reports", "label": "Laudos de Vistoria", "description": "Geração de laudos com Gemini"},
     {"id": "console", "label": "Console", "description": "Operações e GPU"},
     {"id": "history", "label": "Histórico", "description": "Conversas salvas"},
     {"id": "settings", "label": "Configurações", "description": "Administração do sistema"},

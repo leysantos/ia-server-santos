@@ -141,11 +141,11 @@ function ChatPageContent() {
       )}
 
       {loadingHistory && !loading ? (
-        <div className="flex flex-1 items-center justify-center">
+        <div className="flex min-h-0 flex-1 items-center justify-center">
           <LoadingSpinner label="Carregando conversa..." />
         </div>
       ) : (
-        <>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <MessageList messages={messages} loading={loading} />
           <ChatBox
             allowAttachments
@@ -158,7 +158,7 @@ function ChatPageContent() {
             }
             loading={loading}
           />
-        </>
+        </div>
       )}
     </>
   );
