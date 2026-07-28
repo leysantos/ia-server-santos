@@ -728,6 +728,8 @@ def export_session_with_cpu(export_session):
         ]
     }
     export_session.roots[0].children[0].source_code = "12345"
+    from pricing.budget.budget_export_tables import _EXPORT_COMPOSITION_CACHE
+    _EXPORT_COMPOSITION_CACHE.clear()
     export_session.project.price_bases = [
         {"source": "sinapi", "label": "SINAPI", "enabled": True, "uf": "AM", "reference": "BR-2026-05"}
     ]

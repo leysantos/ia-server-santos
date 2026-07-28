@@ -146,6 +146,10 @@ def test_curva_s_scenario_meta_adopted_semd():
 def _session_with_cpu_items(cpu_items: list[dict]):
     from unittest.mock import patch
 
+    from pricing.budget.budget_export_tables import _EXPORT_COMPOSITION_CACHE
+
+    _EXPORT_COMPOSITION_CACHE.clear()
+
     from pricing.budget.budget_analytics import build_insumos_export_table, build_mao_obra_export_table
     from pricing.budget.ppd_template import create_empty_ppd_metadata
     from pricing.models.budget_item import BudgetItem, BudgetItemType
