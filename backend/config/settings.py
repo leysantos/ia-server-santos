@@ -213,6 +213,16 @@ class AppSettings(BaseSettings):
     # --- Gemini (Laudos de Vistoria) ---
     gemini_api_key: str | None = Field(default=None, validation_alias="GEMINI_API_KEY")
     gemini_model: str = Field(default="gemini-3.6-flash", validation_alias="GEMINI_MODEL")
+    # Opcional: Static Maps com marcador nativo; sem chave usa Esri World Imagery
+    google_maps_static_api_key: str | None = Field(
+        default=None, validation_alias="GOOGLE_MAPS_STATIC_API_KEY"
+    )
+
+    # --- Laudos: PAdES (certificado A1 PKCS#12) ---
+    laudo_pades_enabled: bool = Field(default=False, validation_alias="LAUDO_PADES_ENABLED")
+    laudo_pades_p12_path: str | None = Field(default=None, validation_alias="LAUDO_PADES_P12_PATH")
+    laudo_pades_p12_password: str = Field(default="", validation_alias="LAUDO_PADES_P12_PASSWORD")
+    laudo_art_lookup_live: bool = Field(default=True, validation_alias="LAUDO_ART_LOOKUP_LIVE")
 
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod

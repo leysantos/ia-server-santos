@@ -168,6 +168,9 @@ def serialize_report(r: InspectionReport, *, include_content: bool = True) -> di
         "template": serialize_template(r.template) if r.template else None,
         "status": r.status,
         "knowledge_mode": r.knowledge_mode,
+        "suggest_instrumented_tests": bool(
+            getattr(r, "suggest_instrumented_tests", False)
+        ),
         "user_prompt": r.user_prompt or "",
         "gemini_model": r.gemini_model,
         "error_message": r.error_message,
@@ -180,7 +183,12 @@ def serialize_report(r: InspectionReport, *, include_content: bool = True) -> di
         "updated_at": r.updated_at.isoformat() if r.updated_at else None,
     }
     if include_content:
-        data["content"] = r.content
+        from core.inspection_report.instrumented_tests import report_wants_ensaios
+
+        if report_wants_ensaios(r, r.content):
+            data["content"] = prepare_report_content(r)
+        else:
+            data["content"] = r.content
     return data
 
 
@@ -269,6 +277,7 @@ def create_report(
     knowledge_mode: str,
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
+    suggest_instrumented_tests: bool = False,
 ) -> dict[str, Any]:
     mode = knowledge_mode if knowledge_mode in ("attachments", "attachments_and_kb") else "attachments_and_kb"
     report = InspectionReport(
@@ -276,6 +285,7 @@ def create_report(
         template_id=template_id,
         user_prompt=user_prompt or "",
         knowledge_mode=mode,
+        suggest_instrumented_tests=bool(suggest_instrumented_tests),
         status="draft",
         user_id=user_id,
         project_id=project_id,
@@ -308,6 +318,8 @@ def update_report_meta(db: Session, report_id: uuid.UUID, payload: dict[str, Any
         "attachments_and_kb",
     ):
         report.knowledge_mode = payload["knowledge_mode"]
+    if "suggest_instrumented_tests" in payload and payload["suggest_instrumented_tests"] is not None:
+        report.suggest_instrumented_tests = bool(payload["suggest_instrumented_tests"])
     if "template_id" in payload:
         report.template_id = uuid.UUID(str(payload["template_id"])) if payload["template_id"] else None
     if "project_id" in payload:
@@ -346,12 +358,12 @@ def update_report_meta(db: Session, report_id: uuid.UUID, payload: dict[str, Any
 
 def _image_meta(path: Path) -> tuple[int | None, int | None, str | None]:
     try:
-        from PIL import Image
+        from core.inspection_report.analytics import open_image_upright
 
-        with Image.open(path) as img:
-            w, h = img.size
-            orient = "landscape" if w >= h else "portrait"
-            return w, h, orient
+        img = open_image_upright(path)
+        w, h = img.size
+        orient = "landscape" if w >= h else "portrait"
+        return w, h, orient
     except Exception:
         return None, None, None
 
@@ -394,7 +406,7 @@ def add_asset(
         )
 
     suffix = Path(filename).suffix.lower()
-    if kind_hint in ("document", "image", "norm", "georef"):
+    if kind_hint in ("document", "image", "norm", "georef", "art", "signature"):
         kind = kind_hint
     elif suffix in IMAGE_EXTS:
         kind = "image"
@@ -403,13 +415,22 @@ def add_asset(
 
     if kind == "georef" and suffix not in IMAGE_EXTS:
         raise ValueError("Imagem georreferenciada deve ser JPG/PNG/TIFF")
+    if kind == "art" and suffix != ".pdf":
+        raise ValueError("Anexo ART deve ser PDF")
+    if kind == "signature" and suffix not in IMAGE_EXTS:
+        raise ValueError("Imagem de assinatura deve ser JPG/PNG/TIFF")
 
     n_images = len([a for a in (report.assets or []) if a.kind == "image"])
-    n_docs = len([a for a in (report.assets or []) if a.kind in ("document", "norm")])
+    n_docs = len(
+        [a for a in (report.assets or []) if a.kind in ("document", "norm", "art")]
+    )
     if kind == "image" and n_images >= MAX_IMAGES_PER_REPORT:
         raise ValueError(f"Limite de {MAX_IMAGES_PER_REPORT} fotos por laudo atingido")
-    if kind in ("document", "norm") and n_docs >= MAX_DOCS_PER_REPORT:
+    if kind in ("document", "norm", "art") and n_docs >= MAX_DOCS_PER_REPORT:
         raise ValueError(f"Limite de {MAX_DOCS_PER_REPORT} documentos por laudo atingido")
+    n_sigs = len([a for a in (report.assets or []) if a.kind == "signature"])
+    if kind == "signature" and n_sigs >= 10:
+        raise ValueError("Limite de 10 imagens de assinatura por laudo")
 
     # Substitui georef anterior (mantém só uma)
     if kind == "georef":
@@ -594,7 +615,228 @@ def delete_asset(db: Session, report_id: uuid.UUID, asset_id: uuid.UUID) -> bool
     return True
 
 
+def get_assay_results_view(db: Session, report_id: uuid.UUID) -> dict[str, Any] | None:
+    from core.inspection_report.assay_results import build_assay_results_view
+
+    report = get_report(db, report_id)
+    if not report:
+        return None
+    return build_assay_results_view(report)
+
+
+def save_assay_results(
+    db: Session,
+    report_id: uuid.UUID,
+    items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Persiste resultados L16 e re-aplica enriquecimento para export."""
+    from core.inspection_report.assay_results import (
+        build_assay_results_view,
+        merge_assay_results,
+        validate_assay_results,
+    )
+    from core.inspection_report.engineering_enrichment import apply_engineering_enrichment
+
+    report = get_report(db, report_id)
+    if not report:
+        raise ValueError("Laudo não encontrado")
+
+    errors = validate_assay_results(items)
+    if errors:
+        raise ValueError("; ".join(errors))
+
+    content = merge_assay_results(dict(report.content or {}), items)
+    slug = report.template.slug if report.template else None
+    content = apply_engineering_enrichment(content, slug=slug)
+    report.content = content
+    db.commit()
+    db.refresh(report)
+    _record_laudo_activity(
+        report=report,
+        event_type="updated",
+        title=f"Resultados de ensaio L16: {report.title}",
+        summary=f"{len(items)} registro(s)",
+    )
+    return build_assay_results_view(report)
+
+
+def get_visual_memory_view(db: Session, report_id: uuid.UUID) -> dict[str, Any] | None:
+    from core.inspection_report.visual_memory import build_visual_memory_view
+
+    report = get_report(db, report_id)
+    if not report:
+        return None
+    return build_visual_memory_view(report)
+
+
+def save_visual_memory(
+    db: Session,
+    report_id: uuid.UUID,
+    items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    from core.inspection_report.visual_memory import (
+        build_visual_memory_view,
+        merge_visual_memory,
+        validate_visual_memory,
+    )
+
+    report = get_report(db, report_id)
+    if not report:
+        raise ValueError("Laudo não encontrado")
+    errors = validate_visual_memory(items)
+    if errors:
+        raise ValueError("; ".join(errors))
+    # Preenche photo_number a partir dos assets
+    by_id = {str(a.id): a for a in (report.assets or []) if a.kind == "image"}
+    enriched = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        asset = by_id.get(str(row.get("asset_id") or ""))
+        if asset and row.get("photo_number") is None:
+            row["photo_number"] = asset.photo_number
+        enriched.append(row)
+    report.content = merge_visual_memory(dict(report.content or {}), enriched)
+    db.commit()
+    db.refresh(report)
+    _record_laudo_activity(
+        report=report,
+        event_type="updated",
+        title=f"Croquis L17: {report.title}",
+        summary=f"{len(enriched)} croqui(s)",
+    )
+    return build_visual_memory_view(report)
+
+
+def save_signature_evidence(
+    db: Session,
+    report_id: uuid.UUID,
+    patch: dict[str, Any],
+) -> dict[str, Any]:
+    from core.inspection_report.signature_evidence import (
+        get_signature_evidence,
+        merge_signature_evidence,
+    )
+
+    report = get_report(db, report_id)
+    if not report:
+        raise ValueError("Laudo não encontrado")
+    content = merge_signature_evidence(dict(report.content or {}), patch)
+    # Espelha signature_asset_id nos parties quando informado no mapa
+    ids = (content.get("signature_evidence") or {}).get("rt_signature_asset_ids") or {}
+    if ids:
+        rts = list((content.get("responsaveis_tecnicos") or []))
+        updated = []
+        for rt in rts:
+            if not isinstance(rt, dict):
+                continue
+            row = dict(rt)
+            pid = str(row.get("id") or "")
+            if pid in ids:
+                row["signature_asset_id"] = ids[pid]
+            updated.append(row)
+        content["responsaveis_tecnicos"] = updated
+    report.content = content
+    db.commit()
+    db.refresh(report)
+    return get_signature_evidence(report.content)
+
+
+def record_export_pdf_hash(
+    db: Session,
+    report: InspectionReport,
+    pdf_bytes: bytes,
+    *,
+    method: str = "image_hash",
+    pades_meta: dict[str, Any] | None = None,
+) -> str:
+    from core.inspection_report.signature_evidence import record_pdf_hash, sha256_hex
+
+    digest = sha256_hex(pdf_bytes)
+    report.content = record_pdf_hash(
+        dict(report.content or {}),
+        pdf_bytes,
+        method=method,
+        pades_meta=pades_meta,
+    )
+    db.commit()
+    return digest
+
+
+def assign_report_owner(
+    db: Session,
+    report_id: uuid.UUID,
+    owner_id: uuid.UUID,
+) -> dict[str, Any] | None:
+    report = get_report(db, report_id)
+    if not report:
+        return None
+    report.user_id = owner_id
+    db.commit()
+    db.refresh(report)
+    _record_laudo_activity(
+        report=report,
+        event_type="updated",
+        title=f"Dono atribuído: {report.title}",
+        summary=f"user_id={owner_id}",
+    )
+    return serialize_report(report)
+
+
+def list_orphan_reports(db: Session, *, limit: int = 100) -> list[dict[str, Any]]:
+    rows = (
+        db.query(InspectionReport)
+        .options(joinedload(InspectionReport.template), joinedload(InspectionReport.assets))
+        .filter(InspectionReport.user_id.is_(None))
+        .order_by(InspectionReport.updated_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [serialize_report(r, include_content=False) for r in rows]
+
+
+def backfill_orphan_reports(db: Session, owner_id: uuid.UUID) -> dict[str, Any]:
+    rows = (
+        db.query(InspectionReport)
+        .filter(InspectionReport.user_id.is_(None))
+        .all()
+    )
+    for r in rows:
+        r.user_id = owner_id
+    db.commit()
+    return {"assigned": len(rows), "user_id": str(owner_id)}
+
+
+def prepare_report_content(report: InspectionReport, *, persist: bool = False, db: Session | None = None) -> dict[str, Any]:
+    """
+    Conteúdo pronto para export/preview: aplica ensaios instrumentados (se flag)
+    e enriquecimento L10–L12 (classificação DNIT, inventário, metrologia).
+    """
+    from core.inspection_report.engineering_enrichment import apply_engineering_enrichment
+    from core.inspection_report.instrumented_tests import (
+        apply_instrumented_tests_to_content,
+        report_wants_ensaios,
+    )
+
+    content = dict(report.content or {})
+    slug = report.template.slug if report.template else None
+    want = report_wants_ensaios(report, content)
+    prepared = apply_instrumented_tests_to_content(
+        content,
+        slug=slug,
+        enabled=want,
+        user_prompt=report.user_prompt or "",
+    )
+    prepared = apply_engineering_enrichment(prepared, slug=slug)
+    if persist and db is not None and prepared != (report.content or {}):
+        report.content = prepared
+        db.commit()
+    return prepared
+
+
 def _knowledge_context(query: str, discipline: str) -> str:
+    """Fallback legado — preferir retrieve_laudo_normative_context (L15)."""
     try:
         from memory.rag_engine import get_rag_engine
 
@@ -644,6 +886,20 @@ def generate_report(
             description=(template.description if template else "") or "",
         )
         discipline = (template.discipline_hint if template else "GERAL") or "GERAL"
+        from core.inspection_report.engineering_enrichment import build_engineering_prompt_block
+
+        want_ensaios = bool(getattr(report, "suggest_instrumented_tests", False))
+        ensaios_block = ""
+        if want_ensaios:
+            from core.inspection_report.instrumented_tests import (
+                build_ensaios_prompt_block,
+                chapters_with_ensaios,
+            )
+            chapters = chapters_with_ensaios(chapters)
+            ensaios_block = build_ensaios_prompt_block(slug, report.user_prompt or "")
+            system_prompt = f"{system_prompt}\n\n{ensaios_block}"
+        # L10–L12 sempre no prompt (classificação, inventário, metrologia)
+        system_prompt = f"{system_prompt}\n\n{build_engineering_prompt_block(slug)}"
 
         company = get_company_profile()
         company_source = company.display_name() or company.razao_social or "Empresa responsável pelo laudo"
@@ -692,13 +948,34 @@ def generate_report(
         )
 
         kb = ""
+        normative_pack: dict[str, Any] | None = None
         if report.knowledge_mode == "attachments_and_kb":
-            _progress("knowledge", 38, "Consultando base de conhecimento (RAG)…")
-            kb = _knowledge_context(report.user_prompt or report.title, discipline)
+            _progress("knowledge", 38, "Consultando base de conhecimento (RAG L15)…")
+            try:
+                from core.inspection_report.normative_rag import retrieve_laudo_normative_context
+
+                normative_pack = retrieve_laudo_normative_context(
+                    slug=slug,
+                    query=report.user_prompt or report.title or "",
+                    discipline_hint=discipline,
+                    top_k=10,
+                )
+                kb = str(normative_pack.get("context_text") or "")
+                if not kb:
+                    kb = _knowledge_context(report.user_prompt or report.title, discipline)
+            except Exception as exc:
+                logger.warning("L15 RAG falhou, fallback legado: %s", exc)
+                kb = _knowledge_context(report.user_prompt or report.title, discipline)
+                normative_pack = None
+            n_hits = int((normative_pack or {}).get("hits_count") or 0)
             _progress(
                 "knowledge",
                 48,
-                "Contexto normativo recuperado." if kb else "RAG sem resultados — seguindo só com anexos.",
+                (
+                    f"Contexto normativo L15: {n_hits} trecho(s)."
+                    if kb
+                    else "RAG sem resultados — seguindo só com anexos."
+                ),
             )
         else:
             _progress("knowledge", 45, "Modo somente anexos — pulando base de conhecimento.")
@@ -722,6 +999,7 @@ def generate_report(
             progress_cb=_gemini_progress,
             georef_path=georef_path,
             georef_meta=georef_meta,
+            instrumented_tests_hint=ensaios_block if want_ensaios else "",
         )
         _check_cancelled(report_id)
         _progress("structure", 85, "Estruturando capítulos, patologias e relatório fotográfico…")
@@ -785,9 +1063,61 @@ def generate_report(
                 label=geo.get("label"),
             )
 
-        from core.inspection_report.format_utils import ensure_sumario_chapter
+        from core.inspection_report.engineering_enrichment import apply_engineering_enrichment
+        from core.inspection_report.instrumented_tests import apply_instrumented_tests_to_content
 
-        content = ensure_sumario_chapter(content)
+        if want_ensaios:
+            _progress(
+                "structure",
+                88,
+                "Etapa crítica: consolidando TODOS os ensaios por gravidade e template…",
+            )
+        content = apply_instrumented_tests_to_content(
+            content,
+            slug=slug,
+            enabled=want_ensaios,
+            user_prompt=report.user_prompt or "",
+        )
+        if want_ensaios:
+            n_ensaios = len((content.get("instrumented_tests") or []))
+            quality = content.get("ensaios_quality") or {}
+            _progress(
+                "structure",
+                90,
+                f"Ensaios instrumentados consolidados: {n_ensaios} item(ns)"
+                + (
+                    f" (Gemini: {quality.get('gemini_count', 0)}; "
+                    f"gravidade máx.: {quality.get('max_severity', '—')})"
+                    if quality
+                    else ""
+                )
+                + ".",
+            )
+
+        _progress(
+            "structure",
+            91,
+            "Aplicando L10–L15 (classificação, inventário, metrologia, RAG normativo)…",
+        )
+        content = apply_engineering_enrichment(
+            content, slug=slug, normative=normative_pack
+        )
+        cls = content.get("classification") or {}
+        if cls.get("global_dnit_note") is not None:
+            _progress(
+                "structure",
+                91,
+                f"Classificação DNIT global: {cls.get('global_dnit_note')} "
+                f"({cls.get('global_label') or '—'}); "
+                f"{len(content.get('element_inventory') or [])} elemento(s) no inventário.",
+            )
+        n_cit = len(content.get("normative_citations") or [])
+        if n_cit:
+            _progress(
+                "structure",
+                91,
+                f"L15: {n_cit} citação(ões) normativa(s) rastreável(is) no capítulo Referências.",
+            )
 
         _check_cancelled(report_id)
         _progress("persist", 92, "Salvando laudo gerado…")

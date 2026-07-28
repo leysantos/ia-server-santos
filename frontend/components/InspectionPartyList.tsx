@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { api } from "@/services/api";
 import type { InspectionReportParty } from "@/types/api";
 
 function newId(): string {
@@ -17,6 +18,10 @@ const EMPTY_FORM: Omit<InspectionReportParty, "id"> = {
   art: "",
   email: "",
   telefone: "",
+  art_asset_id: "",
+  art_protocolo: "",
+  art_url: "",
+  signature_asset_id: "",
 };
 
 type Mode = "closed" | "create" | "edit" | "confirm-delete" | "confirm-edit";
@@ -28,6 +33,7 @@ export default function InspectionPartyList({
   onChange,
   disabled,
   showArt = false,
+  reportId,
 }: {
   title: string;
   hint?: string;
@@ -36,20 +42,60 @@ export default function InspectionPartyList({
   disabled?: boolean;
   /** Exibe campo Nº ART (responsáveis técnicos). */
   showArt?: boolean;
+  /** Quando informado, permite upload ART PDF e imagem de firma (L18/L19). */
+  reportId?: string;
 }) {
   const [mode, setMode] = useState<Mode>("closed");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [uploading, setUploading] = useState<"art" | "signature" | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [lookingUp, setLookingUp] = useState(false);
+  const [lookupNote, setLookupNote] = useState<string | null>(null);
 
   const editing = useMemo(
     () => items.find((p) => p.id === editingId) || null,
     [items, editingId]
   );
 
+  const lookupArt = async () => {
+    setLookingUp(true);
+    setLookupNote(null);
+    setUploadError(null);
+    try {
+      const result = await api.lookupInspectionArt({
+        crea: form.crea || undefined,
+        art: form.art || undefined,
+        art_protocolo: form.art_protocolo || undefined,
+        probe: true,
+      });
+      setForm((f) => ({
+        ...f,
+        art_url: result.art_url || f.art_url,
+        art_protocolo: f.art_protocolo || result.art_protocolo || "",
+        art: f.art || result.art || "",
+      }));
+      const live = result.live?.reachable
+        ? "portal alcançável"
+        : result.live
+          ? "portal sem resposta (URL preenchida)"
+          : "URL gerada";
+      setLookupNote(
+        `${live} · ${result.source}${result.sicar_url ? ` · SICAR: ${result.sicar_url}` : ""}`
+      );
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLookingUp(false);
+    }
+  };
+
   const openCreate = () => {
     setEditingId(null);
     setForm({ ...EMPTY_FORM });
+    setUploadError(null);
+    setLookupNote(null);
     setMode("create");
   };
 
@@ -62,7 +108,12 @@ export default function InspectionPartyList({
       art: party.art || "",
       email: party.email || "",
       telefone: party.telefone || "",
+      art_asset_id: party.art_asset_id || "",
+      art_protocolo: party.art_protocolo || "",
+      art_url: party.art_url || "",
+      signature_asset_id: party.signature_asset_id || "",
     });
+    setUploadError(null);
     setMode("edit");
   };
 
@@ -76,7 +127,22 @@ export default function InspectionPartyList({
     setEditingId(null);
     setPendingDeleteId(null);
     setForm({ ...EMPTY_FORM });
+    setUploadError(null);
   };
+
+  const partyPayload = (id: string): InspectionReportParty => ({
+    id,
+    nome: form.nome.trim(),
+    profissao: form.profissao?.trim() || "",
+    crea: form.crea?.trim() || "",
+    art: showArt ? form.art?.trim() || "" : "",
+    email: form.email?.trim() || "",
+    telefone: form.telefone?.trim() || "",
+    art_asset_id: showArt ? form.art_asset_id?.trim() || "" : "",
+    art_protocolo: showArt ? form.art_protocolo?.trim() || "" : "",
+    art_url: showArt ? form.art_url?.trim() || "" : "",
+    signature_asset_id: showArt ? form.signature_asset_id?.trim() || "" : "",
+  });
 
   const submitForm = () => {
     const nome = form.nome.trim();
@@ -85,18 +151,7 @@ export default function InspectionPartyList({
       setMode("confirm-edit");
       return;
     }
-    onChange([
-      ...items,
-      {
-        id: newId(),
-        nome,
-        profissao: form.profissao?.trim() || "",
-        crea: form.crea?.trim() || "",
-        art: showArt ? form.art?.trim() || "" : "",
-        email: form.email?.trim() || "",
-        telefone: form.telefone?.trim() || "",
-      },
-    ]);
+    onChange([...items, partyPayload(newId())]);
     closeModal();
   };
 
@@ -104,21 +159,7 @@ export default function InspectionPartyList({
     if (!editingId) return;
     const nome = form.nome.trim();
     if (!nome) return;
-    onChange(
-      items.map((p) =>
-        p.id === editingId
-          ? {
-              ...p,
-              nome,
-              profissao: form.profissao?.trim() || "",
-              crea: form.crea?.trim() || "",
-              art: showArt ? form.art?.trim() || "" : p.art || "",
-              email: form.email?.trim() || "",
-              telefone: form.telefone?.trim() || "",
-            }
-          : p
-      )
-    );
+    onChange(items.map((p) => (p.id === editingId ? partyPayload(editingId) : p)));
     closeModal();
   };
 
@@ -126,6 +167,27 @@ export default function InspectionPartyList({
     if (!pendingDeleteId) return;
     onChange(items.filter((p) => p.id !== pendingDeleteId));
     closeModal();
+  };
+
+  const uploadForParty = async (kind: "art" | "signature", file: File | null) => {
+    if (!reportId || !file || !editingId) return;
+    setUploading(kind);
+    setUploadError(null);
+    try {
+      const asset = await api.uploadInspectionReportAsset(reportId, file, { kind });
+      if (kind === "art") {
+        setForm((f) => ({ ...f, art_asset_id: asset.id }));
+      } else {
+        setForm((f) => ({ ...f, signature_asset_id: asset.id }));
+        await api.saveInspectionSignatureEvidence(reportId, {
+          rt_signature_asset_ids: { [editingId]: asset.id },
+        });
+      }
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploading(null);
+    }
   };
 
   const pendingDelete = items.find((p) => p.id === pendingDeleteId);
@@ -166,6 +228,8 @@ export default function InspectionPartyList({
                       party.profissao,
                       party.crea ? `CREA ${party.crea}` : "",
                       showArt && party.art ? `ART ${party.art}` : "",
+                      showArt && party.art_asset_id ? "PDF ART" : "",
+                      showArt && party.signature_asset_id ? "firma" : "",
                     ]
                       .filter(Boolean)
                       .join(" · ") || "—"}
@@ -196,11 +260,11 @@ export default function InspectionPartyList({
       </div>
 
       {(mode === "create" || mode === "edit") && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto bg-slate-950/70 p-4 backdrop-blur-sm">
           <div
             role="dialog"
             aria-modal="true"
-            className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl ring-1 ring-slate-700/80"
+            className="my-4 w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl ring-1 ring-slate-700/80"
           >
             <h4 className="text-base font-semibold text-white">
               {mode === "create" ? "Incluir responsável" : "Alterar responsável"}
@@ -228,12 +292,96 @@ export default function InspectionPartyList({
                   </span>
                   <input
                     className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-white"
-                    value={form[key] || ""}
+                    value={(form[key] as string) || ""}
                     onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
                     required={required}
                   />
                 </label>
               ))}
+
+              {showArt && (
+                <>
+                  <label className="block text-sm">
+                    <span className="text-slate-400">Protocolo ART (L18)</span>
+                    <input
+                      className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-white"
+                      value={form.art_protocolo || ""}
+                      onChange={(e) => setForm((f) => ({ ...f, art_protocolo: e.target.value }))}
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    <span className="text-slate-400">URL consulta ART / CREA (opcional)</span>
+                    <input
+                      className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-white"
+                      value={form.art_url || ""}
+                      onChange={(e) => setForm((f) => ({ ...f, art_url: e.target.value }))}
+                      placeholder="https://…"
+                    />
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={disabled || lookingUp || (!form.crea && !form.art && !form.art_protocolo)}
+                      onClick={lookupArt}
+                      className="rounded-lg bg-slate-700 px-3 py-1.5 text-xs text-white hover:bg-slate-600 disabled:opacity-50"
+                    >
+                      {lookingUp ? "Consultando…" : "Consultar ART / SICAR"}
+                    </button>
+                    {form.art_url ? (
+                      <a
+                        href={form.art_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs text-cyan-400 hover:underline"
+                      >
+                        Abrir portal
+                      </a>
+                    ) : null}
+                  </div>
+                  {lookupNote ? <p className="text-[11px] text-slate-400">{lookupNote}</p> : null}
+                  {reportId && mode === "edit" && (
+                    <>
+                      <label className="block text-sm">
+                        <span className="text-slate-400">
+                          Anexar PDF da ART {form.art_asset_id ? "(anexado)" : ""}
+                        </span>
+                        <input
+                          type="file"
+                          accept=".pdf,application/pdf"
+                          className="mt-1 block w-full text-xs text-slate-300"
+                          disabled={!!uploading || disabled}
+                          onChange={(e) => uploadForParty("art", e.target.files?.[0] || null)}
+                        />
+                      </label>
+                      <label className="block text-sm">
+                        <span className="text-slate-400">
+                          Imagem da firma {form.signature_asset_id ? "(anexada)" : ""} (L19)
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="mt-1 block w-full text-xs text-slate-300"
+                          disabled={!!uploading || disabled}
+                          onChange={(e) =>
+                            uploadForParty("signature", e.target.files?.[0] || null)
+                          }
+                        />
+                      </label>
+                      {uploading ? (
+                        <p className="text-xs text-cyan-300">Enviando {uploading}…</p>
+                      ) : null}
+                      {uploadError ? (
+                        <p className="text-xs text-rose-300">{uploadError}</p>
+                      ) : null}
+                    </>
+                  )}
+                  {showArt && mode === "create" && reportId ? (
+                    <p className="text-[11px] text-slate-500">
+                      Salve o responsável e altere-o para anexar PDF ART e imagem de firma.
+                    </p>
+                  ) : null}
+                </>
+              )}
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <button

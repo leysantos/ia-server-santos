@@ -322,15 +322,63 @@ FORMATO JSON:
       "name":"…",
       "location":"…",
       "element":"…",
+      "element_id":"sup_longarina",
       "severity":"crítica|alta|média|baixa",
       "dnit_note": 1,
       "score": 5,
       "description":"…",
       "cause":"…",
       "solution":"…",
-      "urgency":"…"
+      "urgency":"…",
+      "metrology": {
+        "crack_width_mm": null,
+        "crack_length_m": null,
+        "section_loss_pct": null,
+        "residual_thickness_mm": null,
+        "design_thickness_mm": null,
+        "corrosion_depth_mm": null,
+        "displacement_mm": null,
+        "erosion_volume_m3": null,
+        "affected_area_m2": null,
+        "settlement_mm": null,
+        "opening_mm": null,
+        "unit_notes": "",
+        "method": "visual|estimated|measured|instrumented",
+        "notes": ""
+      }
     }
   ],
+  "element_inventory": [
+    {
+      "element_id": "sup_longarina",
+      "name": "Longarinas / vigas principais",
+      "group": "Superestrutura",
+      "status": "íntegro|observação|degradado|crítico|não_inspecionado",
+      "condition_note": "…",
+      "pathology_refs": ["P01"],
+      "photo_refs": [1, 3],
+      "dnit_note": 2
+    }
+  ],
+  "classification": {
+    "inspection_type": "rotineira|especial|extraordinária",
+    "standard_refs": ["NBR 9452", "DNIT 010/2004-PRO"],
+    "global_dnit_note": 2,
+    "global_label": "Ruim",
+    "governing_element_id": "sup_longarina",
+    "governing_pathology_codes": ["P01"],
+    "rationale": "…",
+    "element_notes": [
+      {
+        "element_id": "sup_longarina",
+        "name": "Longarinas",
+        "dnit_note": 2,
+        "label": "Ruim",
+        "justification": "…",
+        "pathology_codes": ["P01"]
+      }
+    ]
+  },
   "indicators": {
     "compromise_index_pct": 70.0,
     "conservation_index_pct": 30.0,
@@ -338,6 +386,18 @@ FORMATO JSON:
   },
   "schedule": [{"phase":"…","activities":"…","duration":"…","order":1}],
   "references": ["…"],
+  "instrumented_tests": [
+    {
+      "codigo": "EI-…",
+      "ensaio": "…",
+      "descricao": "…",
+      "norma_ref": "…",
+      "gravidade_alvo": "crítica|alta|média|baixa",
+      "necessidade_pct": 95,
+      "prazo": "Imediato (até 7 dias)",
+      "pathology_refs": ["P01"]
+    }
+  ],
   "photographic_report": [
     {
       "photo_number": 1,
@@ -348,6 +408,7 @@ FORMATO JSON:
       "severity": "crítica",
       "score": 5,
       "source": "…",
+      "element_id": "sup_longarina",
       "pathology_refs": ["P01"]
     }
   ],

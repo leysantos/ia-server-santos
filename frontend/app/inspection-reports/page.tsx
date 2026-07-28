@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ShellHeader from "@/components/ShellHeader";
 import InspectionPartyList from "@/components/InspectionPartyList";
+import InspectionAssayResultsPanel from "@/components/InspectionAssayResultsPanel";
+import InspectionVisualMemoryEditor from "@/components/InspectionVisualMemoryEditor";
+import { useAuth } from "@/context/AuthContext";
 import { useActionDialog } from "@/hooks/useActionDialog";
 import { api } from "@/services/api";
 import { downloadApiFile } from "@/services/api/http";
@@ -17,23 +20,28 @@ import type {
 function partiesFromContent(content: Record<string, unknown> | null | undefined, key: string): InspectionReportParty[] {
   const raw = content?.[key];
   if (!Array.isArray(raw)) return [];
-  return raw
-    .map((item, idx) => {
-      if (!item || typeof item !== "object") return null;
-      const o = item as Record<string, unknown>;
-      const nome = String(o.nome || "").trim();
-      if (!nome) return null;
-      return {
-        id: String(o.id || `p_${idx}_${nome}`),
-        nome,
-        profissao: String(o.profissao || ""),
-        crea: String(o.crea || ""),
-        art: String(o.art || ""),
-        email: String(o.email || ""),
-        telefone: String(o.telefone || ""),
-      } satisfies InspectionReportParty;
-    })
-    .filter((p): p is InspectionReportParty => p !== null);
+  const parties: InspectionReportParty[] = [];
+  for (let idx = 0; idx < raw.length; idx += 1) {
+    const item = raw[idx];
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const nome = String(o.nome || "").trim();
+    if (!nome) continue;
+    parties.push({
+      id: String(o.id || `p_${idx}_${nome}`),
+      nome,
+      profissao: String(o.profissao || ""),
+      crea: String(o.crea || ""),
+      art: String(o.art || ""),
+      email: String(o.email || ""),
+      telefone: String(o.telefone || ""),
+      art_asset_id: String(o.art_asset_id || ""),
+      art_protocolo: String(o.art_protocolo || ""),
+      art_url: String(o.art_url || ""),
+      signature_asset_id: String(o.signature_asset_id || ""),
+    });
+  }
+  return parties;
 }
 
 function solicitanteFromContent(
@@ -137,17 +145,21 @@ function CircularProgress({
 
 export default function InspectionReportsPage() {
   const { confirm, ActionDialogHost } = useActionDialog();
+  const { isAdmin } = useAuth();
   const [templates, setTemplates] = useState<InspectionReportTemplate[]>([]);
   const [reports, setReports] = useState<InspectionReport[]>([]);
   const [active, setActive] = useState<InspectionReport | null>(null);
-  const [status, setStatus] = useState<{ gemini_available: boolean; gemini_model: string } | null>(
-    null
-  );
+  const [status, setStatus] = useState<{
+    gemini_available: boolean;
+    gemini_model: string;
+    pades?: { ready?: boolean; enabled?: boolean; library_installed?: boolean };
+  } | null>(null);
   const [title, setTitle] = useState("Laudo de vistoria");
   const [templateId, setTemplateId] = useState("");
   const [knowledgeMode, setKnowledgeMode] = useState<"attachments" | "attachments_and_kb">(
     "attachments_and_kb"
   );
+  const [suggestInstrumentedTests, setSuggestInstrumentedTests] = useState(false);
   const [userPrompt, setUserPrompt] = useState("");
   const [responsaveisTecnicos, setResponsaveisTecnicos] = useState<InspectionReportParty[]>([]);
   const [responsaveisImagens, setResponsaveisImagens] = useState<InspectionReportParty[]>([]);
@@ -259,6 +271,7 @@ export default function InspectionReportsPage() {
         template_id: templateId || null,
         user_prompt: userPrompt,
         knowledge_mode: knowledgeMode,
+        suggest_instrumented_tests: suggestInstrumentedTests,
         project_id: projectId || null,
       });
       setActive(report);
@@ -284,6 +297,7 @@ export default function InspectionReportsPage() {
       setKnowledgeMode(
         report.knowledge_mode === "attachments" ? "attachments" : "attachments_and_kb"
       );
+      setSuggestInstrumentedTests(Boolean(report.suggest_instrumented_tests));
       setResponsaveisTecnicos(
         partiesFromContent(report.content as Record<string, unknown> | null, "responsaveis_tecnicos")
       );
@@ -329,6 +343,7 @@ export default function InspectionReportsPage() {
         template_id: templateId || null,
         user_prompt: userPrompt,
         knowledge_mode: knowledgeMode,
+        suggest_instrumented_tests: suggestInstrumentedTests,
         project_id: projectId || null,
         responsaveis_tecnicos: responsaveisTecnicos,
         responsaveis_imagens: responsaveisImagens,
@@ -400,6 +415,7 @@ export default function InspectionReportsPage() {
           template_id: templateId || null,
           user_prompt: userPrompt,
           knowledge_mode: knowledgeMode,
+          suggest_instrumented_tests: suggestInstrumentedTests,
           responsaveis_tecnicos: responsaveisTecnicos,
           responsaveis_imagens: responsaveisImagens,
           solicitante,
@@ -445,6 +461,44 @@ export default function InspectionReportsPage() {
     }
   };
 
+  const claimActiveOrphan = async () => {
+    if (!active || active.user_id) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const report = await api.claimInspectionReport(active.id);
+      setActive(report);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const backfillAllOrphans = async () => {
+    if (!isAdmin) return;
+    const ok = await confirm({
+      title: "Atribuir laudos sem dono?",
+      message:
+        "Todos os laudos com user_id vazio serão atribuídos à sua conta de administrador. Continuar?",
+      confirmLabel: "Atribuir a mim",
+      cancelLabel: "Cancelar",
+    });
+    if (!ok) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await api.backfillInspectionOrphans();
+      await refresh();
+      if (active?.id) await openReport(active.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const generate = async () => {
     if (!active || generating) return;
     setGenerating(true);
@@ -474,6 +528,7 @@ export default function InspectionReportsPage() {
         template_id: templateId || null,
         user_prompt: userPrompt,
         knowledge_mode: knowledgeMode,
+        suggest_instrumented_tests: suggestInstrumentedTests,
         project_id: projectId || null,
         responsaveis_tecnicos: responsaveisTecnicos,
         responsaveis_imagens: responsaveisImagens,
@@ -628,7 +683,7 @@ export default function InspectionReportsPage() {
     }
   };
 
-  const download = async (fmt: "docx" | "pdf", strict = false) => {
+  const download = async (fmt: "docx" | "pdf") => {
     if (!active || exporting) return;
     setError(null);
     setExportError(false);
@@ -645,20 +700,18 @@ export default function InspectionReportsPage() {
     }, 120);
 
     try {
-      if (strict) {
+      // Atualiza checklist como aviso (não bloqueia o export — UX mais simples)
+      try {
         const cl = await api.inspectionReportExportChecklist(active.id);
         setChecklist(cl);
-        if (cl.blocking) {
-          throw new Error(
-            `Checklist oficial incompleto: ${cl.issues.map((i) => i.message).join("; ")}`
-          );
-        }
+      } catch {
+        /* checklist é informativo */
       }
       exportTargetRef.current = 55;
       const path =
         fmt === "docx"
-          ? `/inspection-reports/${active.id}/export/docx${strict ? "?strict=true" : ""}`
-          : `/inspection-reports/${active.id}/export/pdf${strict ? "?strict=true" : ""}`;
+          ? `/inspection-reports/${active.id}/export/docx`
+          : `/inspection-reports/${active.id}/export/pdf`;
       const safeTitle = (active.title || "vistoria").slice(0, 40).replace(/[^\w\-]+/g, "_");
       await downloadApiFile(path, `laudo_${safeTitle}.${fmt}`);
       exportTargetRef.current = 100;
@@ -877,32 +930,47 @@ export default function InspectionReportsPage() {
         </div>
       )}
 
-      <ShellHeader className="px-6" showModelsStatus>
+      <ShellHeader
+        className="px-6"
+        showModelsStatus
+        trailing={
+          status ? (
+            <span
+              className={`shrink-0 rounded-full px-3 py-1 text-xs whitespace-nowrap ${
+                status.gemini_available
+                  ? "bg-emerald-500/15 text-emerald-300"
+                  : "bg-amber-500/15 text-amber-200"
+              }`}
+            >
+              {status.gemini_available
+                ? `Gemini OK · ${status.gemini_model}`
+                : "Configure GEMINI_API_KEY"}
+            </span>
+          ) : null
+        }
+      >
         <div className="min-w-0">
-          <h1 className="text-lg font-semibold text-white">Laudos de Vistoria</h1>
-          <p className="text-sm text-slate-500">
-            Gemini · templates por tipo · anexos + base de conhecimento · Word/PDF
+          <h1 className="truncate text-lg font-semibold text-white">Laudos de Vistoria</h1>
+          <p className="mt-0.5 truncate text-sm text-slate-500">
+            Templates · anexos · base normativa · Word/PDF
           </p>
         </div>
-        {status && (
-          <span
-            className={`rounded-full px-3 py-1 text-xs ${
-              status.gemini_available
-                ? "bg-emerald-500/15 text-emerald-300"
-                : "bg-amber-500/15 text-amber-200"
-            }`}
-          >
-            {status.gemini_available
-              ? `Gemini OK · ${status.gemini_model}`
-              : "Configure GEMINI_API_KEY"}
-          </span>
-        )}
       </ShellHeader>
 
-      <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6 lg:flex-row">
-        <aside className="w-full shrink-0 space-y-4 lg:w-72">
+      <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6 xl:flex-row">
+        <aside className="w-full shrink-0 space-y-4 xl:w-72">
           <section className="rounded-2xl bg-slate-900/40 p-4 ring-1 ring-slate-800">
             <h2 className="text-sm font-semibold text-white">Laudos recentes</h2>
+            {isAdmin ? (
+              <button
+                type="button"
+                disabled={loading}
+                onClick={backfillAllOrphans}
+                className="mt-2 w-full rounded-lg bg-slate-800 px-2 py-1.5 text-[11px] text-slate-300 hover:bg-slate-700 disabled:opacity-50"
+              >
+                Atribuir órfãos a mim (admin)
+              </button>
+            ) : null}
             <ul className="mt-3 max-h-64 space-y-2 overflow-y-auto text-sm">
               {reports.map((r) => (
                 <li key={r.id} className="flex items-stretch gap-1">
@@ -916,6 +984,7 @@ export default function InspectionReportsPage() {
                     <div className="truncate font-medium">{r.title}</div>
                     <div className="text-xs text-slate-500">
                       {r.status} · {r.template?.name || "sem template"}
+                      {!r.user_id ? " · sem dono" : ""}
                     </div>
                   </button>
                   <button
@@ -1024,27 +1093,42 @@ export default function InspectionReportsPage() {
                   </label>
                 </div>
 
-                <fieldset className="space-y-2 text-sm">
-                  <legend className="text-slate-400">
-                    Consultar base de conhecimento?
-                  </legend>
-                  <label className="flex items-center gap-2 text-slate-200">
+                <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start">
+                  <label className="inline-flex max-w-full cursor-pointer items-start gap-2 rounded-lg border border-slate-700 bg-slate-950/50 px-3 py-2.5 text-sm text-slate-200 hover:border-slate-500">
                     <input
-                      type="radio"
-                      checked={knowledgeMode === "attachments"}
-                      onChange={() => setKnowledgeMode("attachments")}
-                    />
-                    Somente arquivos anexados (PDF, normas, fotos)
-                  </label>
-                  <label className="flex items-center gap-2 text-slate-200">
-                    <input
-                      type="radio"
+                      type="checkbox"
+                      className="mt-0.5"
                       checked={knowledgeMode === "attachments_and_kb"}
-                      onChange={() => setKnowledgeMode("attachments_and_kb")}
+                      onChange={(e) =>
+                        setKnowledgeMode(
+                          e.target.checked ? "attachments_and_kb" : "attachments"
+                        )
+                      }
                     />
-                    Anexos + base de conhecimento (RAG / NBR)
+                    <span>
+                      <span className="font-medium text-white">Consultar base de conhecimento</span>
+                      <span className="mt-0.5 block text-xs text-slate-400">
+                        RAG / NBR além dos anexos (PDF, normas, fotos)
+                      </span>
+                    </span>
                   </label>
-                </fieldset>
+                  <label className="inline-flex max-w-full cursor-pointer items-start gap-2 rounded-lg border border-slate-700 bg-slate-950/50 px-3 py-2.5 text-sm text-slate-200 hover:border-slate-500">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={suggestInstrumentedTests}
+                      onChange={(e) => setSuggestInstrumentedTests(e.target.checked)}
+                    />
+                    <span>
+                      <span className="font-medium text-white">
+                        Necessidade de ensaios instrumentados
+                      </span>
+                      <span className="mt-0.5 block text-xs text-slate-400">
+                        Sugere ensaios conforme tipología e gravidade das patologias
+                      </span>
+                    </span>
+                  </label>
+                </div>
 
                 <label className="block text-sm">
                   <span className="text-slate-400">
@@ -1103,10 +1187,11 @@ export default function InspectionReportsPage() {
                   <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
                     <InspectionPartyList
                       title="Responsáveis técnicos"
-                      hint="Aparecem na capa e com assinatura antes do relatório fotográfico."
+                      hint="Aparecem na capa e com assinatura antes do relatório fotográfico. Anexe PDF da ART e imagem de firma ao editar."
                       items={responsaveisTecnicos}
                       disabled={loading || generating}
                       showArt
+                      reportId={active.id}
                       onChange={(next) => persistParties(next, responsaveisImagens)}
                     />
                   </div>
@@ -1161,7 +1246,7 @@ export default function InspectionReportsPage() {
                         type="button"
                         onClick={() => download("docx")}
                         disabled={loading || generating || !!exporting}
-                        className="rounded-lg bg-slate-700 px-4 py-2 text-sm text-white disabled:opacity-50"
+                        className="rounded-lg bg-slate-700 px-4 py-2 text-sm text-white hover:bg-slate-600 disabled:opacity-50"
                       >
                         {exporting === "docx" ? "Exportando Word…" : "Exportar Word"}
                       </button>
@@ -1169,27 +1254,9 @@ export default function InspectionReportsPage() {
                         type="button"
                         onClick={() => download("pdf")}
                         disabled={loading || generating || !!exporting}
-                        className="rounded-lg bg-slate-700 px-4 py-2 text-sm text-white disabled:opacity-50"
+                        className="rounded-lg bg-slate-700 px-4 py-2 text-sm text-white hover:bg-slate-600 disabled:opacity-50"
                       >
                         {exporting === "pdf" ? "Exportando PDF…" : "Exportar PDF"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => download("docx", true)}
-                        disabled={loading || generating || !!exporting}
-                        className="rounded-lg bg-emerald-800/80 px-4 py-2 text-sm text-white disabled:opacity-50"
-                        title="Exige checklist oficial (RT, CNPJ válido, capítulos)"
-                      >
-                        Word oficial
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => download("pdf", true)}
-                        disabled={loading || generating || !!exporting}
-                        className="rounded-lg bg-emerald-800/80 px-4 py-2 text-sm text-white disabled:opacity-50"
-                        title="Exige checklist oficial (RT, CNPJ válido, capítulos)"
-                      >
-                        PDF oficial
                       </button>
                     </>
                   )}
@@ -1204,9 +1271,9 @@ export default function InspectionReportsPage() {
                           : "bg-amber-500/10 text-amber-100"
                     }`}
                   >
-                    Checklist exportação:{" "}
+                    Checklist:{" "}
                     {checklist.ready_for_official_export
-                      ? "pronto para oficial"
+                      ? "completo (RT, CNPJ e capítulos ok)"
                       : checklist.blocking
                         ? checklist.issues.map((i) => i.message).join(" · ")
                         : checklist.warnings.map((w) => w.message).join(" · ") || "revisar avisos"}
@@ -1216,7 +1283,25 @@ export default function InspectionReportsPage() {
                   Status: <strong className="text-slate-300">{active.status}</strong>
                   {active.gemini_model ? ` · modelo ${active.gemini_model}` : ""}
                   {active.error_message ? ` · ${active.error_message}` : ""}
+                  {status?.pades?.ready
+                    ? " · PAdES pronto"
+                    : status?.pades?.enabled
+                      ? " · PAdES config incompleta"
+                      : ""}
                 </p>
+                {isAdmin && !active.user_id ? (
+                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                    <span>Laudo sem dono (legado) — visível só para admin.</span>
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={claimActiveOrphan}
+                      className="rounded-md bg-amber-700/80 px-2 py-1 text-white hover:bg-amber-600 disabled:opacity-50"
+                    >
+                      Atribuir a mim
+                    </button>
+                  </div>
+                ) : null}
               </section>
 
               <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -1338,10 +1423,118 @@ export default function InspectionReportsPage() {
               </section>
 
               {active.content && (
+                <section className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+                  <InspectionVisualMemoryEditor
+                    reportId={active.id}
+                    disabled={loading || generating}
+                    onSaved={() => {
+                      openReport(active.id).catch(() => undefined);
+                    }}
+                  />
+                </section>
+              )}
+
+              {active.content && (
+                <section className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+                  <InspectionAssayResultsPanel
+                    reportId={active.id}
+                    disabled={loading || generating}
+                    onSaved={() => {
+                      openReport(active.id).catch(() => undefined);
+                    }}
+                  />
+                </section>
+              )}
+
+              {active.content && (() => {
+                const sig = (active.content as Record<string, unknown>).signature_evidence as
+                  | Record<string, unknown>
+                  | undefined;
+                const hash = sig?.pdf_sha256 ? String(sig.pdf_sha256) : null;
+                if (!hash) return null;
+                return (
+                  <section className="rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-3 text-xs text-slate-400">
+                    <span className="font-medium text-slate-300">Evidência L19 · último PDF:</span>{" "}
+                    <span className="font-mono text-cyan-300/90" title={hash}>
+                      SHA-256 {hash.slice(0, 20)}…
+                    </span>
+                    {sig?.pdf_signed_at ? (
+                      <span className="ml-2 text-slate-500">({String(sig.pdf_signed_at)})</span>
+                    ) : null}
+                  </section>
+                );
+              })()}
+
+              {active.content && (
                 <section className="space-y-3 rounded-2xl bg-slate-900/40 p-5 ring-1 ring-slate-800">
                   <h3 className="text-sm font-semibold text-white">
                     Modo correção — avaliação profissional
                   </h3>
+                  {(() => {
+                    const c = active.content as Record<string, unknown>;
+                    const cls = c.classification as Record<string, unknown> | undefined;
+                    const inv = Array.isArray(c.element_inventory) ? c.element_inventory : [];
+                    const paths = Array.isArray(c.pathologies) ? c.pathologies : [];
+                    const metroCount = paths.filter((p) => {
+                      const m = (p as Record<string, unknown>)?.metrology as
+                        | Record<string, unknown>
+                        | undefined;
+                      if (!m) return false;
+                      return [
+                        "crack_width_mm",
+                        "section_loss_pct",
+                        "residual_thickness_mm",
+                        "displacement_mm",
+                        "erosion_volume_m3",
+                        "affected_area_m2",
+                      ].some((k) => m[k] != null);
+                    }).length;
+                    if (!cls && inv.length === 0) return null;
+                    const note = cls?.global_dnit_note;
+                    const noteTone =
+                      typeof note === "number" && note <= 2
+                        ? "border-rose-500/40 bg-rose-500/10 text-rose-100"
+                        : typeof note === "number" && note === 3
+                          ? "border-amber-500/40 bg-amber-500/10 text-amber-100"
+                          : "border-emerald-500/40 bg-emerald-500/10 text-emerald-100";
+                    return (
+                      <div className={`rounded-xl border px-3 py-3 text-xs ${noteTone}`}>
+                        <p className="font-semibold">
+                          Classificação NBR 9452 / DNIT
+                          {note != null
+                            ? `: nota ${String(note)} — ${String(cls?.global_label || "")}`
+                            : ""}
+                        </p>
+                        {cls?.inspection_type ? (
+                          <p className="mt-1 opacity-90">
+                            Tipo de inspeção: {String(cls.inspection_type)}
+                            {cls.governing_element_id
+                              ? ` · Elemento governante: ${String(cls.governing_element_id)}`
+                              : ""}
+                          </p>
+                        ) : null}
+                        {(() => {
+                          const inter = c.interdiction as Record<string, unknown> | undefined;
+                          if (!inter?.required) return null;
+                          return (
+                            <p className="mt-1 font-medium opacity-95">
+                              Ato de interdição: {String(inter.restriction_type || "")} —{" "}
+                              {String(inter.action_summary || "").slice(0, 160)}
+                            </p>
+                          );
+                        })()}
+                        <p className="mt-1 opacity-80">
+                          Inventário: {inv.length} elemento(s)
+                          {metroCount > 0
+                            ? ` · Metrologia tipada em ${metroCount} patologia(s)`
+                            : ""}
+                        </p>
+                        {cls?.rationale ? (
+                          <p className="mt-2 line-clamp-3 opacity-75">{String(cls.rationale)}</p>
+                        ) : null}
+                      </div>
+                    );
+                  })()}
                   <textarea
                     className="min-h-24 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
                     placeholder="Descreva o que corrigir, incluir ou reescrever no laudo…"

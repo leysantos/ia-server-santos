@@ -46,113 +46,318 @@ def format_severity_distribution(dist: Any) -> str:
 
 
 def ensure_chapter_number(title: str, number: int) -> str:
-    """Garante prefixo numérico no título do capítulo (ex.: '3. Local e Data')."""
-    t = (title or "").strip()
+    """Sempre aplica numeração contínua (strip de prefixo antigo do Gemini)."""
+    from core.inspection_report.protocol_order import strip_chapter_number
+
+    t = strip_chapter_number(title or "")
     if not t:
         return f"{number}."
-    # Já começa com número (1. / 1 / 16.)
+    return f"{number}. {t}"
+
+
+def build_photographic_index_table(content: dict[str, Any]) -> dict[str, Any] | None:
+    """Índice foto → título → elemento → gravidade → patologias (antes do anexo)."""
     import re
 
-    if re.match(r"^\d+[\.\)]\s*", t):
-        return t
-    return f"{number}. {t}"
+    photos = [
+        p for p in (content.get("photographic_report") or []) if isinstance(p, dict)
+    ]
+    if not photos:
+        return None
+
+    known_codes = {
+        str(p.get("code") or p.get("codigo") or "").strip().upper()
+        for p in (content.get("pathologies") or [])
+        if isinstance(p, dict) and (p.get("code") or p.get("codigo"))
+    }
+
+    def _clean_refs(raw: Any) -> list[str]:
+        refs: list[str] = []
+        for item in raw or []:
+            s = str(item or "").strip()
+            if not s:
+                continue
+            # Preferir códigos P01 / P1
+            m = re.search(r"\bP0*\d+\b", s, re.I)
+            if m:
+                code = m.group(0).upper()
+                if re.match(r"^P\d+$", code):
+                    # normaliza P1 → P01 se existir no inventário
+                    if code in known_codes:
+                        refs.append(code)
+                    else:
+                        padded = f"P{int(code[1:]):02d}"
+                        refs.append(padded if padded in known_codes else code)
+                continue
+            su = s.upper()
+            if su in known_codes:
+                refs.append(su)
+                continue
+            # ignora texto livre (NBR 9452, descrições…)
+        # únicos preservando ordem
+        seen: set[str] = set()
+        out: list[str] = []
+        for r in refs:
+            if r not in seen:
+                seen.add(r)
+                out.append(r)
+        return out
+
+    ordered = sorted(photos, key=lambda p: int(p.get("photo_number") or 0))
+    return {
+        "caption": "Índice do relatório fotográfico",
+        "headers": ["Foto", "Título", "Elemento", "Gravidade", "Patologias"],
+        "rows": [
+            [
+                f"{int(p.get('photo_number') or 0):02d}",
+                str(p.get("title") or p.get("legend") or "—")[:70],
+                str(p.get("element_id") or p.get("element_hint") or "—"),
+                str(p.get("severity") or "—"),
+                ", ".join(_clean_refs(p.get("pathology_refs"))) or "—",
+            ]
+            for p in ordered
+        ],
+    }
 
 
 def build_body_sections(content: dict[str, Any]) -> list[dict[str, Any]]:
     """
-    Monta seções do corpo em ordem técnica, com numeração contínua.
-    Evita duplicar capa/sumário/fotográfico e formata indicadores.
+    Monta seções do corpo em ordem de protocolo (CREA/perícia),
+    com numeração contínua única (fonte do sumário).
     """
+    from core.inspection_report.protocol_order import (
+        is_analytics_like,
+        is_skip_chapter,
+        normalize_chapter_title,
+        reorder_chapters_for_protocol,
+    )
+
     sections: list[dict[str, Any]] = []
     n = 0
-
-    def _push(title: str, *, paragraphs=None, tables=None, charts=None, chapter_id: str = ""):
-        nonlocal n
-        n += 1
-        sections.append(
-            {
-                "number": n,
-                "chapter_id": chapter_id,
-                "title": ensure_chapter_number(title, n),
-                "paragraphs": list(paragraphs or []),
-                "tables": list(tables or []),
-                "charts": list(charts or []),
-            }
-        )
-
     seen_ids: set[str] = set()
 
+    def _push(
+        title: str,
+        *,
+        paragraphs=None,
+        tables=None,
+        charts=None,
+        chapter_id: str = "",
+        cards=None,
+        chart_images=None,
+    ):
+        nonlocal n
+        n += 1
+        sec: dict[str, Any] = {
+            "number": n,
+            "chapter_id": chapter_id,
+            "title": ensure_chapter_number(title, n),
+            "paragraphs": list(paragraphs or []),
+            "tables": list(tables or []),
+            "charts": list(charts or []),
+        }
+        if cards is not None:
+            sec["cards"] = cards
+        if chart_images is not None:
+            sec["chart_images"] = chart_images
+        sections.append(sec)
+        if chapter_id:
+            seen_ids.add(chapter_id)
+
+    # Solicitante (tabela) — uma vez
     sol_table = solicitante_table(content)
     if sol_table:
         _push("Dados do solicitante", tables=[sol_table], chapter_id="solicitante")
-        seen_ids.add("solicitante")
 
-    for chapter in content.get("chapters") or []:
+    # Capítulos já ordenados/deduplicados
+    ordered_chapters = reorder_chapters_for_protocol(list(content.get("chapters") or []))
+    pathologies = content.get("pathologies") or []
+    classification = (
+        content.get("classification")
+        if isinstance(content.get("classification"), dict)
+        else None
+    )
+    inventory = (
+        content.get("element_inventory")
+        if isinstance(content.get("element_inventory"), list)
+        else None
+    )
+    interdiction = (
+        content.get("interdiction")
+        if isinstance(content.get("interdiction"), dict)
+        else None
+    )
+
+    analytics_pushed = False
+
+    for chapter in ordered_chapters:
         cid = str(chapter.get("id") or "").lower().strip()
-        title = str(chapter.get("title") or chapter.get("id") or "Capítulo")
-        title_l = title.lower()
-        if cid in _SKIP_CHAPTER_IDS:
+        title = normalize_chapter_title(
+            cid, str(chapter.get("title") or chapter.get("id") or "Capítulo")
+        )
+        if is_skip_chapter(cid, title):
             continue
-        if "capa" in title_l or "sumário" in title_l or "sumario" in title_l:
+        if cid and cid in seen_ids:
             continue
-        if "relatório fotográfico" in title_l or "relatorio fotografico" in title_l:
+        # Evitar segundo solicitante
+        if cid == "solicitante" and "solicitante" in seen_ids:
             continue
-        if cid:
-            seen_ids.add(cid)
+
+        if is_analytics_like(cid, title):
+            if analytics_pushed:
+                continue
+            from core.inspection_report.analytics import build_pathology_analytics
+
+            analytics = build_pathology_analytics(content)
+            _push(
+                "Análise quantitativa e qualitativa das patologias",
+                paragraphs=analytics.get("summary_paragraphs")
+                or chapter.get("paragraphs"),
+                tables=analytics.get("tables") or chapter.get("tables"),
+                chapter_id="analytics",
+                cards=analytics.get("cards") or [],
+                chart_images=analytics.get("charts") or [],
+            )
+            seen_ids.add("indicadores")
+            seen_ids.add("gravidade")
+            analytics_pushed = True
+            continue
+
         _push(
             title,
             paragraphs=chapter.get("paragraphs"),
             tables=chapter.get("tables"),
             charts=chapter.get("charts"),
-            chapter_id=cid,
+            chapter_id=cid or title.lower()[:40],
         )
 
-    # Blocos estruturados extras (só se não houver capítulo equivalente)
-    pathologies = content.get("pathologies") or []
-    if pathologies and "patologias" not in seen_ids and "diagnostico" not in seen_ids:
-        rows = [
-            [
-                p.get("code") or "—",
-                p.get("name") or "—",
-                p.get("location") or "—",
-                p.get("severity") or "—",
-                f"{p.get('score') or '—'}/5",
-                p.get("solution") or "—",
-                p.get("urgency") or "—",
-            ]
-            for p in pathologies
-        ]
-        paras = []
-        for p in pathologies:
-            paras.append(
-                f"{p.get('code') or ''} {p.get('name')}: {p.get('description') or ''} "
-                f"Causa provável: {p.get('cause') or '—'}. "
-                f"Solução: {p.get('solution') or '—'}."
-            )
+    # Fallbacks se enrichment não materializou capítulos
+    if (
+        inventory
+        and "inventario_elementos" not in seen_ids
+    ):
+        from core.inspection_report.elements import element_inventory_table
+
         _push(
-            "Síntese de patologias",
-            paragraphs=paras,
+            "Inventário estruturado de elementos",
+            paragraphs=[
+                f"Inventário com {len(inventory)} elemento(s) do catálogo da tipología."
+            ],
+            tables=[element_inventory_table(inventory)],
+            chapter_id="inventario_elementos",
+        )
+
+    if pathologies and "patologias" not in seen_ids and "diagnostico" not in seen_ids:
+        # Só se não houver capítulo narrativo de patologias
+        if not any("patolog" in (s.get("title") or "").lower() for s in sections):
+            rows = [
+                [
+                    p.get("code") or "—",
+                    p.get("name") or "—",
+                    p.get("element_id") or p.get("location") or "—",
+                    p.get("severity") or "—",
+                    f"{p.get('score') or '—'}/5",
+                    p.get("solution") or "—",
+                    p.get("urgency") or "—",
+                ]
+                for p in pathologies
+                if isinstance(p, dict)
+            ]
+            _push(
+                "Síntese de patologias",
+                paragraphs=[
+                    f"{p.get('code') or ''} {p.get('name')}: {p.get('description') or ''}"
+                    for p in pathologies
+                    if isinstance(p, dict)
+                ],
+                tables=[
+                    {
+                        "caption": "Quadro resumo de patologias",
+                        "headers": [
+                            "Código",
+                            "Patologia",
+                            "Elemento/Local",
+                            "Severidade",
+                            "Score",
+                            "Solução",
+                            "Urgência",
+                        ],
+                        "rows": rows,
+                    }
+                ],
+                chapter_id="patologias",
+            )
+
+    if pathologies and "metrologia" not in seen_ids:
+        from core.inspection_report.metrology import metrology_table, pathology_has_metrology
+
+        if any(isinstance(p, dict) and pathology_has_metrology(p) for p in pathologies):
+            _push(
+                "Campos metrológicos tipados",
+                paragraphs=[
+                    "Medidas tipadas (estimativas de campo quando method≠measured). "
+                    "Confirmar com ensaios instrumentados prioritários."
+                ],
+                tables=[metrology_table(pathologies)],
+                chapter_id="metrologia",
+            )
+
+    if classification and "classificacao_dnit" not in seen_ids:
+        from core.inspection_report.classification import (
+            classification_elements_table,
+            classification_summary_table,
+        )
+
+        note = classification.get("global_dnit_note")
+        _push(
+            "Classificação e parecer técnico (NBR 9452 / DNIT)",
+            paragraphs=[
+                (
+                    f"Tipo de inspeção: {classification.get('inspection_type') or '—'}. "
+                    f"Nota DNIT global: {note} ({classification.get('global_label') or '—'}). "
+                    f"Elemento governante: {classification.get('governing_element_id') or '—'}."
+                ),
+                str(classification.get("rationale") or ""),
+            ],
+            tables=[
+                classification_summary_table(classification),
+                classification_elements_table(classification),
+            ],
+            chapter_id="classificacao_dnit",
+        )
+
+    if (
+        interdiction
+        and interdiction.get("required")
+        and "interdicao" not in seen_ids
+    ):
+        _push(
+            "Ato de interdição e restrição de uso",
+            paragraphs=[
+                str(interdiction.get("action_summary") or ""),
+                f"Autoridade: {interdiction.get('authority') or '—'}. "
+                f"Prazo: {interdiction.get('deadline') or '—'}.",
+            ],
             tables=[
                 {
-                    "caption": "Quadro resumo de patologias",
-                    "headers": [
-                        "Código",
-                        "Patologia",
-                        "Local",
-                        "Severidade",
-                        "Score",
-                        "Solução",
-                        "Urgência",
+                    "caption": "Ato de interdição / restrição de uso",
+                    "headers": ["Campo", "Valor"],
+                    "rows": [
+                        ["Tipo", str(interdiction.get("restriction_type") or "—")],
+                        ["Ação", str(interdiction.get("action_summary") or "—")],
+                        [
+                            "Patologias",
+                            ", ".join(interdiction.get("pathology_refs") or []) or "—",
+                        ],
                     ],
-                    "rows": rows,
                 }
             ],
+            chapter_id="interdicao",
         )
 
-    indicators = content.get("indicators") or {}
     photos = content.get("photographic_report") or []
-    # Seção analítica (cards + tabelas + gráficos) — sempre que houver dados
-    if (pathologies or photos) and "analytics" not in seen_ids:
+    indicators = content.get("indicators") or {}
+    if (pathologies or photos) and not analytics_pushed and "analytics" not in seen_ids:
         from core.inspection_report.analytics import build_pathology_analytics
 
         analytics = build_pathology_analytics(content)
@@ -160,30 +365,20 @@ def build_body_sections(content: dict[str, Any]) -> list[dict[str, Any]]:
             "Análise quantitativa e qualitativa das patologias",
             paragraphs=analytics.get("summary_paragraphs"),
             tables=analytics.get("tables"),
-            charts=[],  # gráficos PNG tratados via campo extra
+            chapter_id="analytics",
+            cards=analytics.get("cards") or [],
+            chart_images=analytics.get("charts") or [],
         )
-        sections[-1]["cards"] = analytics.get("cards") or []
-        sections[-1]["chart_images"] = analytics.get("charts") or []
-        seen_ids.add("analytics")
-        seen_ids.add("indicadores")
-    elif indicators and "indicadores" not in seen_ids:
+    elif indicators and "indicadores" not in seen_ids and "analytics" not in seen_ids:
         dist_txt = format_severity_distribution(indicators.get("severity_distribution"))
         _push(
-            "Indicadores de comprometimento",
+            "Indicadores de conservação",
             paragraphs=[
                 f"Índice de comprometimento: {indicators.get('compromise_index_pct', '—')}%. "
                 f"Índice de conservação aparente: {indicators.get('conservation_index_pct', '—')}%. "
                 f"Distribuição por gravidade: {dist_txt}."
             ],
-            tables=[
-                {
-                    "caption": "Distribuição por gravidade",
-                    "headers": ["Gravidade", "Quantidade"],
-                    "rows": _dist_rows(indicators.get("severity_distribution")),
-                }
-            ]
-            if indicators.get("severity_distribution")
-            else [],
+            chapter_id="indicadores",
         )
 
     schedule = content.get("schedule") or []
@@ -205,23 +400,40 @@ def build_body_sections(content: dict[str, Any]) -> list[dict[str, Any]]:
                     ],
                 }
             ],
+            chapter_id="cronograma",
         )
 
     conclusions = content.get("conclusions") or []
-    if conclusions and "conclusao" not in seen_ids and "conclusões" not in " ".join(seen_ids):
-        _push("Conclusões e recomendações", paragraphs=[str(c) for c in conclusions])
+    if conclusions and "conclusao" not in seen_ids:
+        _push(
+            "Conclusões e recomendações",
+            paragraphs=[str(c) for c in conclusions],
+            chapter_id="conclusao",
+        )
 
     refs = content.get("references") or []
-    if refs and "referencias" not in seen_ids and "referências" not in " ".join(seen_ids):
-        _push("Referências", paragraphs=[str(r) for r in refs])
+    citations = content.get("normative_citations") or []
+    if "referencias" not in seen_ids:
+        if citations:
+            from core.inspection_report.normative_rag import normative_citations_table
+
+            _push(
+                "Referências",
+                paragraphs=[
+                    "Citações normativas rastreáveis recuperadas por tipología (L15 — RAG).",
+                ],
+                tables=[normative_citations_table(list(citations))],
+                chapter_id="referencias",
+            )
+        elif refs:
+            _push("Referências", paragraphs=[str(r) for r in refs], chapter_id="referencias")
 
     return sections
-
 
 def build_sumario_entries(content: dict[str, Any]) -> list[dict[str, str]]:
     """
     Monta o sumário institucional a partir das seções reais do corpo.
-    Inclui responsáveis técnicos (se houver) e o relatório fotográfico.
+    Inclui responsáveis técnicos, índice fotográfico e o relatório fotográfico.
     """
     sections = build_body_sections(content)
     entries: list[dict[str, str]] = []
@@ -236,14 +448,42 @@ def build_sumario_entries(content: dict[str, Any]) -> list[dict[str, str]]:
     if normalize_parties(content.get("responsaveis_tecnicos")):
         entries.append({"label": "Responsáveis técnicos", "chapter_id": "assinaturas"})
 
-    photo_num = (sections[-1]["number"] + 1) if sections else 1
+    next_n = (sections[-1]["number"] + 1) if sections else 1
+    if build_photographic_index_table(content):
+        entries.append(
+            {
+                "label": f"{next_n}. Índice do relatório fotográfico",
+                "chapter_id": "indice_fotografico",
+            }
+        )
+        next_n += 1
     entries.append(
         {
-            "label": f"{photo_num}. Relatório fotográfico",
+            "label": f"{next_n}. Relatório fotográfico",
             "chapter_id": "fotografico",
         }
     )
     return [e for e in entries if (e.get("label") or "").strip()]
+
+
+def _truncate_header(text: str, max_len: int = 72) -> str:
+    t = (text or "—").strip()
+    if len(t) <= max_len:
+        return t
+    cut = t[: max_len - 1]
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip(" ,;/-") + "…"
+
+
+def header_meta_lines(content: dict[str, Any], *, generated_at: str) -> list[str]:
+    """Linhas à direita do cabeçalho (sem truncar no meio da palavra)."""
+    return [
+        f"Nº: {content.get('numero_laudo') or '—'}",
+        f"Objeto: {_truncate_header(str(content.get('objeto') or '—'), 72)}",
+        f"Vistoria: {content.get('data_vistoria') or '—'}",
+        f"Gerado em: {generated_at}",
+    ]
 
 
 def ensure_sumario_chapter(content: dict[str, Any]) -> dict[str, Any]:
@@ -275,7 +515,6 @@ def ensure_sumario_chapter(content: dict[str, Any]) -> dict[str, Any]:
             replaced = True
             break
     if not replaced:
-        # Insere após capa, se existir; senão no início
         insert_at = 0
         for i, ch in enumerate(chapters):
             if isinstance(ch, dict) and str(ch.get("id") or "").lower() in ("capa", "cover"):
@@ -304,17 +543,6 @@ def _dist_rows(dist: Any) -> list[list[str]]:
     return rows
 
 
-def header_meta_lines(content: dict[str, Any], *, generated_at: str) -> list[str]:
-    """Linhas à direita do cabeçalho."""
-    lines = [
-        f"Nº: {content.get('numero_laudo') or '—'}",
-        f"Objeto: {(content.get('objeto') or '—')[:48]}",
-        f"Vistoria: {content.get('data_vistoria') or '—'}",
-        f"Gerado em: {generated_at}",
-    ]
-    return lines
-
-
 def normalize_party(raw: Any) -> dict[str, str] | None:
     """Normaliza responsável técnico / de imagens."""
     if not isinstance(raw, dict):
@@ -323,7 +551,7 @@ def normalize_party(raw: Any) -> dict[str, str] | None:
     if not nome:
         return None
     pid = str(raw.get("id") or "").strip()
-    return {
+    party = {
         "id": pid or nome.lower().replace(" ", "_")[:40],
         "nome": nome[:200],
         "profissao": str(raw.get("profissao") or "").strip()[:120],
@@ -331,7 +559,14 @@ def normalize_party(raw: Any) -> dict[str, str] | None:
         "art": str(raw.get("art") or "").strip()[:80],
         "email": str(raw.get("email") or "").strip()[:160],
         "telefone": str(raw.get("telefone") or "").strip()[:60],
+        # L18 — ART rastreável
+        "art_asset_id": str(raw.get("art_asset_id") or "").strip()[:80],
+        "art_protocolo": str(raw.get("art_protocolo") or "").strip()[:120],
+        "art_url": str(raw.get("art_url") or "").strip()[:400],
+        # L19 — imagem de firma
+        "signature_asset_id": str(raw.get("signature_asset_id") or "").strip()[:80],
     }
+    return party
 
 
 def normalize_parties(raw: Any) -> list[dict[str, str]]:
@@ -343,6 +578,33 @@ def normalize_parties(raw: Any) -> list[dict[str, str]]:
         if party:
             out.append(party)
     return out
+
+
+def art_traceability_table(content: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Tabela L18 — ART / documentos técnicos vinculados aos RTs."""
+    rts = normalize_parties((content or {}).get("responsaveis_tecnicos"))
+    rows: list[list[str]] = []
+    for rt in rts:
+        has_trace = bool(rt.get("art") or rt.get("art_asset_id") or rt.get("art_protocolo") or rt.get("art_url"))
+        if not has_trace and not rt.get("nome"):
+            continue
+        rows.append(
+            [
+                rt.get("nome") or "—",
+                rt.get("crea") or "—",
+                rt.get("art") or "—",
+                rt.get("art_protocolo") or "—",
+                "anexo" if rt.get("art_asset_id") else "—",
+                (rt.get("art_url") or "—")[:60],
+            ]
+        )
+    if not rows:
+        return None
+    return {
+        "caption": "ART / documentos técnicos rastreáveis (L18)",
+        "headers": ["Responsável", "CREA", "ART", "Protocolo", "Anexo", "URL / SICAR"],
+        "rows": rows,
+    }
 
 
 def party_display_lines(party: dict[str, Any]) -> list[str]:
@@ -488,20 +750,23 @@ def build_cover_layout(content: dict[str, Any], *, generated_at: str) -> dict[st
 
     resp_rows: list[list[str]] = []
     for i, rt in enumerate(rts, start=1):
-        bits = [rt["nome"]]
+        prefix = "Responsável técnico" if len(rts) == 1 else f"Responsável técnico {i}"
+        resp_rows.append([prefix, rt["nome"] or "—"])
         if rt.get("profissao"):
-            bits.append(rt["profissao"])
-        if rt.get("crea"):
-            bits.append(f"CREA: {rt['crea']}")
-        if rt.get("art"):
-            bits.append(f"ART: {rt['art']}")
-        label = "Responsável técnico" if len(rts) == 1 else f"Responsável técnico {i}"
-        resp_rows.append([label, " — ".join(bits)])
+            resp_rows.append(["Profissão / título", rt["profissao"]])
+        resp_rows.append(["CREA", rt.get("crea") or "não informado"])
+        resp_rows.append(["ART", rt.get("art") or "não informada — preencher antes do protocolo"])
+        if rt.get("email") or rt.get("telefone"):
+            contact = " · ".join(
+                x for x in (rt.get("email"), rt.get("telefone")) if x
+            )
+            if contact:
+                resp_rows.append(["Contato do RT", contact])
     if imgs:
         label = "Responsável pelas fotos" if len(imgs) == 1 else "Responsáveis pelas fotos"
         resp_rows.append([label, ", ".join(p["nome"] for p in imgs)])
     if resp_rows:
-        blocks.append({"heading": "Responsabilidade técnica", "rows": resp_rows})
+        blocks.append({"heading": "Responsabilidade técnica (CREA / ART)", "rows": resp_rows})
 
     return {
         "titulo": str(content.get("titulo") or "Laudo Técnico de Vistoria"),

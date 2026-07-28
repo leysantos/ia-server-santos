@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 PUBLIC_PREFIXES = (
     "/health",
+    "/system/benchmark",
     "/auth/login",
     "/auth/status",
     "/docs",

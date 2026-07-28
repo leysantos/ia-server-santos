@@ -8,7 +8,7 @@ interface ShellHeaderProps {
   children: ReactNode;
   className?: string;
   innerClassName?: string;
-  /** Conteúdo extra à direita (ex.: modelo ativo no chat). */
+  /** Conteúdo extra à direita (ex.: modelo ativo no chat, status Gemini). */
   trailing?: ReactNode;
   /** Exibe rótulo WSL no canto direito — telas principais. */
   showModelsStatus?: boolean;
@@ -32,9 +32,9 @@ export default function ShellHeader({
       )}
     >
       {hasTrailing ? (
-        <div className="shell-header-split flex h-full w-full flex-col justify-center gap-2 max-lg:py-2 lg:flex-row lg:items-center lg:justify-between lg:gap-4 lg:py-0">
-          <div className={cn("flex min-w-0 flex-1 items-center", innerClassName)}>{children}</div>
-          <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2 sm:gap-3">
+        <div className="shell-header-split">
+          <div className={cn("shell-header-main", innerClassName)}>{children}</div>
+          <div className="shell-header-trailing">
             {trailing}
             {showModelsStatus && <ModelsStatusBadge />}
           </div>

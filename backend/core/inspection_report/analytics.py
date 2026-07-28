@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import io
 from collections import Counter
+from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 
 SEVERITY_ORDER = ("crítica", "alta", "média", "baixa")
@@ -73,16 +74,64 @@ def prepare_watermark_png(
         return None
 
 
+def open_image_upright(source: str | Path | bytes | Image.Image) -> Image.Image:
+    """
+    Abre imagem aplicando EXIF Orientation (retrato/paisagem corretos).
+
+    Celulares gravam pixels frequentemente em paisagem + tag Orientation=6/8;
+    Word/PDF e ReportLab não aplicam esse tag — sem transpose a foto sai de lado.
+    """
+    if isinstance(source, Image.Image):
+        img = source
+    elif isinstance(source, (bytes, bytearray)):
+        img = Image.open(io.BytesIO(source))
+    else:
+        img = Image.open(source)
+    try:
+        upright = ImageOps.exif_transpose(img)
+    except Exception:
+        upright = img
+    if upright is None:
+        upright = img
+    # Cópia em memória (fecha file handle do path)
+    return upright.copy()
+
+
+def image_bytes_for_export(
+    source: str | Path | bytes,
+    *,
+    max_edge_px: int = 2400,
+    format: str = "JPEG",
+    quality: int = 90,
+) -> bytes:
+    """PNG/JPEG já rotacionado conforme EXIF, sem tag Orientation residual."""
+    img = open_image_upright(source)
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    w, h = img.size
+    edge = max(w, h)
+    if edge > max_edge_px > 0:
+        scale = max_edge_px / float(edge)
+        img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS)
+    buf = io.BytesIO()
+    fmt = (format or "JPEG").upper()
+    if fmt == "JPEG":
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+    else:
+        img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
 def fit_image_display_inches(
     path: str,
     *,
     max_w: float = 5.9,
     max_h: float = 5.2,
 ) -> tuple[float, float]:
-    """Calcula largura/altura em polegadas para caber na página (evita páginas em branco)."""
+    """Calcula largura/altura em polegadas após corrigir EXIF (evita páginas em branco)."""
     try:
-        with Image.open(path) as im:
-            w, h = im.size
+        im = open_image_upright(path)
+        w, h = im.size
         if w <= 0 or h <= 0:
             return max_w, max_h * 0.7
         aspect = w / h

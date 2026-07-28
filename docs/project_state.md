@@ -6,8 +6,8 @@
 | Campo | Valor |
 |-------|-------|
 | **Versão do sistema** | 1.0.0 |
-| **Última atualização** | 2026-07-24 (laudos · capa 1ª folha em tabelas KV) |
-| **Próximo foco** | Piloto UI §4.U `/budget` · validação humana export oficial laudos |
+| **Última atualização** | 2026-07-27 (Laudos follow-up · órfãos · ART live · PAdES flag) |
+| **Próximo foco** | Piloto UI §4.U `/budget` · Laudos PAdES com cert A1 em produção |
 | **Marco atual** | M1–M8 ✅ · Orçamento B1–B30 ✅ |
 | **Repositório** | [github.com/leysantos/ia-server-santos](https://github.com/leysantos/ia-server-santos) |
 | **Branch principal** | `main` |
@@ -71,7 +71,7 @@ ia-server-santos/
 | **Workflow Projetos** | 🟡 Fase 3 — Wizard de Entrega (`/workflow/wizard`) · seleção manual arquivos · templates A4–A0 · nomenclatura `DISC-FLnn-TIPO-DESC-REV` · análise CAD/IA · GRD PDF · ZIP estruturado · Fase 2.1 (classificador, skip, presigned) mantida |
 | **Operational Transparency** | 🟢 ActivityPanel global · Operations Console `/console` (SSE live + fila Ollama + log `norm_bulk`/`knowledge`) · timeline `/projects/{id}/activity` · `project_decisions` + auto-capture |
 | **Orçamento `/budget`** | 🟢 **Produção interna alta** + **enterprise técnico** (B1–B30): 11 docs nativos + `proposta_comercial` + `.xlsm` oficial + **Lançar Preços** (import PDF hierárquico etapas/sub-etapas/composições · persistência imediata · abas PPD na mesma tela · Salvar/Editar/Excluir · matching SEMINF→SINAPI→SICRO→ORSE) · auditoria · tenant · lock · §8.1 |
-| **Laudos de Vistoria `/inspection-reports`** | 🟢 **Enterprise técnico** (§8.2 L1–L9 ✅): isolamento `user_id` · SSE geração+correção · tipologías com capítulos/prompt · georref no Gemini · limites upload · cancel · edição humana · `project_id`+activity · checklist CNPJ/CREA/ART · testes ampliados |
+| **Laudos de Vistoria `/inspection-reports`** | 🟢 **L1–L19 + follow-up** ✅: croqui · ART live · PAdES opcional · órfãos admin · mapa · metrologia · ensaios |
 | Chat streaming UX | 🟢 SSE instantâneo (`connected`) + tokens ~60fps · **anexos no prompt** (PDF/planilha/imagem/CAD) em `/chat`, `/orchestrate`, `/copilot`, `/aed` + roteamento auto por tipo |
 | Agente Geotecnia dedicado | 🟢 `GeotecniaIntelligentAgent` — NBR 6122/7185, classificação solo, A_min |
 | Frontend | 🟢 `/chat`, `/projects`, `/inspection-reports`, `/budget`, `/mobile/*` (telefone), `/orchestrate`, `/copilot`, `/aed`, `/console`, `/history`, `/settings`, `/projects/{id}/workflow` |
@@ -959,8 +959,8 @@ O módulo orçamento atinge **maturidade técnica enterprise** para operação S
 | # | Problema | Impacto |
 |---|----------|---------|
 | 1 | Assinatura tipográfica (sem ICP-Brasil) | Não substitui assinatura digital legal |
-| 2 | Diagnóstico limitado a ≤16 fotos na passagem 1 | Laudos muito grandes podem subdiagnosticar |
-| 3 | Laudos legados com `user_id` NULL | Visíveis a todos até reatribuir dono |
+| 2 | ~~Diagnóstico limitado a ≤16 fotos na passagem 1~~ | Mitigado L14 — estratificação + ondas de cobertura |
+| 3 | ~~Laudos legados com `user_id` NULL~~ | Mitigado — órfãos só admin + claim/backfill |
 
 #### Melhorias sugeridas (backlog L) — ciclo L1–L9 ✅ 2026-07-24
 
@@ -979,6 +979,108 @@ O módulo orçamento atinge **maturidade técnica enterprise** para operação S
 #### Conclusão
 
 O módulo Laudos atingiu **maturidade enterprise técnica** no ciclo **L1–L9**: isolamento multi-usuário, correção com progresso, tipologías diferenciadas, georref multimodal, limites/cancel, edição humana, vínculo a projeto e checklist pré-export oficial. Pendência residual: assinatura digital ICP-Brasil (fora de escopo curto).
+
+### 8.2.1 Revisão plenária de engenharia — Laudos (2026-07-25)
+
+> Ótica: engenheiro civil pleno em vistorias/laudos (OAE, erosão, edificação, geotécnica).  
+> Entrega visual: canvas `laudos-analise-engenharia.canvas.tsx`.
+
+#### Veredito
+
+| Dimensão | Nível | Comentário |
+|----------|-------|------------|
+| Operação / SaaS | 🟢 Alto | L1–L9, SSE, export, checklist |
+| Forma institucional | 🟢 Alto | Capa, sumário, RT/ART, fotográfico |
+| Precisão normativa | 🟢 Médio–alto | Motor L10: notas DNIT 1–5 + classificação global (pior governa) |
+| Metrologia / evidência | 🟢 Médio | L12: campos tipados + extração de texto; ensaios = sugestão |
+| Ato de interdição | 🟢 Médio | L13: capítulo tipado (tipo, prazo, autoridade, liberação, sinalização) |
+| Assinatura legal | 🟡 Mitigado | L19 hash + PAdES opcional (cert A1); TSA/A3 futuro |
+
+#### Backlog engenharia L10–L19 (novo)
+
+| ID | Pri | Melhoria |
+|----|-----|----------|
+| **L10** | P0 | ✅ Motor classificação NBR 9452 / DNIT (`classification.py` + enrichment) |
+| **L11** | P0 | ✅ Inventário estruturado de elementos (`elements.py` · catálogos por slug) |
+| **L12** | P0 | ✅ Campos metrológicos tipados (`metrology.py` · fissura/seção/espessura/…) |
+| **L13** | P1 | ✅ Ato de interdição tipado (`interdiction.py` · total/parcial · liberação) |
+| **L14** | P1 | ✅ Cobertura fotográfica estratificada (`photo_coverage.py` · soft 24 + ondas) |
+| **L15** | P1 | ✅ RAG normativo por tipología + citação rastreável (`normative_rag.py`) |
+| **L16** | P1 | ✅ Resultados de ensaio medidos (`assay_results.py` · API · UI L16) |
+| **L17** | P2 | ✅ Memória visual croqui/overlay cotado (`visual_memory.py` · canvas UI) |
+| **L18** | P2 | ✅ ART rastreável — PDF `kind=art` + protocolo/URL + tabela export |
+| **L19** | P2 | ✅ Evidência assinatura — imagem firma + SHA-256 PDF (PAdES futuro) |
+
+#### Sequência sugerida
+
+1. ~~**L10 + L11 + L12**~~ ✅ — classificação DNIT · inventário · metrologia  
+2. ~~**L13 + L14**~~ ✅ — interdição · cobertura fotográfica estratificada/ondas  
+3. ~~**L15**~~ ✅ — RAG normativo por tipología + citações rastreáveis  
+4. ~~**L16**~~ ✅ — ensaios medidos · ~~**L17–L19 MVP**~~ ✅ — croqui · ART anexo · evidência hash/firma (PAdES/SICAR live = follow-up)
+
+##### Protocolo CREA/perícia (2026-07-25)
+
+Pacote P0–P2 no export: `protocol_order.py` (TOC/ordem/dedupe) · governing = pior elemento · metrologia sem `measured` falso · ensaios top-8 · ART/CREA em linhas na capa · índice fotográfico · georref só com GPS · marca d’água 6%.
+
+##### L14 — cobertura fotográfica (2026-07-25)
+
+- `photo_coverage.py`: amostra estratificada (extremos + legendadas + orientação) até soft_cap 24  
+- Ondas de cobertura (batches) sobre fotos restantes → `pathologies_delta` merge  
+- Stats em `content.photo_coverage` · progresso SSE “L14 cobertura…”  
+- Tie-break governante: prioridade estrutural (longarina > tabuleiro em empate de nota)  
+- Índice foto: `pathology_refs` só códigos P0N (ignora texto livre)
+
+##### Mapa de localização satélite (2026-07-25)
+
+- `location_map.py`: PNG satélite + marcador a partir do GPS da foto georref/capa
+- Provedores: Google Static Maps (opcional `GOOGLE_MAPS_STATIC_API_KEY`) → Esri World Imagery (sem chave) → fallback esquemático
+- Cache em `{report_dir}/location_map.png` · inserção Word/PDF abaixo da imagem georref na ficha técnica
+- Quadro fixo 5,9×3,7" (borda cinza + letterbox) · legendas sem coordenadas duplicadas
+- Mapa norte no topo + seta N (letra acima, ponta para cima) · cache `location_map_v3.png`
+- Fallback de coordenadas: `content.georreferencia` ou EXIF de outra foto `image`/`georef`
+- Export Word/PDF aplica `ImageOps.exif_transpose` (`open_image_upright` / `image_bytes_for_export`) — fotos retrato não saem deitadas
+
+##### L15 — RAG normativo por tipología (2026-07-26)
+
+- `normative_rag.py`: queries/NBRs por slug · `retrieve_for_agent` · `content.normative_citations`
+- Geração: modo `attachments_and_kb` injeta `context_text` L15 no Gemini + enrichment
+- Capítulo Referências: tabela Norma | Item | Trecho | Fonte | Score (Word/PDF)
+- Prompt L15: citar preferencialmente trechos do contexto RAG (sem inventar cláusulas)
+
+##### L16 — resultados medidos de ensaios (2026-07-27)
+
+- `assay_results.py`: schema `instrumented_test_results` · validação · tabela export L16
+- API: `GET/PUT /inspection-reports/{id}/assay-results`
+- UI: `InspectionAssayResultsPanel` — cadastro pós-campo/lab · pré-preenchimento dos ensaios sugeridos
+- Enrichment: `apply_assay_results_to_content` no capítulo ensaios + nota em conclusões
+- Metrologia: `pathology_refs_with_executed_results` vincula patologia a ensaio executado
+
+##### L17 — croqui cotado (2026-07-27)
+
+- `visual_memory.py`: overlays normalizados 0–1 · render Pillow · API `GET/PUT …/visual-memory`
+- UI `InspectionVisualMemoryEditor` — linha/seta/retângulo/círculo/rótulo sobre a foto
+- Estilo por overlay: `color` · `stroke` (1–12) · `font_size` · `filled` · painel de caneta + edição do selecionado
+- Export Word/PDF usa foto com overlay quando houver croqui
+- **2026-07-27 fix:** export JPEG max 1400px/q80 (antes PNG full-res → PDF ~89 MB / timeout proxy); hash L19 não bloqueia download se commit falhar; `/system/benchmark` público + backoff no painel quando API cai
+
+##### L18 — ART rastreável (2026-07-27)
+
+- Party: `art_asset_id` · `art_protocolo` · `art_url` · upload `kind=art` (PDF)
+- Checklist: warning só se sem ART textual **e** sem anexo
+- Tabela “ART e documentos técnicos” no export
+
+##### L19 — evidência de assinatura (2026-07-27)
+
+- Upload `kind=signature` (imagem de firma) vinculada ao RT
+- Export PDF grava `signature_evidence.pdf_sha256` (SHA-256) + header `X-Laudo-PDF-SHA256`
+- Bloco de assinatura usa imagem quando disponível
+- **PAdES (follow-up):** `pades_sign.py` + `LAUDO_PADES_ENABLED` / `LAUDO_PADES_P12_PATH` / senha · pyhanko assina no export quando ready · method=`pades` · header `X-Laudo-PDF-Sign-Method`
+
+##### Follow-up pós L19 (2026-07-27)
+
+- **Órfãos:** `user_id` NULL só admin vê/acessa · `POST …/claim` · `POST …/assign` · `POST …/orphans/backfill` · UI admin
+- **ART/SICAR live:** `art_lookup.py` monta URL CREA por UF + link SICAR público · sonda HTTP · UI “Consultar ART / SICAR”
+- Risco residual: PAdES exige certificado A1 real em produção (sem cert = L19 hash)
 
 ## Intent Layer v2
 
@@ -1255,7 +1357,7 @@ input → project_understanding → design_generator (≥2 opções/disciplina)
 - [ ] Export Excel alinhado ao layout ComD/SemD da UI
 - [ ] Curva financeira do cronograma usando cenário adotado (ComD vs SemD) de forma explícita
 
-### Laudos de Vistoria 🟢 (Jul/24) — §8.2 L1–L9 ✅
+### Laudos de Vistoria 🟢 (Jul/25) — §8.2 L1–L19 MVP ✅
 
 - [x] CRUD + templates seed (9 tipologías) + anexos PDF/fotos
 - [x] Gemini 2 passagens + SSE geração + RAG opcional
@@ -1263,6 +1365,17 @@ input → project_understanding → design_generator (≥2 opções/disciplina)
 - [x] Export Word/PDF institucional + analytics + assinaturas + progresso export
 - [x] Sumário na página 2 (Word/PDF) + `ensure_sumario_chapter`
 - [x] **Capa 1ª folha** em blocos/tabelas KV (identificação · solicitante · RT) — rótulos em negrito
+- [x] **Ensaios instrumentados** — checkbox UI + catálogo por tipología/gravidade + capítulo no laudo
+- [x] **L10–L12** Classificação NBR/DNIT · inventário elementos · metrologia tipada (§8.2.1)
+- [x] **L13** Ato de interdição tipado + pacote protocolo (TOC · ordem · top-N ensaios · índice foto)
+- [x] **L14** Cobertura fotográfica estratificada + ondas (sem teto cego ≤16)
+- [x] Mapa satélite de localização (GPS georref → Word/PDF abaixo da capa)
+- [x] **L15** RAG normativo por tipología + citação rastreável (`normative_citations`)
+- [x] **L16** Resultados medidos de ensaios (`instrumented_test_results` · API · UI · tabela export)
+- [x] **L17** Croqui cotado (`visual_memory` · canvas · overlay no Word/PDF)
+- [x] **L18** ART PDF rastreável (`kind=art` · protocolo/URL · tabela export)
+- [x] **L19** Evidência assinatura (imagem firma + SHA-256 PDF; PAdES futuro)
+- [x] Follow-up: ART/SICAR live (`art_lookup` · botão consulta) · órfãos só admin + claim/backfill · PAdES opcional (pyHanko + `LAUDO_PADES_*`)
 - [x] **L1** Isolamento `user_id` (R-25 mitigado)
 - [x] **L2** SSE na correção + prompt truncado (R-26)
 - [x] **L3** Capítulos/prompt por tipología (R-27)
@@ -1776,9 +1889,22 @@ Settings completas: `backend/config/settings.py`
 | 2026-07-24 | **Análise enterprise · Laudos (§8.2)** | Revisão código: fortes (2 passagens, metadados sobrevivem Gemini, export institucional) · fracos (R-25/26/27/28) · backlog L1–L3 · passagem 1 usa `max_output_tokens=24576` (doc SSE antigo citava 16384) |
 | 2026-07-24 | **Fix preview logo/brasão Empresa** | `<img src={API}>` sem JWT → 401 · preview via `systemFetchCompanyLogo/Brasao` + blob URL + auth (`ExportBrandingSettingsPanel`) |
 | 2026-07-24 | **Fix redes sociais Empresa** | `CompanyProfileUpdateRequest` omitia `social_*` — Pydantic descartava no PATCH · campos agora no schema + teste de persistência |
+| 2026-07-26 | **Laudos L15 RAG normativo** | `normative_rag.py` · queries por tipología · `retrieve_for_agent` · `normative_citations` + tabela Referências · prompt L15 · testes |
+| 2026-07-27 | **Laudos L16 ensaios medidos** | `assay_results.py` · `instrumented_test_results` · API GET/PUT · UI cadastro · tabela export · metrologia vinculada |
+| 2026-07-27 | **Laudos L17–L19 MVP** | croqui `visual_memory` · ART `kind=art` · firma `kind=signature` + SHA-256 PDF · UI canvas/parties · testes |
+| 2026-07-27 | **Fix PDF laudos + flood benchmark** | fotos export 1400px JPEG · croqui sem PNG full-res · `export/pdf` try/except · hash não derruba download · `/system/benchmark` público · backoff UI |
+| 2026-07-27 | **L17 croqui — estilo avançado** | cor/espessura/fonte/`filled` · ferramenta círculo · painel caneta + editar selecionado · duplicar · export Pillow respeita estilo |
+| 2026-07-27 | **Laudos follow-up órfãos · ART live · PAdES** | ACL órfãos admin-only · claim/assign/backfill · `art_lookup` CREA+SICAR · pyhanko + `LAUDO_PADES_*` no export PDF |
+| 2026-07-26 | **Laudos — EXIF Orientation no export** | `open_image_upright` / `image_bytes_for_export` · Word/PDF/georref/`_image_meta` respeitam retrato vs paisagem |
+| 2026-07-25 | **Laudos — mapa satélite de localização** | `location_map.py` (Esri/Google/fallback) · marcador no GPS da georref · Word/PDF abaixo da capa · cache por laudo · env `GOOGLE_MAPS_STATIC_API_KEY` opcional |
+| 2026-07-25 | **Laudos L14 cobertura fotográfica** | `photo_coverage.py` amostra estratificada (soft 24) + ondas de cobertura · merge pathologies_delta · tie-break governante estrutural · índice foto só P0N · stats `photo_coverage` |
+| 2026-07-25 | **Laudos protocolo CREA/perícia** | TOC único · ordem L10–L13 · governing coerente · metrologia honesta · ensaios top-8 · L13 interdição · índice fotográfico · ART capa · georref só c/ GPS · watermark 6% |
+| 2026-07-25 | **Laudos L10–L12** | Motor DNIT (`classification.py`) · inventário por tipología (`elements.py`) · metrologia tipada (`metrology.py`) · `engineering_enrichment` no generate/export · card UI · testes |
+| 2026-07-25 | **Laudos — export só Word/PDF** | UI reduzida a 2 botões (Word/PDF); checklist informativo sem botões “oficial” |
 | 2026-07-24 | **Laudos L1–L9 backlog §8.2** | Isolamento user_id · SSE correção · tipologías · georref Gemini · limites/cancel · edição humana · project_id+activity · checklist CNPJ/CREA/ART · 13 testes verdes |
 | 2026-07-24 | **Laudos — sumário no export** | Sumário era pulado em `build_body_sections` · agora `build_sumario_entries` + página Sumário em Word/PDF · `ensure_sumario_chapter` na geração |
 | 2026-07-24 | **Laudos — capa 1ª folha** | Capa deixou de ser lista centralizada · `build_cover_layout` + tabelas rótulo|valor (negrito + fundo azul claro) em Word/PDF · blocos Identificação / Solicitante / Responsabilidade técnica / Conformidade |
+| 2026-07-24 | **Laudos — ensaios instrumentados** | Checkbox ao lado de RAG · flag `suggest_instrumented_tests` · catálogo por tipología (pontes/viadutos/erosão/…) e gravidade · Gemini + pós-processamento · capítulo `ensaios_instrumentados` |
 | 2026-07-19 | **P0 sticky discipline + NBR 8160** | Follow-ups curtos (“itens do projeto/desenho”) herdam disciplina do histórico (`infer_sticky_discipline`) — não caem mais no ChatAgent · NBR 8160 corrigida (esgoto, não água quente) + NBR 7198 · prompt hidrossanitário anti-confusão 5626/8160/7198 · keywords barrilete/caixa inspeção · `tests/test_sticky_discipline.py` |
 | 2026-07-19 | **Fix multi-turn — contexto compacto p/ LLM** | Histórico prioriza **dados do usuário** (dims/cargas) e corta respostas longas do assistente (~500 chars) — evita estouro de context window que fazia o modelo “esquecer” o 1º prompt · instrução explícita “não peça de novo” · RAG usa só a mensagem atual · `list_thread_turns` |
 | 2026-07-19 | **Fix multi-turn chat — histórico no prompt** | `build_thread_context` materializa msgs **dentro** da sessão (antes: `DetachedInstanceError` → histórico vazio silencioso) · `list_messages` pega as **últimas** N · plano mixed reanexa prefixo · ChatAgent não usa template quando há thread · `tests/test_thread_context.py` |

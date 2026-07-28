@@ -6,7 +6,9 @@ import type { SystemBenchmarkResponse } from "@/types/api";
 import { cn } from "@/lib/utils";
 
 const HISTORY_LEN = 36;
-const POLL_MS = 2000;
+const POLL_MS_OK = 2000;
+const POLL_MS_ERR_MIN = 5000;
+const POLL_MS_ERR_MAX = 60000;
 
 type MetricKey = "cpu" | "memory" | "gpu" | "vram";
 
@@ -142,11 +144,22 @@ export default function SystemBenchmarkPanel() {
   const [history, setHistory] = useState<MetricHistory>(EMPTY_HISTORY);
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
+  const failStreakRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollRef = useRef<(() => Promise<void>) | null>(null);
+
+  const scheduleNext = useCallback((delayMs: number) => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      void pollRef.current?.();
+    }, delayMs);
+  }, []);
 
   const poll = useCallback(async () => {
     try {
       const data = await api.systemBenchmark();
       if (!mountedRef.current) return;
+      failStreakRef.current = 0;
       setSnapshot(data);
       setError(data.available ? null : data.error ?? "Métricas indisponíveis");
       setHistory((prev) => {
@@ -168,19 +181,34 @@ export default function SystemBenchmarkPanel() {
         );
         return next;
       });
+      scheduleNext(POLL_MS_OK);
     } catch (err) {
       if (!mountedRef.current) return;
-      setError(err instanceof Error ? err.message : "Falha ao ler benchmark");
+      failStreakRef.current += 1;
+      const streak = failStreakRef.current;
+      const backoff = Math.min(
+        POLL_MS_ERR_MAX,
+        POLL_MS_ERR_MIN * Math.pow(2, Math.min(streak - 1, 4))
+      );
+      setError(
+        streak === 1
+          ? err instanceof Error
+            ? err.message
+            : "Falha ao ler benchmark"
+          : `API offline — nova tentativa em ${Math.round(backoff / 1000)}s`
+      );
+      scheduleNext(backoff);
     }
-  }, []);
+  }, [scheduleNext]);
+
+  pollRef.current = poll;
 
   useEffect(() => {
     mountedRef.current = true;
-    poll();
-    const id = setInterval(poll, POLL_MS);
+    void poll();
     return () => {
       mountedRef.current = false;
-      clearInterval(id);
+      if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, [poll]);
 
@@ -217,7 +245,7 @@ export default function SystemBenchmarkPanel() {
               "h-1.5 w-1.5 rounded-full",
               error ? "bg-amber-500/80" : "bg-emerald-500/80 animate-pulse"
             )}
-            title={error ?? "Atualizando a cada 2s"}
+            title={error ?? "Atualizando periodicamente"}
           />
         </div>
 

@@ -90,6 +90,11 @@ import type {
   ExportBrandingConfig,
   InspectionReport,
   InspectionReportGenerateProgress,
+  InspectionAssayResult,
+  InspectionAssayResultsView,
+  InspectionVisualMemoryItem,
+  InspectionVisualMemoryView,
+  InspectionSignatureEvidence,
   InspectionReportParty,
   InspectionReportSolicitante,
   InspectionReportTemplate,
@@ -698,6 +703,7 @@ export const api = {
     template_id?: string | null;
     user_prompt?: string;
     knowledge_mode?: string;
+    suggest_instrumented_tests?: boolean;
     project_id?: string | null;
   }): Promise<InspectionReport> {
     return request("/inspection-reports", {
@@ -713,6 +719,7 @@ export const api = {
       template_id?: string | null;
       user_prompt?: string;
       knowledge_mode?: string;
+      suggest_instrumented_tests?: boolean;
       project_id?: string | null;
       responsaveis_tecnicos?: InspectionReportParty[];
       responsaveis_imagens?: InspectionReportParty[];
@@ -912,6 +919,92 @@ export const api = {
     return request(`/inspection-reports/${reportId}/assets/${assetId}`, {
       method: "PATCH",
       body: JSON.stringify({ caption }),
+    });
+  },
+
+  getInspectionAssayResults(reportId: string): Promise<InspectionAssayResultsView> {
+    return request(`/inspection-reports/${reportId}/assay-results`);
+  },
+
+  saveInspectionAssayResults(
+    reportId: string,
+    items: InspectionAssayResult[]
+  ): Promise<InspectionAssayResultsView> {
+    return request(`/inspection-reports/${reportId}/assay-results`, {
+      method: "PUT",
+      body: JSON.stringify({ items }),
+    });
+  },
+
+  getInspectionVisualMemory(reportId: string): Promise<InspectionVisualMemoryView> {
+    return request(`/inspection-reports/${reportId}/visual-memory`);
+  },
+
+  saveInspectionVisualMemory(
+    reportId: string,
+    items: InspectionVisualMemoryItem[]
+  ): Promise<InspectionVisualMemoryView> {
+    return request(`/inspection-reports/${reportId}/visual-memory`, {
+      method: "PUT",
+      body: JSON.stringify({ items }),
+    });
+  },
+
+  getInspectionSignatureEvidence(reportId: string): Promise<InspectionSignatureEvidence> {
+    return request(`/inspection-reports/${reportId}/signature-evidence`);
+  },
+
+  saveInspectionSignatureEvidence(
+    reportId: string,
+    body: {
+      rt_signature_asset_ids?: Record<string, string>;
+      notes?: string;
+    }
+  ): Promise<InspectionSignatureEvidence> {
+    return request(`/inspection-reports/${reportId}/signature-evidence`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+  },
+
+  lookupInspectionArt(body: {
+    crea?: string;
+    art?: string;
+    art_protocolo?: string;
+    uf?: string;
+    probe?: boolean;
+  }): Promise<{
+    uf?: string | null;
+    art?: string | null;
+    art_protocolo?: string | null;
+    art_url: string;
+    sicar_url: string;
+    source: string;
+    live?: { reachable?: boolean; http_status?: number | null; error?: string } | null;
+    consulted_at: string;
+    notes?: string;
+  }> {
+    return request("/inspection-reports/art/lookup", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  claimInspectionReport(id: string): Promise<InspectionReport> {
+    return request(`/inspection-reports/${id}/claim`, { method: "POST" });
+  },
+
+  assignInspectionReport(id: string, userId?: string): Promise<InspectionReport> {
+    return request(`/inspection-reports/${id}/assign`, {
+      method: "POST",
+      body: JSON.stringify(userId ? { user_id: userId } : {}),
+    });
+  },
+
+  backfillInspectionOrphans(userId?: string): Promise<{ assigned: number; user_id: string }> {
+    return request("/inspection-reports/orphans/backfill", {
+      method: "POST",
+      body: JSON.stringify(userId ? { user_id: userId } : {}),
     });
   },
 

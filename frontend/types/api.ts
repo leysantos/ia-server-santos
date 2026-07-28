@@ -581,6 +581,63 @@ export interface InspectionReportParty {
   art?: string;
   email?: string;
   telefone?: string;
+  /** L18 — PDF ART vinculado */
+  art_asset_id?: string;
+  art_protocolo?: string;
+  art_url?: string;
+  /** L19 — imagem de firma */
+  signature_asset_id?: string;
+}
+
+export type InspectionVisualOverlayType =
+  | "line"
+  | "arrow"
+  | "rect"
+  | "label"
+  | "circle";
+
+export interface InspectionVisualOverlay {
+  id: string;
+  type: InspectionVisualOverlayType;
+  points: number[];
+  label?: string | null;
+  unit?: string | null;
+  /** Hex #rrggbb */
+  color?: string | null;
+  /** Espessura relativa 1–12 */
+  stroke?: number | null;
+  /** Tamanho da fonte 10–64 */
+  font_size?: number | null;
+  /** Preenchimento (área/círculo) */
+  filled?: boolean | null;
+}
+
+export interface InspectionVisualMemoryItem {
+  id: string;
+  asset_id: string;
+  photo_number?: number | null;
+  overlays: InspectionVisualOverlay[];
+  updated_at?: string;
+}
+
+export interface InspectionVisualMemoryView {
+  items: InspectionVisualMemoryItem[];
+  photos: Array<{
+    asset_id: string;
+    filename: string;
+    photo_number?: number | null;
+    caption?: string | null;
+  }>;
+  count: number;
+  max_croquis: number;
+}
+
+export interface InspectionSignatureEvidence {
+  method: string;
+  pdf_sha256?: string | null;
+  pdf_signed_at?: string | null;
+  rt_signature_asset_ids?: Record<string, string>;
+  notes?: string | null;
 }
 
 export interface InspectionReportSolicitante {
@@ -588,6 +645,46 @@ export interface InspectionReportSolicitante {
   cnpj?: string;
   endereco?: string;
   contato?: string;
+}
+
+export type InspectionAssayResultStatus = "executado" | "pendente" | "cancelado";
+
+export interface InspectionAssayResult {
+  id: string;
+  test_code?: string;
+  ensaio?: string;
+  local?: string;
+  valor?: string;
+  unidade?: string;
+  valor_nominal?: string | null;
+  data_ensaio?: string | null;
+  laboratorio?: string | null;
+  responsavel?: string | null;
+  conclusao?: string | null;
+  pathology_refs?: string[];
+  norma_ref?: string | null;
+  status: InspectionAssayResultStatus;
+  observacoes?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface InspectionAssaySuggestedTest {
+  test_code?: string;
+  ensaio?: string;
+  norma_ref?: string | null;
+  pathology_refs?: string[];
+  gravidade_alvo?: string | null;
+  necessidade_pct?: number | null;
+}
+
+export interface InspectionAssayResultsView {
+  items: InspectionAssayResult[];
+  suggested_tests: InspectionAssaySuggestedTest[];
+  pathologies: Array<{ code: string; name: string }>;
+  count_executed: number;
+  count_total: number;
+  report_status?: string | null;
 }
 
 export interface InspectionReportTemplate {
@@ -625,6 +722,7 @@ export interface InspectionReport {
   template?: InspectionReportTemplate | null;
   status: string;
   knowledge_mode: "attachments" | "attachments_and_kb" | string;
+  suggest_instrumented_tests?: boolean;
   user_prompt: string;
   content?: Record<string, unknown> | null;
   correction_history?: Array<Record<string, unknown>>;

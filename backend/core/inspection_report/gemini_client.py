@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 
 ProgressCb = Callable[[str, int, str], None]
 
-# Diagnóstico: amostra de imagens na 1ª passagem; legendas em lotes na 2ª.
-_DIAG_IMAGE_LIMIT = 16
+# Diagnóstico: amostra estratificada na 1ª passagem; legendas em lotes na 2ª.
+# L14 — soft/hard caps via photo_coverage (não mais teto cego fixo 16).
 _PHOTO_BATCH_SIZE = 8
 _IMAGE_MAX_SIDE = 1600
 
@@ -127,9 +127,9 @@ def _prepare_image_bytes(path: Path) -> tuple[bytes, str]:
 
 
 def _sample_indices(n: int, limit: int) -> list[int]:
+    """Compat: amostra uniforme (legado). Preferir select_diagnostic_indices (L14)."""
     if n <= limit:
         return list(range(n))
-    # Amostra uniforme incluindo primeira e última
     step = (n - 1) / (limit - 1)
     idxs = sorted({min(n - 1, int(round(i * step))) for i in range(limit)})
     return idxs
@@ -206,10 +206,11 @@ Responda APENAS JSON:
       "severity": "crítica|alta|média|baixa",
       "score": 5,
       "source": "{company_source}",
-      "pathology_refs": []
+      "pathology_refs": ["P01"]
     }}
   ]
 }}
+Use pathology_refs APENAS com códigos P01, P02… (não texto livre).
 """
 
 
@@ -226,6 +227,7 @@ def generate_laudo_content(
     progress_cb: ProgressCb | None = None,
     georef_path: Path | None = None,
     georef_meta: dict[str, Any] | None = None,
+    instrumented_tests_hint: str = "",
 ) -> tuple[dict[str, Any], str]:
     """
     Gera conteúdo estruturado do laudo via Gemini multimodal.
@@ -267,9 +269,49 @@ def generate_laudo_content(
         "\n\n---\n\n".join(document_excerpts[:12]) if document_excerpts else "(sem textos anexos)"
     )
     kb_block = knowledge_context.strip() or "(base de conhecimento não consultada)"
+    ensaios_extra = ""
+    ensaios_closing = ""
+    if (instrumented_tests_hint or "").strip():
+        ensaios_extra = f"""
+
+╔══════════════════════════════════════════════════════════════════╗
+║  ETAPA CRÍTICA DO LAUDO — ENSAIOS INSTRUMENTADOS               ║
+║  Omissão ou erro nesta etapa é INACEITÁVEL.                    ║
+╚══════════════════════════════════════════════════════════════════╝
+{(instrumented_tests_hint or "").strip()}
+
+SAÍDA JSON OBRIGATÓRIA NESTA ETAPA:
+- Array "instrumented_tests" com TODOS os ensaios necessários conforme a
+  GRAVIDADE de cada patologia e o TIPO DE OBRA do template.
+- Capítulo id "ensaios_instrumentados" com tabela:
+  Item | Ensaio | Descrição | Criticidade | Necessidade (%) | Prazo | Norma/ref.
+- Ordenação: do MAIS CRÍTICO ao MENOS CRÍTICO.
+- pathology_refs ligando cada ensaio às patologias (P01, P02…).
+- Se o profissional pediu espessura/seção residual de aço: EI-ACO-01 e EI-ACO-02 no topo.
+"""
+        ensaios_closing = """
+
+╔══════════════════════════════════════════════════════════════════╗
+║  LEMBRETE FINAL (antes de fechar o JSON)                       ║
+╚══════════════════════════════════════════════════════════════════╝
+1) Revisou CADA patologia e sugeriu ensaios à altura da gravidade?
+2) instrumented_tests está completo (não vazio)?
+3) Capítulo ensaios_instrumentados presente com tabela?
+4) Pedidos explícitos do profissional foram incluídos?
+5) Ensaios coerentes com o template (ponte/viaduto/erosão/…)?
+Se alguma resposta for NÃO, CORRIJA agora. Esta etapa não pode falhar.
+"""
 
     n_images = len(image_paths)
-    diag_idxs = _sample_indices(n_images, _DIAG_IMAGE_LIMIT) if n_images else []
+    from core.inspection_report.photo_coverage import (
+        build_coverage_stats,
+        coverage_prompt,
+        coverage_remainder_batches,
+        merge_coverage_into_content,
+        select_diagnostic_indices,
+    )
+
+    diag_idxs = select_diagnostic_indices(n_images, photo_meta) if n_images else []
     diag_paths = [image_paths[i] for i in diag_idxs]
     diag_meta = []
     if photo_meta and diag_idxs:
@@ -277,7 +319,9 @@ def generate_laudo_content(
             if i < len(photo_meta):
                 diag_meta.append(photo_meta[i])
     elif photo_meta:
-        diag_meta = photo_meta[:_DIAG_IMAGE_LIMIT]
+        diag_meta = photo_meta[: len(diag_idxs) or 1]
+
+    coverage_batches = coverage_remainder_batches(n_images, diag_idxs) if n_images else []
 
     # L4 — georref na passagem 1 (localização), fora do inventário fotográfico
     georef_block = "(sem imagem georreferenciada)"
@@ -334,12 +378,15 @@ TRECHOS DE DOCUMENTOS/NORMAS ANEXADOS:
 
 CONTEXTO DA BASE DE CONHECIMENTO (RAG):
 {kb_block}
+{ensaios_extra}
+{ensaios_closing}
 """
 
     _progress(
         "gemini",
         55,
-        f"Passagem 1/2 — diagnóstico com {len(diag_paths)} imagem(ns) amostrada(s)…",
+        f"Passagem 1/2 — diagnóstico estratificado com {len(diag_paths)} imagem(ns) "
+        f"(de {n_images}; L14)…",
     )
     content = _call_gemini_json(
         client=client,
@@ -349,6 +396,75 @@ CONTEXTO DA BASE DE CONHECIMENTO (RAG):
         image_paths=diag_paths,
         max_output_tokens=24576,
     )
+
+    # L14 — ondas de cobertura sobre fotos fora da amostra principal
+    coverage_stats = build_coverage_stats(
+        total=n_images,
+        sampled=diag_idxs,
+        coverage_batches=coverage_batches,
+    )
+    if coverage_batches:
+        objeto_cov = str(content.get("objeto") or content.get("titulo") or "Objeto vistoriado")
+        existing_codes = [
+            str(p.get("code") or p.get("codigo") or "")
+            for p in (content.get("pathologies") or [])
+            if isinstance(p, dict)
+        ]
+        n_batches = len(coverage_batches)
+        for bi, batch_idxs in enumerate(coverage_batches):
+            batch_paths = [image_paths[i] for i in batch_idxs if i < len(image_paths)]
+            batch_meta = [
+                photo_meta[i] for i in batch_idxs if photo_meta and i < len(photo_meta)
+            ]
+            if not batch_paths:
+                continue
+            pct = 56 + int(8 * (bi + 1) / max(1, n_batches))
+            _progress(
+                "gemini",
+                min(pct, 64),
+                f"L14 cobertura fotográfica — onda {bi + 1}/{n_batches} "
+                f"({len(batch_paths)} foto(s) restantes)…",
+            )
+            try:
+                wave = _call_gemini_json(
+                    client=client,
+                    types=types,
+                    model=model,
+                    instruction=coverage_prompt(
+                        objeto=objeto_cov,
+                        photo_meta_batch=batch_meta
+                        or [
+                            {
+                                "photo_number": i + 1,
+                                "filename": image_paths[i].name,
+                            }
+                            for i in batch_idxs
+                            if i < len(image_paths)
+                        ],
+                        existing_pathology_codes=existing_codes,
+                    ),
+                    image_paths=batch_paths,
+                    max_output_tokens=8192,
+                )
+                content = merge_coverage_into_content(content, wave)
+                existing_codes = [
+                    str(p.get("code") or p.get("codigo") or "")
+                    for p in (content.get("pathologies") or [])
+                    if isinstance(p, dict)
+                ]
+            except Exception as exc:
+                logger.warning("L14 onda de cobertura %s falhou: %s", bi + 1, exc)
+                coverage_stats.setdefault("wave_errors", []).append(str(exc))
+
+    content["photo_coverage"] = coverage_stats
+    if coverage_batches:
+        _progress(
+            "gemini",
+            65,
+            f"L14 cobertura: {coverage_stats.get('diagnostic_sample')} no diagnóstico + "
+            f"{coverage_stats.get('coverage_photos')} em ondas "
+            f"(total {coverage_stats.get('total_photos')}).",
+        )
 
     # Passagem 2: legendas detalhadas para todas as fotos
     photo_by_num: dict[int, dict[str, Any]] = {}
@@ -376,7 +492,9 @@ CONTEXTO DA BASE DE CONHECIMENTO (RAG):
                             break
 
             batch_no = batch_i // _PHOTO_BATCH_SIZE + 1
-            pct = 58 + int(22 * batch_no / total_batches)
+            base_pct = 66 if coverage_batches else 58
+            span = 18 if coverage_batches else 22
+            pct = base_pct + int(span * batch_no / total_batches)
             _progress(
                 "gemini",
                 min(80, pct),

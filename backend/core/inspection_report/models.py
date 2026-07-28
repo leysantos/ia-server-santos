@@ -58,6 +58,10 @@ class InspectionReport(Base):
     knowledge_mode: Mapped[str] = mapped_column(
         String(40), nullable=False, default="attachments_and_kb"
     )
+    # Quando True, a geração sugere ensaios instrumentados conforme tipología + gravidade
+    suggest_instrumented_tests: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     user_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     content: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     correction_history: Mapped[list | None] = mapped_column(JSON, nullable=True)

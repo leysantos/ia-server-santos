@@ -28,8 +28,26 @@ def migrate_inspection_reports(engine: Engine) -> None:
         ],
     )
     _ensure_project_id_column(engine)
+    _ensure_suggest_instrumented_tests_column(engine)
     _seed_templates(engine)
     logger.info("inspection_reports: migrate + seed OK")
+
+
+def _ensure_suggest_instrumented_tests_column(engine: Engine) -> None:
+    inspector = inspect(engine)
+    if "inspection_reports" not in inspector.get_table_names():
+        return
+    cols = {c["name"] for c in inspector.get_columns("inspection_reports")}
+    if "suggest_instrumented_tests" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE inspection_reports "
+                "ADD COLUMN suggest_instrumented_tests BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+    logger.info("inspection_reports: coluna suggest_instrumented_tests adicionada")
 
 
 def _ensure_project_id_column(engine: Engine) -> None:

@@ -20,6 +20,9 @@
   min-height: var(--shell-header-h);
   padding-left: var(--shell-gutter-x);
   padding-right: var(--shell-gutter-x);
+  /* Layout baseado na largura útil (viewport − sidebar), não no viewport. */
+  container-type: inline-size;
+  container-name: shell-header;
 }
 
 .shell-header:has(.shell-header-split) {
@@ -28,11 +31,47 @@
   padding-bottom: 0.75rem;
 }
 
-@media (min-width: 1024px) {
+.shell-header-split {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.shell-header-split > .shell-header-main {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.shell-header-split > .shell-header-trailing {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Só alinha título + badges na mesma linha quando a coluna tem espaço real. */
+@container shell-header (min-width: 42rem) {
   .shell-header:has(.shell-header-split) {
     min-height: var(--shell-header-h);
     padding-top: 0;
     padding-bottom: 0;
+  }
+
+  .shell-header-split {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .shell-header-split > .shell-header-trailing {
+    flex: 0 1 auto;
+    justify-content: flex-end;
   }
 }
 

@@ -468,28 +468,33 @@ export default function ConsolePage() {
 
   return (
     <>
-      <ShellHeader className="px-6" showModelsStatus>
-        <div className="min-w-0 flex-1">
-          <h1 className="text-lg font-semibold text-white">Operations Console</h1>
-          <p className="text-sm text-slate-500">
-            Tempo real · GPU · modelos Ollama · jobs ativos · histórico
+      <ShellHeader
+        className="px-6"
+        showModelsStatus
+        trailing={
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="flex shrink-0 items-center gap-1.5 text-xs text-emerald-400">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+              {liveMode === "sse" ? "SSE live" : `Poll ${POLL_FALLBACK_MS / 1000}s`}
+            </span>
+            {live && live.loaded_model_count > 0 && (
+              <button
+                type="button"
+                disabled={busy === "__all__"}
+                onClick={handleUnloadAll}
+                className="shrink-0 rounded-lg bg-red-600/20 px-3 py-1.5 text-xs font-medium text-red-300 ring-1 ring-red-500/40 hover:bg-red-600/30 disabled:opacity-50"
+              >
+                Parar todos (GPU)
+              </button>
+            )}
+          </div>
+        }
+      >
+        <div className="min-w-0">
+          <h1 className="truncate text-lg font-semibold text-white">Operations Console</h1>
+          <p className="mt-0.5 truncate text-sm text-slate-500">
+            Tempo real · GPU · modelos Ollama · jobs · histórico
           </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="flex items-center gap-1.5 text-xs text-emerald-400">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
-            {liveMode === "sse" ? "SSE live" : `Poll ${POLL_FALLBACK_MS / 1000}s`}
-          </span>
-          {live && live.loaded_model_count > 0 && (
-            <button
-              type="button"
-              disabled={busy === "__all__"}
-              onClick={handleUnloadAll}
-              className="rounded-lg bg-red-600/20 px-3 py-1.5 text-xs font-medium text-red-300 ring-1 ring-red-500/40 hover:bg-red-600/30 disabled:opacity-50"
-            >
-              Parar todos (GPU)
-            </button>
-          )}
         </div>
       </ShellHeader>
 
@@ -579,11 +584,11 @@ export default function ConsolePage() {
               <h2 className="mb-3 text-sm font-medium uppercase tracking-wider text-slate-400">
                 Modelos em uso (VRAM)
               </h2>
-              {live?.loaded_models.length === 0 ? (
+              {live?.loaded_models?.length === 0 ? (
                 <p className="text-sm text-slate-500">Nenhum modelo carregado na GPU no momento.</p>
               ) : (
                 <ul className="space-y-2">
-                  {live?.loaded_models.map((m) => (
+                  {(live?.loaded_models ?? []).map((m) => (
                     <li
                       key={m.name}
                       className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-900/40 px-4 py-3 ring-1 ring-slate-800/80"
@@ -614,11 +619,11 @@ export default function ConsolePage() {
               <h2 className="mb-3 text-sm font-medium uppercase tracking-wider text-slate-400">
                 Jobs em processamento ({live?.active_job_count ?? 0})
               </h2>
-              {live?.active_jobs.length === 0 ? (
+              {live?.active_jobs?.length === 0 ? (
                 <p className="text-sm text-slate-500">Nenhum job longo ativo no servidor.</p>
               ) : (
                 <ul className="space-y-3">
-                  {live?.active_jobs.map((job) => (
+                  {(live?.active_jobs ?? []).map((job) => (
                     <li
                       key={job.id}
                       className="rounded-xl bg-slate-900/40 p-4 ring-1 ring-emerald-500/20"
@@ -681,13 +686,13 @@ export default function ConsolePage() {
             </section>
 
             {/* Recent completed jobs */}
-            {(live?.recent_jobs.filter((j) => j.status !== "running").length ?? 0) > 0 && (
+            {((live?.recent_jobs ?? []).filter((j) => j.status !== "running").length) > 0 && (
               <section>
                 <h2 className="mb-3 text-sm font-medium uppercase tracking-wider text-slate-400">
                   Jobs recentes
                 </h2>
                 <ul className="space-y-1">
-                  {live?.recent_jobs
+                  {(live?.recent_jobs ?? [])
                     .filter((j) => j.status !== "running")
                     .slice(0, 8)
                     .map((job) => (

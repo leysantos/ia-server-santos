@@ -27,8 +27,10 @@ from core.inspection_report.analytics import fit_image_display_inches, prepare_w
 from core.inspection_report.format_utils import (
     COLOR_BLUE_HEX,
     COLOR_GRAY_HEX,
+    art_traceability_table,
     build_body_sections,
     build_cover_layout,
+    build_photographic_index_table,
     build_photographic_presentation,
     build_sumario_entries,
     format_generated_at,
@@ -516,10 +518,15 @@ def _cover_flow(content: dict[str, Any], styles: dict, *, generated_at: str) -> 
     return flow
 
 
-def _signatures_flow(content: dict[str, Any], styles: dict) -> list[Any]:
+def _signatures_flow(
+    content: dict[str, Any],
+    styles: dict,
+    signature_paths: dict[str, str] | None = None,
+) -> list[Any]:
     parties = normalize_parties(content.get("responsaveis_tecnicos"))
     if not parties:
         return []
+    sig_map = signature_paths or {}
     flow: list[Any] = [
         PageBreak(),
         Paragraph(_esc("Responsáveis técnicos"), styles["h1"]),
@@ -534,10 +541,20 @@ def _signatures_flow(content: dict[str, Any], styles: dict) -> list[Any]:
     ]
 
     def _party_block(party: dict[str, Any]) -> list[Any]:
-        inner: list[Any] = [
-            Paragraph(_esc("_______________________________"), styles["sig_line"]),
-            Spacer(1, 4),
-        ]
+        inner: list[Any] = []
+        path = sig_map.get(str(party.get("id") or ""))
+        if path and Path(path).exists():
+            try:
+                img = Image(path, width=4.5 * cm, height=1.8 * cm, kind="proportional")
+                img.hAlign = "CENTER"
+                inner.append(img)
+                inner.append(Spacer(1, 4))
+            except Exception:
+                inner.append(Paragraph(_esc("_______________________________"), styles["sig_line"]))
+                inner.append(Spacer(1, 4))
+        else:
+            inner.append(Paragraph(_esc("_______________________________"), styles["sig_line"]))
+            inner.append(Spacer(1, 4))
         for idx, line in enumerate(party_display_lines(party)):
             style = styles["sig_name"] if idx == 0 else styles["sig_line"]
             inner.append(Paragraph(_esc(line), style))
@@ -573,6 +590,7 @@ def build_inspection_laudo_pdf(
     content: dict[str, Any],
     image_assets: list[dict[str, Any]],
     georef_asset: dict[str, Any] | None = None,
+    signature_paths: dict[str, str] | None = None,
 ) -> bytes:
     generated_at = format_generated_at(datetime.now())
     company = get_company_profile()
@@ -600,7 +618,7 @@ def build_inspection_laudo_pdf(
     if brasao_raw:
         # PNG com alpha; canvas desenha na largura do corpo
         watermark_bytes = prepare_watermark_png(
-            brasao_raw, size_px=1800, opacity=0.14, max_width_px=1800
+            brasao_raw, size_px=1800, opacity=0.06, max_width_px=1800
         ) or brasao_raw
 
     buf = io.BytesIO()
@@ -632,8 +650,8 @@ def build_inspection_laudo_pdf(
             label = (entry.get("label") or "").strip()
             if not label:
                 continue
-            line = label if label[:1].isdigit() else f"{idx}. {label}"
-            story.append(Paragraph(_esc(line), styles["body"]))
+            # Labels já vêm numerados de build_body_sections / build_sumario_entries
+            story.append(Paragraph(_esc(label), styles["body"]))
         story.append(Spacer(1, 10))
 
     sections = build_body_sections(export_content)
@@ -654,7 +672,8 @@ def build_inspection_laudo_pdf(
                 story.append(Paragraph(_esc(table["caption"]), styles["caption"]))
             ncols = len(headers)
             if ncols == 8:
-                widths = [1.0 * cm, 1.3 * cm, 3.0 * cm, 2.3 * cm, 1.7 * cm, 1.2 * cm, 1.4 * cm, 2.6 * cm]
+                # ID um pouco mais largo — evita quebra feia em element_id
+                widths = [1.8 * cm, 1.4 * cm, 2.8 * cm, 2.0 * cm, 1.5 * cm, 1.3 * cm, 1.5 * cm, 2.2 * cm]
             elif ncols == 7:
                 widths = [1.3 * cm, 2.8 * cm, 2.3 * cm, 1.7 * cm, 1.2 * cm, 4.0 * cm, 2.2 * cm]
             elif ncols == 4:
@@ -669,26 +688,78 @@ def build_inspection_laudo_pdf(
         cid = str(section.get("chapter_id") or "")
         title_l = str(section.get("title") or "").lower()
         is_ficha = cid == "ficha_tecnica" or "ficha técnica" in title_l or "ficha tecnica" in title_l
-        if is_ficha and georef_asset and georef_asset.get("path") and Path(georef_asset["path"]).exists():
-            try:
-                dw, dh = fit_image_display_inches(str(georef_asset["path"]), max_w=5.9, max_h=4.2)
-                img = Image(
-                    str(georef_asset["path"]),
-                    width=dw * inch,
-                    height=dh * inch,
-                    kind="proportional",
-                )
-                img.hAlign = "CENTER"
-                story.append(img)
-                cap = georef_asset.get("caption") or "Imagem georreferenciada do objeto"
-                if georef_asset.get("label"):
-                    cap = f"{cap} — {georef_asset['label']}"
-                story.append(Paragraph(_esc(cap), styles["meta"]))
-                story.append(Spacer(1, 8))
-            except Exception:
-                story.append(
-                    Paragraph(_esc("[Falha ao inserir imagem georreferenciada]"), styles["meta"])
-                )
+        if is_ficha and georef_asset:
+            has_gps = (
+                georef_asset.get("latitude") is not None
+                and georef_asset.get("longitude") is not None
+            )
+            geo_path = georef_asset.get("path")
+            if has_gps and geo_path and Path(geo_path).exists():
+                try:
+                    from core.inspection_report.location_map import (
+                        FRAME_HEIGHT_IN,
+                        FRAME_WIDTH_IN,
+                        frame_image_for_export,
+                        georef_photo_caption,
+                    )
+
+                    framed = frame_image_for_export(str(geo_path))
+                    img = Image(
+                        io.BytesIO(framed),
+                        width=FRAME_WIDTH_IN * inch,
+                        height=FRAME_HEIGHT_IN * inch,
+                    )
+                    img.hAlign = "CENTER"
+                    story.append(img)
+                    story.append(Paragraph(_esc(georef_photo_caption(georef_asset)), styles["meta"]))
+                    story.append(Spacer(1, 6))
+                except Exception:
+                    story.append(
+                        Paragraph(_esc("[Falha ao inserir imagem georreferenciada]"), styles["meta"])
+                    )
+            if has_gps:
+                try:
+                    from core.inspection_report.location_map import (
+                        FRAME_HEIGHT_IN,
+                        FRAME_WIDTH_IN,
+                        build_location_map_png,
+                        frame_image_for_export,
+                        location_map_caption,
+                        location_map_source,
+                    )
+
+                    map_png = build_location_map_png(
+                        float(georef_asset["latitude"]),
+                        float(georef_asset["longitude"]),
+                        cache_path=georef_asset.get("map_cache_path"),
+                    )
+                    if map_png:
+                        framed_map = frame_image_for_export(map_png)
+                        map_img = Image(
+                            io.BytesIO(framed_map),
+                            width=FRAME_WIDTH_IN * inch,
+                            height=FRAME_HEIGHT_IN * inch,
+                        )
+                        map_img.hAlign = "CENTER"
+                        story.append(map_img)
+                        story.append(
+                            Paragraph(
+                                _esc(
+                                    location_map_caption(
+                                        float(georef_asset["latitude"]),
+                                        float(georef_asset["longitude"]),
+                                        georef_asset.get("label"),
+                                        source=location_map_source(
+                                            georef_asset.get("map_cache_path")
+                                        ),
+                                    )
+                                ),
+                                styles["meta"],
+                            )
+                        )
+                        story.append(Spacer(1, 8))
+                except Exception:
+                    pass
 
         for ch_img in section.get("chart_images") or []:
             if ch_img.get("caption"):
@@ -703,11 +774,62 @@ def build_inspection_laudo_pdf(
                 except Exception:
                     pass
 
-    story.extend(_signatures_flow(export_content, styles))
+    story.extend(_signatures_flow(export_content, styles, signature_paths))
 
-    photo_num = (sections[-1]["number"] + 1) if sections else 1
+    art_tbl = art_traceability_table(export_content)
+    if art_tbl:
+        story.append(Paragraph(_esc("ART e documentos técnicos"), styles["h2"]))
+        story.append(
+            Paragraph(
+                _esc("Rastreabilidade de ART/anexos dos responsáveis técnicos (L18)."),
+                styles["body"],
+            )
+        )
+        headers = art_tbl.get("headers") or []
+        rows = art_tbl.get("rows") or []
+        data = [headers] + rows
+        t = Table(data, colWidths=[3.2 * cm, 2.2 * cm, 2.2 * cm, 2.5 * cm, 1.8 * cm, 4.6 * cm])
+        t.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF9")),
+                    ("FONTSIZE", (0, 0), (-1, -1), 7),
+                    ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
+        )
+        story.append(t)
+        story.append(Spacer(1, 10))
+
+    next_num = (sections[-1]["number"] + 1) if sections else 1
+    index_table = build_photographic_index_table(export_content)
+    if index_table:
+        story.append(PageBreak())
+        story.append(
+            Paragraph(_esc(f"{next_num}. Índice do relatório fotográfico"), styles["h1"])
+        )
+        story.append(
+            Paragraph(
+                _esc(
+                    "Relação ordenada das fotografias com vínculo a elemento e patologias, "
+                    "para localização rápida no anexo."
+                ),
+                styles["body"],
+            )
+        )
+        headers = index_table.get("headers") or []
+        rows = index_table.get("rows") or []
+        if headers:
+            if index_table.get("caption"):
+                story.append(Paragraph(_esc(index_table["caption"]), styles["caption"]))
+            widths = [1.5 * cm, 6.0 * cm, 3.0 * cm, 2.5 * cm, 3.5 * cm]
+            story.append(_make_flow_table(headers, rows, styles, widths))
+            story.append(Spacer(1, 6))
+        next_num += 1
+
     story.append(PageBreak())
-    story.append(Paragraph(_esc(f"{photo_num}. Relatório fotográfico"), styles["h1"]))
+    story.append(Paragraph(_esc(f"{next_num}. Relatório fotográfico"), styles["h1"]))
     story.append(Paragraph(_esc(build_photographic_presentation(export_content)), styles["body"]))
 
     photo_entries = export_content.get("photographic_report") or []
@@ -738,9 +860,17 @@ def build_inspection_laudo_pdf(
         asset = path_by_num.get(num) or path_by_file.get(str(entry.get("filename") or "").lower())
         if asset and Path(asset["path"]).exists():
             try:
+                from core.inspection_report.visual_memory import image_bytes_with_visual_memory
+
                 dw, dh = fit_image_display_inches(str(asset["path"]), max_w=5.9, max_h=5.0)
-                img = Image(
+                img_bytes = image_bytes_with_visual_memory(
                     str(asset["path"]),
+                    export_content,
+                    asset_id=asset.get("asset_id"),
+                    photo_number=num or asset.get("photo_number"),
+                )
+                img = Image(
+                    io.BytesIO(img_bytes),
                     width=dw * inch,
                     height=dh * inch,
                     kind="proportional",

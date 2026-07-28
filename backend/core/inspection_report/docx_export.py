@@ -24,8 +24,10 @@ from core.inspection_report.analytics import fit_image_display_inches, prepare_w
 from core.inspection_report.format_utils import (
     COLOR_BLUE,
     COLOR_GRAY,
+    art_traceability_table,
     build_body_sections,
     build_cover_layout,
+    build_photographic_index_table,
     build_photographic_presentation,
     build_sumario_entries,
     format_generated_at,
@@ -172,7 +174,7 @@ def _add_watermark(section, brasao_bytes: bytes):
     wm = prepare_watermark_png(
         brasao_bytes,
         size_px=1800,
-        opacity=0.12,
+        opacity=0.06,
         max_width_px=1800,
     )
     if not wm:
@@ -390,7 +392,7 @@ def _add_table(doc: Document, table_data: dict[str, Any]):
 
     ncols = len(headers)
     if ncols == 8:
-        widths = [1.0, 1.3, 3.0, 2.4, 1.8, 1.2, 1.4, 2.4]
+        widths = [1.8, 1.4, 2.8, 2.0, 1.5, 1.3, 1.5, 2.2]
     elif ncols == 7:
         widths = [1.3, 3.0, 2.4, 1.7, 1.2, 4.0, 2.4]
     elif ncols == 4:
@@ -480,17 +482,25 @@ def _add_heading(doc: Document, text: str, level: int = 1, *, align=WD_ALIGN_PAR
     return h
 
 
-def _add_signature_cell(cell, party: dict[str, Any]) -> None:
+def _add_signature_cell(cell, party: dict[str, Any], signature_path: str | None = None) -> None:
     """Preenche célula de assinatura com tudo centralizado."""
     _nil_borders(cell)
     # limpa parágrafo padrão
     p0 = cell.paragraphs[0]
     p0.text = ""
     p0.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p0.paragraph_format.space_before = Pt(28)
+    p0.paragraph_format.space_before = Pt(12)
     p0.paragraph_format.space_after = Pt(4)
-    run = p0.add_run("_______________________________")
-    _set_run_font(run, size=10, color=BLACK)
+    if signature_path and Path(signature_path).exists():
+        try:
+            run = p0.add_run()
+            run.add_picture(signature_path, width=Inches(1.8))
+        except Exception:
+            run = p0.add_run("_______________________________")
+            _set_run_font(run, size=10, color=BLACK)
+    else:
+        run = p0.add_run("_______________________________")
+        _set_run_font(run, size=10, color=BLACK)
 
     lines = party_display_lines(party)
     for idx, line in enumerate(lines):
@@ -505,11 +515,16 @@ def _add_signature_cell(cell, party: dict[str, Any]) -> None:
         _set_run_font(r, size=10, bold=(idx == 0), color=BLACK)
 
 
-def _add_signatures_block(doc: Document, content: dict[str, Any]) -> None:
+def _add_signatures_block(
+    doc: Document,
+    content: dict[str, Any],
+    signature_paths: dict[str, str] | None = None,
+) -> None:
     """Assinaturas dos responsáveis técnicos antes do relatório fotográfico."""
     parties = normalize_parties(content.get("responsaveis_tecnicos"))
     if not parties:
         return
+    sig_map = signature_paths or {}
     doc.add_page_break()
     _add_heading(doc, "Responsáveis técnicos", level=1)
     _add_paragraph(
@@ -522,15 +537,33 @@ def _add_signatures_block(doc: Document, content: dict[str, Any]) -> None:
     )
     # Um responsável: bloco centralizado sem tabela (evita desalinhamento)
     if len(parties) == 1:
-        _add_paragraph(
-            doc,
-            "_______________________________",
-            first_indent=False,
-            align=WD_ALIGN_PARAGRAPH.CENTER,
-            space_after=4,
-            size=10,
-        )
-        for idx, line in enumerate(party_display_lines(parties[0])):
+        party = parties[0]
+        path = sig_map.get(str(party.get("id") or ""))
+        if path and Path(path).exists():
+            try:
+                p = doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p.paragraph_format.space_after = Pt(4)
+                p.add_run().add_picture(path, width=Inches(2.0))
+            except Exception:
+                _add_paragraph(
+                    doc,
+                    "_______________________________",
+                    first_indent=False,
+                    align=WD_ALIGN_PARAGRAPH.CENTER,
+                    space_after=4,
+                    size=10,
+                )
+        else:
+            _add_paragraph(
+                doc,
+                "_______________________________",
+                first_indent=False,
+                align=WD_ALIGN_PARAGRAPH.CENTER,
+                space_after=4,
+                size=10,
+            )
+        for idx, line in enumerate(party_display_lines(party)):
             _add_paragraph(
                 doc,
                 line,
@@ -549,7 +582,7 @@ def _add_signatures_block(doc: Document, content: dict[str, Any]) -> None:
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
         _set_table_fixed(table, widths[: len(chunk)])
         for cell, party in zip(table.rows[0].cells, chunk):
-            _add_signature_cell(cell, party)
+            _add_signature_cell(cell, party, sig_map.get(str(party.get("id") or "")))
         doc.add_paragraph().paragraph_format.space_after = Pt(10)
 
 
@@ -703,6 +736,7 @@ def build_inspection_laudo_docx(
     content: dict[str, Any],
     image_assets: list[dict[str, Any]],
     georef_asset: dict[str, Any] | None = None,
+    signature_paths: dict[str, str] | None = None,
 ) -> bytes:
     generated_at = format_generated_at(datetime.now())
     doc = Document()
@@ -732,39 +766,94 @@ def build_inspection_laudo_docx(
         for table in section.get("tables") or []:
             _add_table(doc, table)
 
-        # Imagem georreferenciada logo abaixo da tabela de dados técnicos do objeto
+        # Imagem georreferenciada + mapa satélite (mesmo quadro, borda e separador)
         cid = str(section.get("chapter_id") or "")
         title_l = str(section.get("title") or "").lower()
         is_ficha = cid == "ficha_tecnica" or "ficha técnica" in title_l or "ficha tecnica" in title_l
-        if is_ficha and georef_asset and georef_asset.get("path") and Path(georef_asset["path"]).exists():
-            try:
-                dw, dh = fit_image_display_inches(str(georef_asset["path"]), max_w=5.9, max_h=4.2)
-                p = doc.add_paragraph()
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                p.paragraph_format.space_before = Pt(8)
-                p.paragraph_format.space_after = Pt(4)
-                p.add_run().add_picture(
-                    str(georef_asset["path"]), width=Inches(dw), height=Inches(dh)
-                )
-                cap = georef_asset.get("caption") or "Imagem georreferenciada do objeto"
-                if georef_asset.get("label"):
-                    cap = f"{cap} — {georef_asset['label']}"
-                _add_paragraph(
-                    doc,
-                    cap,
-                    first_indent=False,
-                    size=9,
-                    bold=True,
-                    align=WD_ALIGN_PARAGRAPH.CENTER,
-                    space_after=8,
-                )
-            except Exception:
-                _add_paragraph(
-                    doc,
-                    "[Falha ao inserir imagem georreferenciada]",
-                    first_indent=False,
-                    align=WD_ALIGN_PARAGRAPH.CENTER,
-                )
+        if is_ficha and georef_asset:
+            has_gps = (
+                georef_asset.get("latitude") is not None
+                and georef_asset.get("longitude") is not None
+            )
+            geo_path = georef_asset.get("path")
+            if has_gps and geo_path and Path(geo_path).exists():
+                try:
+                    from core.inspection_report.location_map import (
+                        FRAME_HEIGHT_IN,
+                        FRAME_WIDTH_IN,
+                        frame_image_for_export,
+                        georef_photo_caption,
+                    )
+
+                    framed = frame_image_for_export(str(geo_path))
+                    p = doc.add_paragraph()
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    p.paragraph_format.space_before = Pt(8)
+                    p.paragraph_format.space_after = Pt(4)
+                    p.add_run().add_picture(
+                        io.BytesIO(framed),
+                        width=Inches(FRAME_WIDTH_IN),
+                        height=Inches(FRAME_HEIGHT_IN),
+                    )
+                    _add_paragraph(
+                        doc,
+                        georef_photo_caption(georef_asset),
+                        first_indent=False,
+                        size=9,
+                        bold=True,
+                        align=WD_ALIGN_PARAGRAPH.CENTER,
+                        space_after=6,
+                    )
+                except Exception:
+                    _add_paragraph(
+                        doc,
+                        "[Falha ao inserir imagem georreferenciada]",
+                        first_indent=False,
+                        align=WD_ALIGN_PARAGRAPH.CENTER,
+                    )
+            if has_gps:
+                try:
+                    from core.inspection_report.location_map import (
+                        FRAME_HEIGHT_IN,
+                        FRAME_WIDTH_IN,
+                        build_location_map_png,
+                        frame_image_for_export,
+                        location_map_caption,
+                        location_map_source,
+                    )
+
+                    map_png = build_location_map_png(
+                        float(georef_asset["latitude"]),
+                        float(georef_asset["longitude"]),
+                        cache_path=georef_asset.get("map_cache_path"),
+                    )
+                    if map_png:
+                        framed_map = frame_image_for_export(map_png)
+                        p = doc.add_paragraph()
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        p.paragraph_format.space_before = Pt(6)
+                        p.paragraph_format.space_after = Pt(4)
+                        p.add_run().add_picture(
+                            io.BytesIO(framed_map),
+                            width=Inches(FRAME_WIDTH_IN),
+                            height=Inches(FRAME_HEIGHT_IN),
+                        )
+                        _add_paragraph(
+                            doc,
+                            location_map_caption(
+                                float(georef_asset["latitude"]),
+                                float(georef_asset["longitude"]),
+                                georef_asset.get("label"),
+                                source=location_map_source(georef_asset.get("map_cache_path")),
+                            ),
+                            first_indent=False,
+                            size=9,
+                            bold=True,
+                            align=WD_ALIGN_PARAGRAPH.CENTER,
+                            space_after=8,
+                        )
+                except Exception:
+                    pass
 
         for chart in section.get("charts") or []:
             labels = chart.get("labels") or []
@@ -798,12 +887,38 @@ def build_inspection_laudo_docx(
                     pass
 
     # Assinaturas dos RT — imediatamente antes do relatório fotográfico
-    _add_signatures_block(doc, export_content)
+    _add_signatures_block(doc, export_content, signature_paths)
 
-    # Relatório fotográfico
-    photo_num = (sections[-1]["number"] + 1) if sections else 1
+    art_tbl = art_traceability_table(export_content)
+    if art_tbl:
+        _add_heading(doc, "ART e documentos técnicos", level=2)
+        _add_paragraph(
+            doc,
+            "Rastreabilidade de ART/anexos dos responsáveis técnicos (L18).",
+            first_indent=True,
+            align=WD_ALIGN_PARAGRAPH.JUSTIFY,
+            space_after=8,
+        )
+        _add_table(doc, art_tbl)
+
+    # Índice fotográfico + relatório (números alinhados ao sumário)
+    next_num = (sections[-1]["number"] + 1) if sections else 1
+    index_table = build_photographic_index_table(export_content)
+    if index_table:
+        doc.add_page_break()
+        _add_heading(doc, f"{next_num}. Índice do relatório fotográfico", level=1)
+        _add_paragraph(
+            doc,
+            "Relação ordenada das fotografias com vínculo a elemento e patologias, "
+            "para localização rápida no anexo.",
+            first_indent=True,
+            align=WD_ALIGN_PARAGRAPH.JUSTIFY,
+        )
+        _add_table(doc, index_table)
+        next_num += 1
+
     doc.add_page_break()
-    _add_heading(doc, f"{photo_num}. Relatório fotográfico", level=1)
+    _add_heading(doc, f"{next_num}. Relatório fotográfico", level=1)
     _add_paragraph(
         doc,
         build_photographic_presentation(export_content),
@@ -837,11 +952,19 @@ def build_inspection_laudo_docx(
         asset = path_by_num.get(num) or path_by_file.get(str(entry.get("filename") or "").lower())
         if asset and Path(asset["path"]).exists():
             try:
+                from core.inspection_report.visual_memory import image_bytes_with_visual_memory
+
                 dw, dh = fit_image_display_inches(str(asset["path"]), max_w=5.9, max_h=5.0)
+                img_bytes = image_bytes_with_visual_memory(
+                    str(asset["path"]),
+                    export_content,
+                    asset_id=asset.get("asset_id"),
+                    photo_number=num or asset.get("photo_number"),
+                )
                 p = doc.add_paragraph()
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 p.paragraph_format.space_after = Pt(4)
-                p.add_run().add_picture(str(asset["path"]), width=Inches(dw), height=Inches(dh))
+                p.add_run().add_picture(io.BytesIO(img_bytes), width=Inches(dw), height=Inches(dh))
             except Exception:
                 _add_paragraph(
                     doc,

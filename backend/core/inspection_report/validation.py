@@ -86,8 +86,36 @@ def build_export_checklist(content: dict[str, Any] | None, *, assets: list[Any] 
             ok, msg = validate_art(rt.get("art"))
             if not ok:
                 warnings.append({"code": f"rt_{i}_art", "message": f"RT #{i + 1}: {msg}"})
-            elif not (rt.get("art") or "").strip():
-                warnings.append({"code": f"rt_{i}_art_empty", "message": f"RT #{i + 1} sem ART"})
+            elif not (rt.get("art") or "").strip() and not (rt.get("art_asset_id") or "").strip():
+                warnings.append(
+                    {
+                        "code": f"rt_{i}_art_empty",
+                        "message": f"RT #{i + 1} sem ART textual nem anexo PDF (L18)",
+                    }
+                )
+            elif (rt.get("art_asset_id") or "").strip():
+                # rastreável via anexo — ok
+                pass
+
+    # L19 / PAdES — evidência de assinatura
+    sig = content.get("signature_evidence") if isinstance(content.get("signature_evidence"), dict) else {}
+    method = str(sig.get("method") or "image_hash").lower()
+    if method == "pades" and sig.get("pdf_sha256"):
+        pass  # assinado digitalmente
+    elif not sig.get("pdf_sha256"):
+        warnings.append(
+            {
+                "code": "signature_icp",
+                "message": "Assinatura tipográfica/imagem — ICP-Brasil PAdES não aplicado (L19 evidência)",
+            }
+        )
+    else:
+        warnings.append(
+            {
+                "code": "signature_icp",
+                "message": "PDF com hash SHA-256 (L19) — PAdES/ICP-Brasil ainda não aplicado neste export",
+            }
+        )
 
     fotos = content.get("photographic_report") or []
     asset_images = [a for a in (assets or []) if getattr(a, "kind", None) == "image" or (isinstance(a, dict) and a.get("kind") == "image")]

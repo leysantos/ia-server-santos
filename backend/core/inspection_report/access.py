@@ -1,4 +1,4 @@
-"""Controle de acesso a laudos de vistoria por usuário (L1)."""
+"""Controle de acesso a laudos de vistoria por usuário (L1 + follow-up órfãos)."""
 
 from __future__ import annotations
 
@@ -21,15 +21,17 @@ def user_is_admin(user: User | None) -> bool:
 
 
 def user_can_access_report(report: InspectionReport | None, user: User | None) -> bool:
+    """Laudos órfãos (`user_id` NULL) só para admin quando auth ativo."""
     if report is None:
         return False
     owner_id = report_user_id(user)
     if owner_id is None:
+        # Auth desligado — acesso liberado (dev legado)
         return True
     if user_is_admin(user):
         return True
     if report.user_id is None:
-        return True
+        return False
     return report.user_id == owner_id
 
 
@@ -49,3 +51,12 @@ def require_report_access(
             detail="Sem permissão para acessar este laudo",
         )
     return report
+
+
+def require_admin(user: User | None) -> User:
+    if not user or not user_is_admin(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Apenas administrador",
+        )
+    return user
