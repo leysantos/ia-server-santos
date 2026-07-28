@@ -60,11 +60,7 @@ export type OrseBundleDetection =
     }
   | { error: string };
 
-export function detectOrseBundleFromFolder(
-  fileList: FileList,
-  _year?: number,
-  _month?: number
-): OrseBundleDetection {
+export function detectOrseBundleFromFolder(fileList: FileList): OrseBundleDetection {
   const files = Array.from(fileList).filter((f) => isSpreadsheet(f.name) && !isForeignPriceBaseName(f.name));
   const foreign = Array.from(fileList).filter((f) => isSpreadsheet(f.name) && isForeignPriceBaseName(f.name));
 

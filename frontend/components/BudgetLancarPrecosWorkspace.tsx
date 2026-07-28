@@ -119,7 +119,7 @@ export default function BudgetLancarPrecosWorkspace({
   const [exportingDoc, setExportingDoc] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(true);
   const [bdiTypes, setBdiTypes] = useState<BdiObraType[]>([]);
-  const [obraType, setObraType] = useState("RF");
+  const [, setObraType] = useState("RF");
   const [sinapiImported, setSinapiImported] = useState(false);
   const [savedItems, setSavedItems] = useState<BudgetSummary[]>([]);
   const [reloadJobId, setReloadJobId] = useState<string | null>(null);

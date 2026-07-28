@@ -167,7 +167,6 @@ export function BudgetCpuFiltersBar({ filters, disabled, extra }: BudgetCpuFilte
     reference,
     uf,
     region,
-    setSource,
     setReference,
     setUf,
     setRegion,

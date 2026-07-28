@@ -17,12 +17,6 @@ const STATUS_LABEL: Record<string, { label: string; className: string }> = {
   missing: { label: "Upload necessário", className: "bg-red-500/15 text-red-300 ring-red-500/30" },
 };
 
-const LEGAL_SOURCE_LABEL: Record<string, string> = {
-  abnt_licensed_pdf: "PDF licenciado (ABNT)",
-  public_legislation: "Legislação pública",
-  missing: "—",
-};
-
 function NbrPreviewPanel({
   item,
   notice,

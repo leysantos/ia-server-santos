@@ -444,8 +444,7 @@ export function buildStackedHistogram(
 function finalizeHistogramSection(
   category: ResourceCategory,
   columns: HistogramMonthColumn[],
-  items: HistogramItemRow[],
-  servicesWithCpu: number
+  items: HistogramItemRow[]
 ): HistogramSectionModel {
   const monthlyTotals = columns.map((_, i) =>
     items.reduce((sum, item) => sum + (item.monthlyValues[i] ?? 0), 0)
@@ -526,7 +525,7 @@ export function buildHistogramReport(
     );
     servicesWithCpu = Math.max(servicesWithCpu, svc);
     if (items.length === 0) return null;
-    return finalizeHistogramSection(category, columns, items, svc);
+    return finalizeHistogramSection(category, columns, items);
   };
 
   return {

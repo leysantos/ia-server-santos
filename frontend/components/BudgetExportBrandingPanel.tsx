@@ -118,13 +118,13 @@ export default function BudgetExportBrandingPanel({
     try {
       const res = await api.pricingUploadExportLogo(sessionId, file);
       if (res.export_branding) {
-        setBranding((prev) => ({
+        setBranding({
           ...mergeBrandingWithProject(res.export_branding as ExportBrandingConfig, project),
           has_logo: true,
           show_logo: true,
-        }));
+        });
       } else {
-        setBranding((prev) => ({ ...prev, has_logo: true, show_logo: true }));
+        setBranding((current) => ({ ...current, has_logo: true, show_logo: true }));
       }
       if (res.session && onSessionUpdate) onSessionUpdate(res.session);
       setLogoPreview(api.pricingExportLogoUrl(sessionId));

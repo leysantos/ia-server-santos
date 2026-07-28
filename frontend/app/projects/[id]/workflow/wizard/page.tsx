@@ -39,8 +39,6 @@ export default function DeliveryWizardPage() {
   const [templates, setTemplates] = useState<SheetTemplateItem[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
 
-  const packageId = detail?.package.id ?? searchParams.get("package");
-
   const loadTemplates = useCallback(async () => {
     const res = await api.sheetTemplates();
     setTemplates(res.items);

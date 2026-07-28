@@ -278,8 +278,7 @@ function leafTasksForCurve(
 
 function weightAndCost(
   task: ScheduleTask,
-  rows: BudgetRow[],
-  _etapaMode?: boolean
+  rows: BudgetRow[]
 ): { weight: number; cost: number } {
   if (task.is_summary) {
     const prefix = `${task.budget_code}.`;
@@ -322,16 +321,12 @@ export function computeTaskMetrics(
   totalFinancial: number;
   totalPhysicalWeight: number;
 } {
-  const etapaOnly =
-    visibleTasks.length > 0 &&
-    visibleTasks.every((t) => t.is_summary && t.row_type === "ETAPA");
-
   const leaves = leafTasksForCurve(schedule, visibleTasks);
   let totalPhysicalWeight = 0;
   let totalFinancial = 0;
 
   for (const task of leaves) {
-    const { weight, cost } = weightAndCost(task, rows, etapaOnly);
+    const { weight, cost } = weightAndCost(task, rows);
     totalPhysicalWeight += weight;
     totalFinancial += cost;
   }
@@ -339,7 +334,7 @@ export function computeTaskMetrics(
 
   const byTaskId = new Map<string, TaskScheduleMetrics>();
   for (const task of visibleTasks) {
-    const { weight, cost } = weightAndCost(task, rows, etapaOnly);
+    const { weight, cost } = weightAndCost(task, rows);
     byTaskId.set(task.task_id, {
       cost,
       financialPct: totalFinancial > 0 ? (cost / totalFinancial) * 100 : 0,
@@ -373,16 +368,12 @@ export function buildScheduleCurvesByMonth(
   const projectEnd = schedule.project_end || projectStart;
   const monthCount = countMonths(projectStart, projectEnd);
   const leaves = leafTasksForCurve(schedule, visibleTasks);
-  const etapaMode = Boolean(
-    visibleTasks?.length &&
-      visibleTasks.every((t) => t.is_summary && t.row_type === "ETAPA")
-  );
 
   let totalPhysicalWeight = 0;
   let totalFinancial = 0;
 
   for (const task of leaves) {
-    const { weight, cost } = weightAndCost(task, rows, etapaMode);
+    const { weight, cost } = weightAndCost(task, rows);
     totalPhysicalWeight += weight;
     totalFinancial += cost;
   }
@@ -416,7 +407,7 @@ export function buildScheduleCurvesByMonth(
     let financialMonth = 0;
 
     for (const task of leaves) {
-      const { weight, cost } = weightAndCost(task, rows, etapaMode);
+      const { weight, cost } = weightAndCost(task, rows);
       const dur = Math.max(1, task.duration_days);
       const overlap = overlapDays(
         task.early_start!,

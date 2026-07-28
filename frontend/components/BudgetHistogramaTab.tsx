@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { BudgetSessionResponse } from "@/types/api";
 import {
   buildHistogramItemStacks,

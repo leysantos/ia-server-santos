@@ -111,7 +111,7 @@ function acceptForSource(source: string): string {
   return ".zip,.xlsx,.xls,.csv";
 }
 
-function defaultDownloadUrl(source: string, year: number, month: number): string {
+function defaultDownloadUrl(source: string): string {
   if (source === "sinapi") return sinapiNationalDownloadsUrl();
   if (source === "cicro") return SICRO_PORTAL_URL;
   if (source === "orse") return ORSE_PORTAL_URL;
@@ -350,7 +350,7 @@ export default function SettingsPriceBasesPage() {
   const effectiveDownloadUrl = useMemo(() => {
     const saved = downloadUrl.trim();
     if (saved) return saved;
-    return defaultDownloadUrl(importSource, syncYear, syncMonth);
+    return defaultDownloadUrl(importSource);
   }, [downloadUrl, importSource, syncYear, syncMonth]);
 
   useEffect(() => {
@@ -882,7 +882,7 @@ export default function SettingsPriceBasesPage() {
 
   const handleOrseFolderSelect = (fileList: FileList | null) => {
     if (!fileList?.length) return;
-    const detected = detectOrseBundleFromFolder(fileList, syncYear, syncMonth);
+    const detected = detectOrseBundleFromFolder(fileList);
     if ("error" in detected) {
       setOrseBundlePreview(null);
       setError(detected.error);
