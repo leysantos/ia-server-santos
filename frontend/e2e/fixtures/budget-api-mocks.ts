@@ -130,12 +130,22 @@ export async function installBudgetApiMocks(page: Page, options: BudgetApiMockOp
     { id: "saved-1", title: "Obra piloto", updated_at: NOW, grand_total: 50000 },
   ];
 
-  await page.route(/\/(auth\/|health|pricing\/|models\/)/, async (route) => {
+  await page.route(/\/(auth\/|health|pricing\/|models\/|system\/|workflow\/)/, async (route) => {
     const path = apiPath(route.request().url());
     const method = route.request().method();
 
     if (path === "/auth/status") {
       return fulfillJson(route, { auth_enabled: false });
+    }
+
+    if (path === "/auth/me") {
+      return fulfillJson(route, {
+        user: { id: "e2e", username: "e2e", role: "admin", display_name: "E2E" },
+      });
+    }
+
+    if (path === "/workflow/companies" && method === "GET") {
+      return fulfillJson(route, { items: [] });
     }
 
     if (path === "/health") {
@@ -150,6 +160,10 @@ export async function installBudgetApiMocks(page: Page, options: BudgetApiMockOp
         types: [{ id: "RF", label: "Reforma" }],
         default: "RF",
       });
+    }
+
+    if (path === "/pricing/bdi/profiles" && method === "GET") {
+      return fulfillJson(route, { profiles: [] });
     }
 
     if (path === "/pricing/providers") {
@@ -194,8 +208,34 @@ export async function installBudgetApiMocks(page: Page, options: BudgetApiMockOp
       });
     }
 
-    if (path.includes("/composition/") && method === "GET") {
+    // API real: GET /pricing/sync/bank/composition?code=… (sem barra após composition)
+    if (
+      method === "GET" &&
+      (path.includes("/composition/") ||
+        path === "/pricing/sync/bank/composition" ||
+        path.endsWith("/bank/composition"))
+    ) {
       return fulfillJson(route, mockOpenComposition());
+    }
+
+    if (path.includes("/lock") && (method === "GET" || method === "POST" || method === "DELETE")) {
+      return fulfillJson(route, {
+        session_id: liveSession?.session_id ?? "e2e-session-1",
+        locked: false,
+        lock_holder: null,
+      });
+    }
+
+    if (path === "/models/status" && method === "GET") {
+      return fulfillJson(route, {
+        ollama_ok: true,
+        models: [],
+        installed_llm: "phi3:mini",
+      });
+    }
+
+    if (path.startsWith("/system/") && method === "GET") {
+      return fulfillJson(route, { status: "ok" });
     }
 
     if (/\/pricing\/budget\/[^/]+\/services$/.test(path) && method === "POST") {
@@ -367,7 +407,12 @@ export async function installBudgetApiMocks(page: Page, options: BudgetApiMockOp
       return fulfillJson(route, liveSession ?? mockBudgetSession());
     }
 
-    return route.continue();
+    // Evita vazar para API real (401→/login) e evita 200 genérico que quebra .then(r => r.items).
+    return route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: `e2e mock missing: ${method} ${path}` }),
+    });
   });
 }
 

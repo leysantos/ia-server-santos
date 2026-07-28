@@ -6,7 +6,7 @@
 | Campo | Valor |
 |-------|-------|
 | **Versão do sistema** | 1.0.0 |
-| **Última atualização** | 2026-07-27 (Laudos follow-up · órfãos · ART live · PAdES flag) |
+| **Última atualização** | 2026-07-28 (CI E2E budget — mock composition + isolamento API) |
 | **Próximo foco** | Piloto UI §4.U `/budget` · Laudos PAdES com cert A1 em produção |
 | **Marco atual** | M1–M8 ✅ · Orçamento B1–B30 ✅ |
 | **Repositório** | [github.com/leysantos/ia-server-santos](https://github.com/leysantos/ia-server-santos) |
@@ -1890,6 +1890,7 @@ Settings completas: `backend/config/settings.py`
 | 2026-07-24 | **Fix preview logo/brasão Empresa** | `<img src={API}>` sem JWT → 401 · preview via `systemFetchCompanyLogo/Brasao` + blob URL + auth (`ExportBrandingSettingsPanel`) |
 | 2026-07-24 | **Fix redes sociais Empresa** | `CompanyProfileUpdateRequest` omitia `social_*` — Pydantic descartava no PATCH · campos agora no schema + teste de persistência |
 | 2026-07-26 | **Laudos L15 RAG normativo** | `normative_rag.py` · queries por tipología · `retrieve_for_agent` · `normative_citations` + tabela Referências · prompt L15 · testes |
+| 2026-07-28 | **CI E2E budget B13** | Mock `/pricing/sync/bank/composition` (sem `/` trailing) · fechar dialog pós-lançamento · mocks `workflow/companies`+`bdi/profiles` · fallthrough 404 (não continue→401) |
 | 2026-07-27 | **Laudos L16 ensaios medidos** | `assay_results.py` · `instrumented_test_results` · API GET/PUT · UI cadastro · tabela export · metrologia vinculada |
 | 2026-07-27 | **Laudos L17–L19 MVP** | croqui `visual_memory` · ART `kind=art` · firma `kind=signature` + SHA-256 PDF · UI canvas/parties · testes |
 | 2026-07-27 | **Fix PDF laudos + flood benchmark** | fotos export 1400px JPEG · croqui sem PNG full-res · `export/pdf` try/except · hash não derruba download · `/system/benchmark` público · backoff UI |

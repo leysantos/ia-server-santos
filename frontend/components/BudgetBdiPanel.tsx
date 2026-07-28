@@ -70,7 +70,7 @@ export default function BudgetBdiPanel({
   }, [loadValidation, project?.bdi]);
 
   useEffect(() => {
-    api.pricingBdiProfiles().then((r) => setProfiles(r.profiles)).catch(() => {});
+    api.pricingBdiProfiles().then((r) => setProfiles(r.profiles ?? [])).catch(() => {});
   }, []);
 
   useEffect(() => {

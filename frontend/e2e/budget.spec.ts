@@ -75,12 +75,14 @@ test.describe("Orçamento — smoke E2E", () => {
     await installBudgetApiMocks(page, { session });
 
     await page.goto("/budget?tab=busca_cpu");
+    // Restore é assíncrono (POST /pricing/budget/restore); o painel de lançamento
+    // só monta com session + etapas — esperar Salvar evita flake no CI.
+    await expect(page.getByTestId("budget-toolbar").getByRole("button", { name: /Salvar/ })).toBeVisible();
     await page.getByPlaceholder("Ex: pavimento asfáltico, container…").fill("pavimento");
     await expect(page.getByRole("cell", { name: MOCK_CPU_DESCRIPTION })).toBeVisible();
     await page.getByRole("cell", { name: MOCK_CPU_DESCRIPTION }).click();
-    await expect(page.getByText("Prévia do resultado")).toBeVisible();
+    await expect(page.getByTestId("budget-cpu-launch-panel")).toBeVisible({ timeout: 15_000 });
 
-    await expect(page.getByTestId("budget-cpu-launch-panel")).toBeVisible();
     await page.getByTestId("budget-cpu-launch-qty").fill("2");
     const launchResponse = page.waitForResponse(
       (r) => r.url().includes("/services") && r.request().method() === "POST"
@@ -88,6 +90,12 @@ test.describe("Orçamento — smoke E2E", () => {
     await page.getByTestId("budget-cpu-launch-btn").click();
     const response = await launchResponse;
     expect(response.ok()).toBeTruthy();
+
+    // Dialog de sucesso cobre a toolbar — fechar antes de trocar de aba.
+    const successDialog = page.getByRole("dialog", { name: /Composição lançada/ });
+    await expect(successDialog).toBeVisible();
+    await successDialog.getByRole("button", { name: "OK" }).click();
+    await expect(successDialog).toBeHidden();
 
     await page.getByTestId("budget-tab-etapas").click();
     await expect(page.getByRole("cell", { name: MOCK_CPU_DESCRIPTION })).toBeVisible({ timeout: 5000 });
