@@ -219,6 +219,9 @@ def test_insumos_export_table_totals():
     ]
     meta, roots, fake_cpu, build_insumos, _ = _session_with_cpu_items(cpu_items)
     with patch(
+        "pricing.budget.composition_lookup.resolve_composition_detail",
+        return_value=fake_cpu,
+    ), patch(
         "pricing.tools.budget_pricing_tools.BudgetPricingTools.get_open_composition",
         return_value=fake_cpu,
     ):
@@ -258,6 +261,9 @@ def test_mao_obra_export_table_totals():
     ]
     meta, roots, fake_cpu, _, build_mao_obra = _session_with_cpu_items(cpu_items)
     with patch(
+        "pricing.budget.composition_lookup.resolve_composition_detail",
+        return_value=fake_cpu,
+    ), patch(
         "pricing.tools.budget_pricing_tools.BudgetPricingTools.get_open_composition",
         return_value=fake_cpu,
     ):

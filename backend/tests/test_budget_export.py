@@ -166,6 +166,9 @@ def test_orc_analitico_xlsx_service_cpu_and_footer_formulas(export_session):
     }
 
     with patch(
+        "pricing.budget.composition_lookup.resolve_composition_detail",
+        return_value=fake_cpu,
+    ), patch(
         "pricing.tools.budget_pricing_tools.BudgetPricingTools.get_open_composition",
         return_value=fake_cpu,
     ):
@@ -550,6 +553,9 @@ def test_analitico_pdf_expands_open_composition_items():
     }
 
     with patch(
+        "pricing.budget.composition_lookup.resolve_composition_detail",
+        return_value=fake_cpu,
+    ), patch(
         "pricing.tools.budget_pricing_tools.BudgetPricingTools.get_open_composition",
         return_value=fake_cpu,
     ):
@@ -725,14 +731,22 @@ def export_session_with_cpu(export_session):
     export_session.project.price_bases = [
         {"source": "sinapi", "label": "SINAPI", "enabled": True, "uf": "AM", "reference": "BR-2026-05"}
     ]
-    patcher = patch(
-        "pricing.tools.budget_pricing_tools.BudgetPricingTools.get_open_composition",
-        return_value=fake_cpu,
-    )
-    export_session._cpu_patch = patcher
-    patcher.start()
+    patchers = [
+        patch(
+            "pricing.budget.composition_lookup.resolve_composition_detail",
+            return_value=fake_cpu,
+        ),
+        patch(
+            "pricing.tools.budget_pricing_tools.BudgetPricingTools.get_open_composition",
+            return_value=fake_cpu,
+        ),
+    ]
+    export_session._cpu_patches = patchers
+    for p in patchers:
+        p.start()
     yield export_session
-    patcher.stop()
+    for p in reversed(patchers):
+        p.stop()
 
 
 def test_export_rel_insumos_pdf(export_session_with_cpu):

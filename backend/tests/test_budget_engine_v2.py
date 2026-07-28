@@ -107,6 +107,8 @@ def test_budget_excel_export():
 
 
 def test_api_generate_and_cell():
+    from unittest.mock import MagicMock, patch
+
     from app.routes.pricing import BudgetGenerateRequest, generate_budget, update_budget_cell, CellUpdateRequest
 
     _setup()
@@ -119,8 +121,11 @@ def test_api_generate_and_cell():
     )
     assert gen["grand_total"] > 0
     row = next(r for r in gen["rows"] if r["editable"] and r["unit_price"] > 0)
-    updated = update_budget_cell(
-        gen["session_id"],
-        CellUpdateRequest(row_id=row["row_id"], code=row["code"], field="quantity", value=50),
-    )
+    with patch("app.routes.pricing.budget._guard_budget_edit"):
+        updated = update_budget_cell(
+            gen["session_id"],
+            CellUpdateRequest(row_id=row["row_id"], code=row["code"], field="quantity", value=50),
+            db=MagicMock(),
+            user=None,
+        )
     assert updated["grand_total"] > 0
