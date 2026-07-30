@@ -8,6 +8,16 @@ from unittest.mock import MagicMock, patch
 from models.ollama_client import OllamaClient, invalidate_ollama_client_cache
 
 
+def test_init_does_not_hit_network():
+    """Regressão CI: __init__ não deve chamar /api/tags (hang no GHA sem Ollama)."""
+    invalidate_ollama_client_cache()
+    with patch("models.ollama_client.requests.get") as mock_get:
+        client = OllamaClient(timeout=10, primary_model="qwen3:14b", fallback_model="phi3:mini")
+    assert mock_get.call_count == 0
+    assert client.primary_model == "qwen3:14b"
+    assert client._models_resolved is False
+
+
 def test_list_models_cached():
     invalidate_ollama_client_cache()
     client = OllamaClient(timeout=10)

@@ -16,11 +16,16 @@ env:
   DB_ENABLED: "true"
   DATABASE_URL: sqlite:///./ci_test.db
   CI: "true"
+  # Fail-fast: CI não tem Ollama; evita hang em localhost/IPv6 no runner.
+  OLLAMA_BASE_URL: "http://127.0.0.1:9"
+  OLLAMA_CONNECT_TIMEOUT: "1"
+  PYTHONUNBUFFERED: "1"
 
 jobs:
   backend:
     name: Backend (pytest subset)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -38,10 +43,12 @@ jobs:
 
       - name: Run stable pytest subset
         run: bash scripts/ci_backend.sh -q
+        timeout-minutes: 20
 
   frontend:
     name: Frontend (lint + budget E2E)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: frontend

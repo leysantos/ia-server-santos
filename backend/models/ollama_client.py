@@ -81,9 +81,21 @@ class OllamaClient:
         self.base_url = base_url.rstrip("/")
         self.read_timeout = timeout
         self.connect_timeout = connect_timeout
+        # Resolução via /api/tags é preguiçosa: construir o cliente no import
+        # de rotas/agentes não deve bloquear CI/startup quando Ollama está off.
+        self._primary_requested = primary_model
+        self._fallback_requested = fallback_model
+        self.primary_model = primary_model
+        self.fallback_model = fallback_model
+        self._models_resolved = False
+
+    def _ensure_models_resolved(self) -> None:
+        if self._models_resolved:
+            return
         self.primary_model, self.fallback_model = self._resolve_installed_models(
-            primary_model, fallback_model
+            self._primary_requested, self._fallback_requested
         )
+        self._models_resolved = True
 
     def _timeouts(self) -> tuple[int, int]:
         return (self.connect_timeout, self.read_timeout)
@@ -197,6 +209,7 @@ class OllamaClient:
     ) -> list[str]:
         from core.llm_override import is_gemini_model
 
+        self._ensure_models_resolved()
         models_to_try: list[str] = []
         if model:
             models_to_try.append(model)

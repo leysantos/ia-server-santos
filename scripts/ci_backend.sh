@@ -17,6 +17,10 @@ export JWT_SECRET="${JWT_SECRET:-test-jwt-secret-key-minimum-32-chars}"
 export DB_ENABLED="${DB_ENABLED:-true}"
 export MINIO_ENABLED="${MINIO_ENABLED:-false}"
 export DATABASE_URL="${DATABASE_URL:-sqlite:///${TMPDIR:-/tmp}/iaserver-ci.db}"
+# Subset CI não usa Ollama; porta 9 recusa já (evita hang em :11434).
+export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:9}"
+export OLLAMA_CONNECT_TIMEOUT="${OLLAMA_CONNECT_TIMEOUT:-1}"
+export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 
 cd "$BACKEND"
 
