@@ -165,6 +165,20 @@ def test_orc_analitico_xlsx_service_cpu_and_footer_formulas(export_session):
         ]
     }
 
+    from pricing.budget.budget_export_tables import _EXPORT_COMPOSITION_CACHE
+
+    _EXPORT_COMPOSITION_CACHE.clear()
+    # Sem price_bank no CI: o lookup de CPU exige price_bases na sessão.
+    export_session.project.price_bases = [
+        {
+            "source": "sinapi",
+            "label": "SINAPI",
+            "enabled": True,
+            "uf": "AM",
+            "reference": "BR-2026-05",
+        }
+    ]
+
     with patch(
         "pricing.budget.composition_lookup.resolve_composition_detail",
         return_value=fake_cpu,
