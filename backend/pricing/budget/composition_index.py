@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import Any, Optional
@@ -23,6 +24,14 @@ BATCH_SIZE = 64
 
 _index_lock = threading.Lock()
 _index_instance: Optional["CompositionSearchIndex"] = None
+
+
+def _skip_faiss_rebuild() -> bool:
+    """CI/testes sem Ollama: rebuild FAISS + embed trava o runner por horas."""
+    flag = (os.environ.get("SKIP_COMPOSITION_FAISS") or "").strip().lower()
+    if flag in ("1", "true", "yes", "on"):
+        return True
+    return (os.environ.get("CI") or "").strip().lower() in ("1", "true", "yes")
 
 
 class CompositionSearchIndex:
@@ -78,7 +87,9 @@ class CompositionSearchIndex:
         source: str = "sinapi",
     ) -> None:
         """Dispara rebuild FAISS em thread (bases grandes)."""
-        import threading
+        if _skip_faiss_rebuild():
+            logger.info("FAISS composition rebuild ignorado (CI/SKIP_COMPOSITION_FAISS)")
+            return
 
         def _run() -> None:
             try:
@@ -90,6 +101,9 @@ class CompositionSearchIndex:
 
     def rebuild(self, rows: list[dict[str, Any]], *, label: str = "sinapi", source: str = "sinapi") -> dict[str, Any]:
         """Reindexa composições (embeddings via Ollama)."""
+        if _skip_faiss_rebuild():
+            logger.info("FAISS composition rebuild ignorado (CI/SKIP_COMPOSITION_FAISS)")
+            return {"indexed": 0, "skipped": True, "reason": "ci"}
         with _index_lock:
             self.store.clear()
             if not rows:

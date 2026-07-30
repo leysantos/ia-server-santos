@@ -28,3 +28,4 @@ pyhanko>=0.25.0
 bcrypt>=4.1.0
 pytest>=8.0.0
 pytest-cov>=5.0.0
+pytest-timeout>=2.3.0

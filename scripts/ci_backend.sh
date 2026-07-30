@@ -21,6 +21,8 @@ export DATABASE_URL="${DATABASE_URL:-sqlite:///${TMPDIR:-/tmp}/iaserver-ci.db}"
 export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:9}"
 export OLLAMA_CONNECT_TIMEOUT="${OLLAMA_CONNECT_TIMEOUT:-1}"
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
+export SKIP_COMPOSITION_FAISS="${SKIP_COMPOSITION_FAISS:-1}"
+export CI="${CI:-true}"
 
 cd "$BACKEND"
 
@@ -49,8 +51,15 @@ APP_TESTS=(
   tests/test_budget_pilot_flow.py
 )
 
+PYTEST_FLAGS=(-v --tb=short)
+if "$VENV_PY" -c "import pytest_timeout" 2>/dev/null; then
+  PYTEST_FLAGS+=(--timeout=60 --timeout-method=thread)
+else
+  echo "⚠ pytest-timeout não instalado — rode pip install -r backend/requirements.txt" >&2
+fi
+
 echo "→ CI backend fase 1: orçamento/pricing (${#UNIT_TESTS[@]} arquivos)"
-"$VENV_PY" -m pytest "${UNIT_TESTS[@]}" -v --tb=short "$@"
+"$VENV_PY" -m pytest "${UNIT_TESTS[@]}" "${PYTEST_FLAGS[@]}" "$@"
 
 echo "→ CI backend fase 2: smoke + piloto B12 (${#APP_TESTS[@]} arquivos)"
-"$VENV_PY" -m pytest "${APP_TESTS[@]}" -v --tb=short "$@"
+"$VENV_PY" -m pytest "${APP_TESTS[@]}" "${PYTEST_FLAGS[@]}" "$@"

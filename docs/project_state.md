@@ -6,7 +6,7 @@
 | Campo | Valor |
 |-------|-------|
 | **Versão do sistema** | 1.0.0 |
-| **Última atualização** | 2026-07-30 (CI — OllamaClient lazy + timeout GHA; hang pytest subset) |
+| **Última atualização** | 2026-07-30 (CI — skip FAISS composition + base ativa desligada; hang pytest) |
 | **Próximo foco** | **OrçaFacil** OF7 memória rica · OF9 benchmark CONT_DREN · validação takeoff edificação |
 | **Marco atual** | M1–M8 ✅ · Orçamento B1–B32 ✅ · OrçaFacil 🟡 OF2–OF6+OF8 · OF7/OF9–OF12 abertos |
 | **Repositório** | [github.com/leysantos/ia-server-santos](https://github.com/leysantos/ia-server-santos) |
@@ -73,7 +73,7 @@ ia-server-santos/
 | **Orçamento `/budget`** | 🟢 **Produção interna alta** + **enterprise técnico** (B1–B32): 11 docs nativos + `proposta_comercial` + `.xlsm` oficial + **Lançar Preços** · snapshot/cache CPU · §8.1 |
 | **OrçaFacil** (submódulo Orçamento) | 🟡 **OF2–OF6+OF8** — Gemini 3.6 · editor MCQ · ABC/CRONO automáticos · **OF7/OF9–OF12** abertos (§8.3.12) |
 | **Laudos de Vistoria `/inspection-reports`** | 🟢 **L1–L20** ✅: croqui · ART · PAdES · editorial institucional (anti-IA, dedupe, coerência, plano tabela) |
-| Chat streaming UX | 🟢 SSE instantâneo (`connected`) + tokens ~60fps · **anexos no prompt** · **export memória/TRD PDF·Word** + **croqui Gemini** sob a resposta |
+| Chat streaming UX | 🟢 SSE instantâneo (`connected`) + tokens ~60fps · **anexos no prompt** · **export dinâmico** (memória/TRD/memorial/parecer/ET/checklist/orçamento + croqui) |
 | Agente Geotecnia dedicado | 🟢 `GeotecniaIntelligentAgent` — NBR 6122/7185, classificação solo, A_min |
 | Frontend | 🟢 `/chat`, `/projects`, `/inspection-reports`, `/budget`, `/mobile/*` (telefone), `/orchestrate`, `/copilot`, `/aed`, `/console`, `/history`, `/settings`, `/projects/{id}/workflow` |
 | Auth SaaS | 🟢 JWT · middleware · papéis `admin` \| `dev_user` + **tipos customizados** · **permissões por módulo** (oculto/bloqueado) · `/settings/users` (**editar** + **excluir**/desativar) |
@@ -2322,7 +2322,7 @@ Settings completas: `backend/config/settings.py`
 | R-26 | ~~Média~~ Mitigado | Laudos — correção sem SSE (L2) |
 | R-27 | ~~Média~~ Mitigado | Laudos — tipologías outline idêntico (L3) |
 | R-28 | ~~Baixa~~ Mitigado | Laudos — testes rasos (L5) |
-| R-31 | ~~Alta~~ Mitigado | CI Backend travava horas em `test_pricing_engine` (~8%) — `OllamaClient.__init__` chamava `/api/tags` ao importar agentes; no GHA sem Ollama a conexão podia hangar | Lazy resolve + `OLLAMA_BASE_URL=http://127.0.0.1:9` + `timeout-minutes` no job |
+| R-31 | ~~Alta~~ Mitigado | CI Backend travava horas — `OllamaClient.__init__` + **base custom ativa 8k itens** disparava rebuild FAISS/embed Ollama (`timeout=120`, retries) | Lazy Ollama + `SKIP_COMPOSITION_FAISS` + desativar base no `custom_bases/index.json` + `pytest-timeout` |
 
 ---
 
@@ -2330,6 +2330,8 @@ Settings completas: `backend/config/settings.py`
 
 | Data | Decisão | Motivo |
 |------|---------|--------|
+| 2026-07-30 | **CI — skip FAISS composition no runner** | Base DP/SEMINF ativa (8k) + embed Ollama no pytest hangava o GHA; `SKIP_COMPOSITION_FAISS`/`CI` ignora rebuild; index sem active; pytest-timeout 60s |
+| 2026-07-30 | **Chat — sugestões dinâmicas de docs** | Classificador por conteúdo/disciplina sugere memória, TRD, memorial, parecer, ET, checklist, nota de orçamento e croqui (`POST /chat/export/suggestions`) |
 | 2026-07-30 | **CI — OllamaClient lazy + fail-fast** | `__init__` não chama `/api/tags`; CI aponta Ollama para `:9` + timeout 25 min no job backend (evita hang GHA) |
 | 2026-07-30 | **Chat — layout Laudos + croqui viga** | PDF/Word do chat usam cabeçalho/rodapé/marca d'água dos Laudos; croqui de viga CA por prancha determinística (elevação+seção+tabela) |
 | 2026-07-30 | **Chat — export + croqui** | Sob resposta técnica: Memória/TRD em PDF·Word (`POST /chat/export`); croqui Gemini (`POST /chat/croqui`, `GEMINI_IMAGE_MODEL`) |

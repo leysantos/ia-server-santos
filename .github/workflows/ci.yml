@@ -19,6 +19,7 @@ env:
   # Fail-fast: CI não tem Ollama; evita hang em localhost/IPv6 no runner.
   OLLAMA_BASE_URL: "http://127.0.0.1:9"
   OLLAMA_CONNECT_TIMEOUT: "1"
+  SKIP_COMPOSITION_FAISS: "1"
   PYTHONUNBUFFERED: "1"
 
 jobs:

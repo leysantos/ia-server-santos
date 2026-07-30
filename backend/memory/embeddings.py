@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+import os
 
 import requests
 
@@ -91,12 +92,22 @@ class NomicEmbedder:
         if self.cache and self.use_cache:
             self.cache.set(safe_text, self.model, task, embedding)
 
+    def _embed_timeouts(self) -> tuple[float, float]:
+        """(connect, read) — connect curto evita hang no CI sem Ollama."""
+        try:
+            from config.settings import OLLAMA_CONNECT_TIMEOUT
+
+            connect = float(OLLAMA_CONNECT_TIMEOUT)
+        except Exception:
+            connect = 5.0
+        return (max(0.5, connect), 120.0)
+
     def _post_embed_batch(self, prompts: list[str]) -> list[list[float]]:
         self._throttle()
         response = requests.post(
             f"{self.base_url}/api/embed",
             json={"model": self.model, "input": prompts, "keep_alive": ollama_keep_alive()},
-            timeout=120,
+            timeout=self._embed_timeouts(),
         )
         response.raise_for_status()
         data = response.json()
@@ -109,10 +120,11 @@ class NomicEmbedder:
 
     def _post_embed_single(self, prompt: str) -> list[float]:
         self._throttle()
+        connect, _read = self._embed_timeouts()
         response = requests.post(
             f"{self.base_url}/api/embeddings",
             json={"model": self.model, "prompt": prompt, "keep_alive": ollama_keep_alive()},
-            timeout=90,
+            timeout=(connect, 90.0),
         )
         response.raise_for_status()
         return response.json()["embedding"]
@@ -120,8 +132,9 @@ class NomicEmbedder:
     def _embed_prompts_with_retry(self, prompts: list[str], task: str) -> list[list[float]]:
         last_error: Exception | None = None
         use_batch = len(prompts) > 1
+        retries = 1 if (os.environ.get("CI") or "").strip().lower() in ("1", "true", "yes") else _EMBED_RETRIES
 
-        for attempt in range(_EMBED_RETRIES):
+        for attempt in range(retries):
             try:
                 if use_batch:
                     return self._post_embed_batch(prompts)
@@ -129,19 +142,19 @@ class NomicEmbedder:
             except Exception as exc:
                 last_error = exc
                 delay = self._retry_delay(attempt, exc)
-                if attempt < _EMBED_RETRIES - 1:
+                if attempt < retries - 1:
                     logger.debug(
                         "Ollama embed tentativa %d/%d falhou (%s); retry em %.1fs",
                         attempt + 1,
-                        _EMBED_RETRIES,
+                        retries,
                         exc,
                         delay,
                     )
                     time.sleep(delay)
-                elif use_batch and len(prompts) > 1:
+                elif use_batch and len(prompts) > 1 and retries > 1:
                     logger.warning(
                         "Batch embed falhou após %d tentativas; fallback item a item (%s)",
-                        _EMBED_RETRIES,
+                        retries,
                         exc,
                     )
                     return self._embed_prompts_sequential(prompts, task)
