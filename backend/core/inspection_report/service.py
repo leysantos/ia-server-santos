@@ -1097,7 +1097,7 @@ def generate_report(
         _progress(
             "structure",
             91,
-            "Aplicando L10–L15 (classificação, inventário, metrologia, RAG normativo)…",
+            "Aplicando L10–L20 (classificação, inventário, metrologia, RAG, editorial)…",
         )
         content = apply_engineering_enrichment(
             content, slug=slug, normative=normative_pack
@@ -1110,6 +1110,16 @@ def generate_report(
                 f"Classificação DNIT global: {cls.get('global_dnit_note')} "
                 f"({cls.get('global_label') or '—'}); "
                 f"{len(content.get('element_inventory') or [])} elemento(s) no inventário.",
+            )
+        ep = content.get("editorial_postprocess") or {}
+        if ep.get("applied"):
+            n_w = len(ep.get("warnings") or [])
+            _progress(
+                "structure",
+                92,
+                "L20 editorial institucional aplicado"
+                + (f" ({n_w} aviso(s) de coerência)" if n_w else "")
+                + ".",
             )
         n_cit = len(content.get("normative_citations") or [])
         if n_cit:

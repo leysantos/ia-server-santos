@@ -41,6 +41,104 @@ def gemini_available() -> bool:
     return bool(resolve_gemini_api_key())
 
 
+def generate_text(
+    prompt: str,
+    *,
+    temperature: float = 0.0,
+    max_output_tokens: int = 128,
+    model: str | None = None,
+) -> str:
+    """
+    Chamada textual leve ao Gemini (roteamento de disciplina, classificação, etc.).
+    Modelo padrão: GEMINI_MODEL (gemini-3.6-flash).
+    """
+    api_key = resolve_gemini_api_key()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY não configurada")
+
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError as exc:
+        raise RuntimeError(
+            "Pacote google-genai não instalado. Execute: pip install google-genai"
+        ) from exc
+
+    resolved = (model or resolve_gemini_model() or "gemini-3.6-flash").strip()
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=resolved,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+        ),
+    )
+    return _response_text(response).strip()
+
+
+def _response_text(chunk: Any) -> str:
+    """Extrai texto de um GenerateContentResponse (stream ou completo)."""
+    text = getattr(chunk, "text", None) or ""
+    if text:
+        return str(text)
+    candidates = getattr(chunk, "candidates", None) or []
+    parts_out: list[str] = []
+    for cand in candidates:
+        content = getattr(cand, "content", None)
+        parts = getattr(content, "parts", None) or []
+        for part in parts:
+            t = getattr(part, "text", None)
+            if t:
+                parts_out.append(str(t))
+    return "".join(parts_out)
+
+
+def generate_text_stream(
+    prompt: str,
+    *,
+    temperature: float = 0.2,
+    max_output_tokens: int = 8192,
+    model: str | None = None,
+):
+    """
+    Stream textual do Gemini (generate_content_stream).
+    Yields pedaços de texto conforme chegam da API — paridade UX com Ollama.
+    """
+    api_key = resolve_gemini_api_key()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY não configurada")
+
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError as exc:
+        raise RuntimeError(
+            "Pacote google-genai não instalado. Execute: pip install google-genai"
+        ) from exc
+
+    resolved = (model or resolve_gemini_model() or "gemini-3.6-flash").strip()
+    client = genai.Client(api_key=api_key)
+    logger.info("Gemini generate_content_stream model=%s", resolved)
+    stream = client.models.generate_content_stream(
+        model=resolved,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+        ),
+    )
+    yielded = 0
+    for chunk in stream:
+        piece = _response_text(chunk)
+        if not piece:
+            continue
+        yielded += len(piece)
+        yield piece
+    if yielded == 0:
+        raise RuntimeError(f"Gemini stream vazio (model={resolved})")
+
+
 def _extract_json(text: str) -> dict[str, Any]:
     raw = (text or "").strip()
     if not raw:

@@ -16,7 +16,11 @@ function isLlmModel(name: string): boolean {
 }
 
 function formatModelLabel(name: string): string {
-  return name.replace(/:latest$/, "");
+  const base = name.replace(/:latest$/, "");
+  if (base.toLowerCase().startsWith("gemini")) {
+    return `${base} (Google)`;
+  }
+  return base;
 }
 
 export default function ModelSelector({ value, onChange, className, id }: ModelSelectorProps) {
@@ -30,8 +34,17 @@ export default function ModelSelector({ value, onChange, className, id }: ModelS
       .modelsStatus()
       .then((status) => {
         if (cancelled) return;
+        const cloud = (status.cloud_models ?? []).filter(isLlmModel);
         const installed = (status.installed_models ?? []).filter(isLlmModel);
-        setModels(installed);
+        // Cloud primeiro; depois o restante sem duplicar
+        const merged: string[] = [];
+        const seen = new Set<string>();
+        for (const name of [...cloud, ...installed]) {
+          if (seen.has(name)) continue;
+          seen.add(name);
+          merged.push(name);
+        }
+        setModels(merged);
       })
       .catch(() => {
         if (!cancelled) setModels([]);
@@ -48,10 +61,10 @@ export default function ModelSelector({ value, onChange, className, id }: ModelS
     const seen = new Set<string>();
     const list: { value: string; label: string }[] = [{ value: "auto", label: "Auto (roteamento)" }];
     for (const name of models) {
-      const key = formatModelLabel(name);
+      const key = name.replace(/:latest$/, "");
       if (seen.has(key)) continue;
       seen.add(key);
-      list.push({ value: name, label: key });
+      list.push({ value: name, label: formatModelLabel(name) });
     }
     if (value !== "auto" && value && !list.some((o) => o.value === value)) {
       list.push({ value, label: formatModelLabel(value) });

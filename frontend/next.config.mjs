@@ -6,6 +6,10 @@ const nextConfig = {
     "192.168.143.111",
     "*.trycloudflare.com",
   ],
+  // Laudos PDF grandes (dezenas de fotos) podem levar >30s via /api-backend
+  experimental: {
+    proxyTimeout: 300_000,
+  },
   async rewrites() {
     const apiOrigin = process.env.API_BACKEND_ORIGIN ?? "http://127.0.0.1:8000";
     return [

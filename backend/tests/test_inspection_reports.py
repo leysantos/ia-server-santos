@@ -190,6 +190,7 @@ def test_sumario_in_export_and_content():
     assert "Objetivo" in labels or "objetivo" in labels.lower()
     assert "Relatório fotográfico" in labels
     assert "Responsáveis técnicos" in labels
+    assert all(e.get("bookmark") for e in entries)
 
     ensured = ensure_sumario_chapter(content)
     sumario_ch = next(
@@ -203,6 +204,9 @@ def test_sumario_in_export_and_content():
         xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")
     assert "Sumário" in xml or "Sumario" in xml
     assert "Objetivo" in xml
+    assert "PAGEREF" in xml
+    assert "w:leader" in xml or 'w:val="dot"' in xml or "dot" in xml.lower()
+    assert "toc_objetivo" in xml or "bookmark" in xml.lower()
 
     pdf = build_inspection_laudo_pdf(content=ensured, image_assets=[])
     assert pdf[:4] == b"%PDF"
@@ -214,6 +218,10 @@ def test_sumario_in_export_and_content():
         text = "\n".join((page.extract_text() or "") for page in reader.pages)
         assert "Sumário" in text or "Sumario" in text
         assert "Objetivo" in text or "objetivo" in text.lower()
+        # Página do sumário deve citar números (ex.: capítulos a partir da pág. 3)
+        sumario_page = reader.pages[1] if len(reader.pages) > 1 else reader.pages[0]
+        sumario_text = sumario_page.extract_text() or ""
+        assert any(ch.isdigit() for ch in sumario_text)
     except Exception:
         # Fallback: PDF gerado com tamanho plausível (fonte embutida pode comprimr strings)
         assert len(pdf) > 1500

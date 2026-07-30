@@ -195,6 +195,8 @@ class OllamaClient:
         model: Optional[str],
         fallback_models: Optional[list[str]],
     ) -> list[str]:
+        from core.llm_override import is_gemini_model
+
         models_to_try: list[str] = []
         if model:
             models_to_try.append(model)
@@ -205,12 +207,19 @@ class OllamaClient:
         if not models_to_try:
             models_to_try = [self.primary_model, self.fallback_model]
         elif self.fallback_model and self.fallback_model not in models_to_try:
-            models_to_try.append(self.fallback_model)
+            # Não misturar fallback Ollama quando o usuário escolheu Gemini
+            if not is_gemini_model(models_to_try[0]):
+                models_to_try.append(self.fallback_model)
 
         resolved: list[str] = []
         installed = self.list_models()
         for m in models_to_try:
             if not m:
+                continue
+            # Cloud Gemini não aparece em `ollama list` — preservar sempre
+            if is_gemini_model(m):
+                if m not in resolved:
+                    resolved.append(m)
                 continue
             if not installed or m in installed:
                 if m not in resolved:
@@ -276,15 +285,41 @@ class OllamaClient:
         """
         Gera resposta LLM. Retorna (texto, modelo_utilizado).
         Tenta modelo primário; em falha, usa fallback(s).
+        Suporta override cloud Gemini (gemini-*).
         """
+        from core.llm_override import canonical_gemini_model, is_gemini_model
+
+        models_to_try = self._models_to_try(model, fallback_models)
+        if models_to_try and is_gemini_model(models_to_try[0]):
+            gemini_id = canonical_gemini_model(models_to_try[0])
+            try:
+                from core.inspection_report.gemini_client import generate_text
+
+                logger.info("Gemini generate model=%s", gemini_id)
+                text = generate_text(
+                    prompt,
+                    temperature=0.2,
+                    max_output_tokens=8192,
+                    model=gemini_id,
+                )
+                return text, gemini_id
+            except Exception as exc:
+                logger.warning(
+                    "Falha Gemini model=%s: %s — tentando fallback Ollama", gemini_id, exc
+                )
+                models_to_try = [m for m in models_to_try if not is_gemini_model(m)]
+                if not models_to_try:
+                    raise
+
         if not self.ping():
             raise ConnectionError(
                 f"Ollama indisponível em {self.base_url} — verifique se o serviço está rodando (ollama serve)"
             )
 
-        models_to_try = self._models_to_try(model, fallback_models)
         last_error: Optional[Exception] = None
         for current_model in models_to_try:
+            if is_gemini_model(current_model):
+                continue
             try:
                 logger.info("Ollama generate model=%s json=%s", current_model, format_json)
                 text = self._generate_with_model(
@@ -319,17 +354,44 @@ class OllamaClient:
         options: Optional[dict] = None,
     ) -> Iterator[tuple[str, str]]:
         """
-        Stream de tokens Ollama. Yields (token, model_name).
+        Stream de tokens. Yields (token, model_name).
+        Gemini: generate_content_stream (tokens em tempo real, como Ollama).
         """
+        from core.llm_override import canonical_gemini_model, is_gemini_model
+
+        models_to_try = self._models_to_try(model, fallback_models)
+        if models_to_try and is_gemini_model(models_to_try[0]):
+            gemini_id = canonical_gemini_model(models_to_try[0])
+            try:
+                from core.inspection_report.gemini_client import generate_text_stream
+
+                logger.info("Gemini stream(model=%s) — generate_content_stream", gemini_id)
+                for piece in generate_text_stream(
+                    prompt,
+                    temperature=0.2,
+                    max_output_tokens=8192,
+                    model=gemini_id,
+                ):
+                    yield piece, gemini_id
+                return
+            except Exception as exc:
+                logger.warning(
+                    "Falha Gemini stream model=%s: %s — fallback Ollama", gemini_id, exc
+                )
+                models_to_try = [m for m in models_to_try if not is_gemini_model(m)]
+                if not models_to_try:
+                    raise
+
         if not self.ping():
             raise ConnectionError(
                 f"Ollama indisponível em {self.base_url} — verifique se o serviço está rodando (ollama serve)"
             )
 
-        models_to_try = self._models_to_try(model, fallback_models)
         last_error: Optional[Exception] = None
 
         for current_model in models_to_try:
+            if is_gemini_model(current_model):
+                continue
             try:
                 logger.info("Ollama stream model=%s json=%s", current_model, format_json)
                 body = self._build_generate_body(

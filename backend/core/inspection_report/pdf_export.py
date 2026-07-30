@@ -13,6 +13,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm, inch
 from reportlab.platypus import (
+    Flowable,
     Image,
     KeepTogether,
     PageBreak,
@@ -39,6 +40,7 @@ from core.inspection_report.format_utils import (
     normalize_parties,
     party_display_lines,
     photo_source_line,
+    toc_bookmark_name,
 )
 from core.system.company_profile import (
     get_company_profile,
@@ -55,6 +57,58 @@ def _esc(text: Any) -> str:
         .replace(">", "&gt;")
         .replace("\n", "<br/>")
     )
+
+
+class _TocLine(Flowable):
+    """Linha de sumário: título …… número (alinhado à direita)."""
+
+    def __init__(self, label: str, page: str | int, *, font="Times-Roman", size=11):
+        super().__init__()
+        self.label = label
+        self.page = str(page)
+        self.font = font
+        self.size = size
+        self._width = 0
+        self._height = size * 1.45
+
+    def wrap(self, availWidth, availHeight):
+        self._width = availWidth
+        return availWidth, self._height
+
+    def draw(self):
+        c = self.canv
+        c.setFont(self.font, self.size)
+        page_w = c.stringWidth(self.page, self.font, self.size)
+        max_label = max(0, self._width - page_w - 10)
+        label = self.label
+        while label and c.stringWidth(label, self.font, self.size) > max_label:
+            label = label[:-1]
+        if label != self.label and len(label) > 1:
+            label = label[:-1] + "…"
+        y = 2
+        c.drawString(0, y, label)
+        c.drawRightString(self._width, y, self.page)
+        label_w = c.stringWidth(label, self.font, self.size)
+        x0 = label_w + 3
+        x1 = self._width - page_w - 3
+        if x1 <= x0:
+            return
+        dot = "."
+        step = c.stringWidth(dot, self.font, self.size) * 1.35
+        x = x0
+        while x + step * 0.5 < x1:
+            c.drawString(x, y, dot)
+            x += step
+
+
+def _mark_toc(flowable: Any, key: str) -> Any:
+    """Marca flowable para captura de página no afterFlowable."""
+    flowable.toc_key = key
+    return flowable
+
+
+def _heading_with_toc(text: str, style, key: str) -> Paragraph:
+    return _mark_toc(Paragraph(_esc(text), style), key)
 
 
 def _make_page_callbacks(
@@ -528,8 +582,8 @@ def _signatures_flow(
         return []
     sig_map = signature_paths or {}
     flow: list[Any] = [
-        PageBreak(),
-        Paragraph(_esc("Responsáveis técnicos"), styles["h1"]),
+        Spacer(1, 12),
+        _heading_with_toc("Responsáveis técnicos", styles["h1"], toc_bookmark_name("assinaturas")),
         Paragraph(
             _esc(
                 "Declaramos, para os devidos fins, a responsabilidade técnica pelo presente laudo, "
@@ -621,274 +675,348 @@ def build_inspection_laudo_pdf(
             brasao_raw, size_px=1800, opacity=0.06, max_width_px=1800
         ) or brasao_raw
 
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buf,
-        pagesize=A4,
-        leftMargin=2.5 * cm,
-        rightMargin=2.0 * cm,
-        topMargin=2.5 * cm,
-        bottomMargin=2.3 * cm,
-    )
     styles = _styles()
-    story: list[Any] = []
-
-    story.extend(_cover_flow(export_content, styles, generated_at=generated_at))
-
     sumario_entries = build_sumario_entries(export_content)
-    if sumario_entries:
-        story.append(PageBreak())
-        story.append(Paragraph(_esc("Sumário"), styles["h1"]))
-        story.append(
-            Paragraph(
-                _esc("O presente laudo está estruturado conforme as seções abaixo."),
-                styles["meta"],
-            )
-        )
-        story.append(Spacer(1, 8))
-        for idx, entry in enumerate(sumario_entries, start=1):
-            label = (entry.get("label") or "").strip()
-            if not label:
-                continue
-            # Labels já vêm numerados de build_body_sections / build_sumario_entries
-            story.append(Paragraph(_esc(label), styles["body"]))
-        story.append(Spacer(1, 10))
-
     sections = build_body_sections(export_content)
     usable = 16.5 * cm
 
-    for section in sections:
-        story.append(Paragraph(_esc(section["title"]), styles["h1"]))
-        if section.get("cards"):
-            story.extend(_make_cards(section["cards"], styles))
-        for para in section.get("paragraphs") or []:
-            story.append(Paragraph(_esc(para), styles["body"]))
-        for table in section.get("tables") or []:
-            headers = table.get("headers") or []
-            rows = table.get("rows") or []
-            if not headers:
-                continue
-            if table.get("caption"):
-                story.append(Paragraph(_esc(table["caption"]), styles["caption"]))
-            ncols = len(headers)
-            if ncols == 8:
-                # ID um pouco mais largo — evita quebra feia em element_id
-                widths = [1.8 * cm, 1.4 * cm, 2.8 * cm, 2.0 * cm, 1.5 * cm, 1.3 * cm, 1.5 * cm, 2.2 * cm]
-            elif ncols == 7:
-                widths = [1.3 * cm, 2.8 * cm, 2.3 * cm, 1.7 * cm, 1.2 * cm, 4.0 * cm, 2.2 * cm]
-            elif ncols == 4:
-                widths = [2.5 * cm, 2.5 * cm, 2.5 * cm, 9.0 * cm]
-            elif ncols == 2:
-                widths = [5.5 * cm, 11.0 * cm]
-            else:
-                widths = [usable / ncols] * ncols
-            story.append(_make_flow_table(headers, rows, styles, widths))
-            story.append(Spacer(1, 6))
+    def _compose_story(page_map: dict[str, int], *, lite: bool = False) -> list[Any]:
+        """Monta o story. Em modo lite, substitui imagens por spacers (sondagem de páginas)."""
+        story: list[Any] = []
+        story.extend(_cover_flow(export_content, styles, generated_at=generated_at))
 
-        cid = str(section.get("chapter_id") or "")
-        title_l = str(section.get("title") or "").lower()
-        is_ficha = cid == "ficha_tecnica" or "ficha técnica" in title_l or "ficha tecnica" in title_l
-        if is_ficha and georef_asset:
-            has_gps = (
-                georef_asset.get("latitude") is not None
-                and georef_asset.get("longitude") is not None
+        if sumario_entries:
+            story.append(PageBreak())
+            story.append(Paragraph(_esc("Sumário"), styles["h1"]))
+            story.append(
+                Paragraph(
+                    _esc("O presente laudo está estruturado conforme as seções abaixo."),
+                    styles["meta"],
+                )
             )
-            geo_path = georef_asset.get("path")
-            if has_gps and geo_path and Path(geo_path).exists():
-                try:
-                    from core.inspection_report.location_map import (
-                        FRAME_HEIGHT_IN,
-                        FRAME_WIDTH_IN,
-                        frame_image_for_export,
-                        georef_photo_caption,
-                    )
+            story.append(Spacer(1, 8))
+            for idx, entry in enumerate(sumario_entries, start=1):
+                label = (entry.get("label") or "").strip()
+                if not label:
+                    continue
+                line = label if label[:1].isdigit() else f"{idx}. {label}"
+                key = (entry.get("bookmark") or "").strip() or toc_bookmark_name(
+                    entry.get("chapter_id") or f"sec{idx}", index=idx
+                )
+                page_num: str | int = page_map.get(key) or "-"
+                story.append(_TocLine(line, page_num))
+            story.append(PageBreak())
 
-                    framed = frame_image_for_export(str(geo_path))
-                    img = Image(
-                        io.BytesIO(framed),
-                        width=FRAME_WIDTH_IN * inch,
-                        height=FRAME_HEIGHT_IN * inch,
-                    )
-                    img.hAlign = "CENTER"
-                    story.append(img)
-                    story.append(Paragraph(_esc(georef_photo_caption(georef_asset)), styles["meta"]))
-                    story.append(Spacer(1, 6))
-                except Exception:
-                    story.append(
-                        Paragraph(_esc("[Falha ao inserir imagem georreferenciada]"), styles["meta"])
-                    )
-            if has_gps:
-                try:
-                    from core.inspection_report.location_map import (
-                        FRAME_HEIGHT_IN,
-                        FRAME_WIDTH_IN,
-                        build_location_map_png,
-                        frame_image_for_export,
-                        location_map_caption,
-                        location_map_source,
-                    )
+        for i, section in enumerate(sections):
+            cid = str(section.get("chapter_id") or "")
+            key = toc_bookmark_name(cid or f"body_{i}", index=i)
+            story.append(_heading_with_toc(section["title"], styles["h1"], key))
+            if section.get("cards"):
+                story.extend(_make_cards(section["cards"], styles))
+            for para in section.get("paragraphs") or []:
+                story.append(Paragraph(_esc(para), styles["body"]))
+            for table in section.get("tables") or []:
+                headers = table.get("headers") or []
+                rows = table.get("rows") or []
+                if not headers:
+                    continue
+                if table.get("caption"):
+                    story.append(Paragraph(_esc(table["caption"]), styles["caption"]))
+                ncols = len(headers)
+                if ncols == 8:
+                    widths = [
+                        1.8 * cm,
+                        1.4 * cm,
+                        2.8 * cm,
+                        2.0 * cm,
+                        1.5 * cm,
+                        1.3 * cm,
+                        1.5 * cm,
+                        2.2 * cm,
+                    ]
+                elif ncols == 7:
+                    widths = [
+                        1.3 * cm,
+                        2.8 * cm,
+                        2.3 * cm,
+                        1.7 * cm,
+                        1.2 * cm,
+                        4.0 * cm,
+                        2.2 * cm,
+                    ]
+                elif ncols == 4:
+                    widths = [2.5 * cm, 2.5 * cm, 2.5 * cm, 9.0 * cm]
+                elif ncols == 2:
+                    widths = [5.5 * cm, 11.0 * cm]
+                else:
+                    widths = [usable / ncols] * ncols
+                story.append(_make_flow_table(headers, rows, styles, widths))
+                story.append(Spacer(1, 6))
 
-                    map_png = build_location_map_png(
-                        float(georef_asset["latitude"]),
-                        float(georef_asset["longitude"]),
-                        cache_path=georef_asset.get("map_cache_path"),
-                    )
-                    if map_png:
-                        framed_map = frame_image_for_export(map_png)
-                        map_img = Image(
-                            io.BytesIO(framed_map),
-                            width=FRAME_WIDTH_IN * inch,
-                            height=FRAME_HEIGHT_IN * inch,
-                        )
-                        map_img.hAlign = "CENTER"
-                        story.append(map_img)
-                        story.append(
-                            Paragraph(
-                                _esc(
-                                    location_map_caption(
-                                        float(georef_asset["latitude"]),
-                                        float(georef_asset["longitude"]),
-                                        georef_asset.get("label"),
-                                        source=location_map_source(
-                                            georef_asset.get("map_cache_path")
-                                        ),
-                                    )
-                                ),
-                                styles["meta"],
+            title_l = str(section.get("title") or "").lower()
+            is_ficha = (
+                cid == "ficha_tecnica"
+                or "ficha técnica" in title_l
+                or "ficha tecnica" in title_l
+            )
+            if is_ficha and georef_asset:
+                has_gps = (
+                    georef_asset.get("latitude") is not None
+                    and georef_asset.get("longitude") is not None
+                )
+                geo_path = georef_asset.get("path")
+                if has_gps and geo_path and Path(geo_path).exists():
+                    if lite:
+                        story.append(Spacer(1, 9 * cm))
+                    else:
+                        try:
+                            from core.inspection_report.location_map import (
+                                FRAME_HEIGHT_IN,
+                                FRAME_WIDTH_IN,
+                                frame_image_for_export,
+                                georef_photo_caption,
                             )
+
+                            framed = frame_image_for_export(str(geo_path))
+                            img = Image(
+                                io.BytesIO(framed),
+                                width=FRAME_WIDTH_IN * inch,
+                                height=FRAME_HEIGHT_IN * inch,
+                            )
+                            img.hAlign = "CENTER"
+                            story.append(img)
+                            story.append(
+                                Paragraph(
+                                    _esc(georef_photo_caption(georef_asset)), styles["meta"]
+                                )
+                            )
+                            story.append(Spacer(1, 6))
+                        except Exception:
+                            story.append(
+                                Paragraph(
+                                    _esc("[Falha ao inserir imagem georreferenciada]"),
+                                    styles["meta"],
+                                )
+                            )
+                if has_gps:
+                    if lite:
+                        story.append(Spacer(1, 9 * cm))
+                    else:
+                        try:
+                            from core.inspection_report.location_map import (
+                                FRAME_HEIGHT_IN,
+                                FRAME_WIDTH_IN,
+                                build_location_map_png,
+                                frame_image_for_export,
+                                location_map_caption,
+                                location_map_source,
+                            )
+
+                            map_png = build_location_map_png(
+                                float(georef_asset["latitude"]),
+                                float(georef_asset["longitude"]),
+                                cache_path=georef_asset.get("map_cache_path"),
+                            )
+                            if map_png:
+                                framed_map = frame_image_for_export(map_png)
+                                map_img = Image(
+                                    io.BytesIO(framed_map),
+                                    width=FRAME_WIDTH_IN * inch,
+                                    height=FRAME_HEIGHT_IN * inch,
+                                )
+                                map_img.hAlign = "CENTER"
+                                story.append(map_img)
+                                story.append(
+                                    Paragraph(
+                                        _esc(
+                                            location_map_caption(
+                                                float(georef_asset["latitude"]),
+                                                float(georef_asset["longitude"]),
+                                                georef_asset.get("label"),
+                                                source=location_map_source(
+                                                    georef_asset.get("map_cache_path")
+                                                ),
+                                            )
+                                        ),
+                                        styles["meta"],
+                                    )
+                                )
+                                story.append(Spacer(1, 8))
+                        except Exception:
+                            pass
+
+            for ch_img in section.get("chart_images") or []:
+                if ch_img.get("caption"):
+                    story.append(Paragraph(_esc(ch_img["caption"]), styles["caption"]))
+                if lite:
+                    story.append(Spacer(1, 7.2 * cm))
+                    continue
+                png = ch_img.get("png")
+                if png:
+                    try:
+                        img = Image(
+                            io.BytesIO(png),
+                            width=15.5 * cm,
+                            height=7.2 * cm,
+                            kind="proportional",
                         )
+                        img.hAlign = "CENTER"
+                        story.append(img)
                         story.append(Spacer(1, 8))
-                except Exception:
-                    pass
+                    except Exception:
+                        pass
 
-        for ch_img in section.get("chart_images") or []:
-            if ch_img.get("caption"):
-                story.append(Paragraph(_esc(ch_img["caption"]), styles["caption"]))
-            png = ch_img.get("png")
-            if png:
-                try:
-                    img = Image(io.BytesIO(png), width=15.5 * cm, height=7.2 * cm, kind="proportional")
-                    img.hAlign = "CENTER"
-                    story.append(img)
-                    story.append(Spacer(1, 8))
-                except Exception:
-                    pass
+        story.extend(_signatures_flow(export_content, styles, signature_paths))
 
-    story.extend(_signatures_flow(export_content, styles, signature_paths))
-
-    art_tbl = art_traceability_table(export_content)
-    if art_tbl:
-        story.append(Paragraph(_esc("ART e documentos técnicos"), styles["h2"]))
-        story.append(
-            Paragraph(
-                _esc("Rastreabilidade de ART/anexos dos responsáveis técnicos (L18)."),
-                styles["body"],
+        art_tbl = art_traceability_table(export_content)
+        if art_tbl:
+            story.append(Paragraph(_esc("ART e documentos técnicos"), styles["h2"]))
+            story.append(
+                Paragraph(
+                    _esc("Rastreabilidade de ART/anexos dos responsáveis técnicos (L18)."),
+                    styles["body"],
+                )
             )
-        )
-        headers = art_tbl.get("headers") or []
-        rows = art_tbl.get("rows") or []
-        data = [headers] + rows
-        t = Table(data, colWidths=[3.2 * cm, 2.2 * cm, 2.2 * cm, 2.5 * cm, 1.8 * cm, 4.6 * cm])
-        t.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF9")),
-                    ("FONTSIZE", (0, 0), (-1, -1), 7),
-                    ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ]
-            )
-        )
-        story.append(t)
-        story.append(Spacer(1, 10))
-
-    next_num = (sections[-1]["number"] + 1) if sections else 1
-    index_table = build_photographic_index_table(export_content)
-    if index_table:
-        story.append(PageBreak())
-        story.append(
-            Paragraph(_esc(f"{next_num}. Índice do relatório fotográfico"), styles["h1"])
-        )
-        story.append(
-            Paragraph(
-                _esc(
-                    "Relação ordenada das fotografias com vínculo a elemento e patologias, "
-                    "para localização rápida no anexo."
-                ),
-                styles["body"],
-            )
-        )
-        headers = index_table.get("headers") or []
-        rows = index_table.get("rows") or []
-        if headers:
-            if index_table.get("caption"):
-                story.append(Paragraph(_esc(index_table["caption"]), styles["caption"]))
-            widths = [1.5 * cm, 6.0 * cm, 3.0 * cm, 2.5 * cm, 3.5 * cm]
+            headers = art_tbl.get("headers") or []
+            rows = art_tbl.get("rows") or []
+            # Paragraphs + larguras: nome quebra de linha (evita sobrepor CREA)
+            widths = [4.6 * cm, 2.4 * cm, 2.0 * cm, 2.2 * cm, 1.5 * cm, 3.8 * cm]
             story.append(_make_flow_table(headers, rows, styles, widths))
-            story.append(Spacer(1, 6))
-        next_num += 1
+            story.append(Spacer(1, 10))
 
-    story.append(PageBreak())
-    story.append(Paragraph(_esc(f"{next_num}. Relatório fotográfico"), styles["h1"]))
-    story.append(Paragraph(_esc(build_photographic_presentation(export_content)), styles["body"]))
-
-    photo_entries = export_content.get("photographic_report") or []
-    path_by_file = {a["filename"].lower(): a for a in image_assets}
-    path_by_num = {int(a["photo_number"]): a for a in image_assets if a.get("photo_number")}
-    ordered = sorted(photo_entries, key=lambda p: int(p.get("photo_number") or 0))
-    if not ordered:
-        ordered = [
-            {
-                "photo_number": a.get("photo_number"),
-                "filename": a["filename"],
-                "title": f"Foto {a.get('photo_number') or '':02d}",
-                "description": a.get("caption") or "Registro fotográfico.",
-                "legend": "",
-            }
-            for a in image_assets
-        ]
-
-    for entry in ordered:
-        story.append(PageBreak())
-        num = int(entry.get("photo_number") or 0)
-        block: list[Any] = [
-            Paragraph(
-                _esc(f"Foto {num:02d} – {entry.get('title') or entry.get('filename') or ''}"),
-                styles["h2_center"],
+        next_num = (sections[-1]["number"] + 1) if sections else 1
+        index_table = build_photographic_index_table(export_content)
+        if index_table:
+            story.append(PageBreak())
+            story.append(
+                _heading_with_toc(
+                    f"{next_num}. Índice do relatório fotográfico",
+                    styles["h1"],
+                    toc_bookmark_name("indice_fotografico"),
+                )
             )
-        ]
-        asset = path_by_num.get(num) or path_by_file.get(str(entry.get("filename") or "").lower())
-        if asset and Path(asset["path"]).exists():
-            try:
-                from core.inspection_report.visual_memory import image_bytes_with_visual_memory
+            story.append(
+                Paragraph(
+                    _esc(
+                        "Relação ordenada das fotografias com vínculo a elemento e patologias, "
+                        "para localização rápida no anexo."
+                    ),
+                    styles["body"],
+                )
+            )
+            headers = index_table.get("headers") or []
+            rows = index_table.get("rows") or []
+            if headers:
+                if index_table.get("caption"):
+                    story.append(Paragraph(_esc(index_table["caption"]), styles["caption"]))
+                widths = [1.5 * cm, 6.0 * cm, 3.0 * cm, 2.5 * cm, 3.5 * cm]
+                story.append(_make_flow_table(headers, rows, styles, widths))
+                story.append(Spacer(1, 6))
+            next_num += 1
 
-                dw, dh = fit_image_display_inches(str(asset["path"]), max_w=5.9, max_h=5.0)
-                img_bytes = image_bytes_with_visual_memory(
-                    str(asset["path"]),
-                    export_content,
-                    asset_id=asset.get("asset_id"),
-                    photo_number=num or asset.get("photo_number"),
-                )
-                img = Image(
-                    io.BytesIO(img_bytes),
-                    width=dw * inch,
-                    height=dh * inch,
-                    kind="proportional",
-                )
-                img.hAlign = "CENTER"
-                block.append(img)
-                block.append(Spacer(1, 4))
-            except Exception:
-                block.append(
-                    Paragraph(_esc(f"[Falha ao inserir {asset['filename']}]"), styles["meta_left"])
-                )
-        block.append(
-            Paragraph(f"<b>Descrição:</b> {_esc(entry.get('description') or '—')}", styles["body"])
+        story.append(PageBreak())
+        story.append(
+            _heading_with_toc(
+                f"{next_num}. Relatório fotográfico",
+                styles["h1"],
+                toc_bookmark_name("fotografico"),
+            )
         )
-        if entry.get("legend"):
-            block.append(Paragraph(f"Legenda: {_esc(entry.get('legend'))}", styles["legend"]))
-        block.append(Paragraph(_esc(photo_source_line(export_content)), styles["meta"]))
-        story.append(KeepTogether(block))
+        story.append(
+            Paragraph(_esc(build_photographic_presentation(export_content)), styles["body"])
+        )
+
+        photo_entries = export_content.get("photographic_report") or []
+        path_by_file = {a["filename"].lower(): a for a in image_assets}
+        path_by_num = {
+            int(a["photo_number"]): a for a in image_assets if a.get("photo_number")
+        }
+        ordered = sorted(photo_entries, key=lambda p: int(p.get("photo_number") or 0))
+        if not ordered:
+            ordered = [
+                {
+                    "photo_number": a.get("photo_number"),
+                    "filename": a["filename"],
+                    "title": f"Foto {a.get('photo_number') or '':02d}",
+                    "description": a.get("caption") or "Registro fotográfico.",
+                    "legend": "",
+                }
+                for a in image_assets
+            ]
+
+        for entry in ordered:
+            story.append(PageBreak())
+            num = int(entry.get("photo_number") or 0)
+            story.append(
+                Paragraph(
+                    _esc(
+                        f"Foto {num:02d} – {entry.get('title') or entry.get('filename') or ''}"
+                    ),
+                    styles["h2_center"],
+                )
+            )
+            if lite:
+                # Reserva altura típica da foto sem decodificar bytes (sondagem rápida)
+                story.append(Spacer(1, 5.2 * inch))
+                story.append(
+                    Paragraph(
+                        f"<b>Descrição:</b> {_esc(entry.get('description') or '-')}",
+                        styles["body"],
+                    )
+                )
+                continue
+
+            block: list[Any] = []
+            asset = path_by_num.get(num) or path_by_file.get(
+                str(entry.get("filename") or "").lower()
+            )
+            if asset and Path(asset["path"]).exists():
+                try:
+                    from core.inspection_report.visual_memory import (
+                        image_bytes_with_visual_memory,
+                    )
+
+                    dw, dh = fit_image_display_inches(
+                        str(asset["path"]), max_w=5.9, max_h=5.0
+                    )
+                    img_bytes = image_bytes_with_visual_memory(
+                        str(asset["path"]),
+                        export_content,
+                        asset_id=asset.get("asset_id"),
+                        photo_number=num or asset.get("photo_number"),
+                    )
+                    img = Image(
+                        io.BytesIO(img_bytes),
+                        width=dw * inch,
+                        height=dh * inch,
+                        kind="proportional",
+                    )
+                    img.hAlign = "CENTER"
+                    block.append(img)
+                    block.append(Spacer(1, 4))
+                except Exception:
+                    block.append(
+                        Paragraph(
+                            _esc(f"[Falha ao inserir {asset['filename']}]"),
+                            styles["meta_left"],
+                        )
+                    )
+            block.append(
+                Paragraph(
+                    f"<b>Descrição:</b> {_esc(entry.get('description') or '-')}",
+                    styles["body"],
+                )
+            )
+            if entry.get("legend"):
+                block.append(
+                    Paragraph(f"Legenda: {_esc(entry.get('legend'))}", styles["legend"])
+                )
+            block.append(
+                Paragraph(_esc(photo_source_line(export_content)), styles["meta"])
+            )
+            story.append(KeepTogether(block) if block else Spacer(1, 1))
+
+        return story
 
     on_page = _make_page_callbacks(
         org=org,
@@ -898,5 +1026,31 @@ def build_inspection_laudo_pdf(
         meta_lines=meta_lines,
         watermark_bytes=watermark_bytes or brasao_raw,
     )
-    doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
+
+    def _doc_template(buffer: io.BytesIO) -> SimpleDocTemplate:
+        return SimpleDocTemplate(
+            buffer,
+            pagesize=A4,
+            leftMargin=2.5 * cm,
+            rightMargin=2.0 * cm,
+            topMargin=2.5 * cm,
+            bottomMargin=2.3 * cm,
+        )
+
+    # 1) Sondagem leve (sem decodificar dezenas de fotos) → mapa de páginas do sumário
+    page_map: dict[str, int] = {}
+    probe = _doc_template(io.BytesIO())
+
+    def _capture(flowable, _doc=probe, _cap=page_map):
+        key = getattr(flowable, "toc_key", None)
+        if key and key not in _cap:
+            _cap[key] = _doc.page
+
+    probe.afterFlowable = _capture  # type: ignore[method-assign]
+    probe.build(_compose_story({}, lite=True), onFirstPage=on_page, onLaterPages=on_page)
+
+    # 2) PDF final completo com números do sumário
+    buf = io.BytesIO()
+    doc = _doc_template(buf)
+    doc.build(_compose_story(page_map, lite=False), onFirstPage=on_page, onLaterPages=on_page)
     return buf.getvalue()

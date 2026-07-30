@@ -8,6 +8,80 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.router import route, route_by_rules, normalize_discipline
 
 
+def test_estrutural_explicit_and_nbr():
+    cases = [
+        "projeto estrutural de edifício",
+        "análise estrutural de pórtico",
+        "o que diz a NBR 6118 sobre cobrimento",
+        "NBR 8800 estruturas de aço",
+        "estrutura metálica galpão",
+        "dimensionamento de sapata isolada",
+        "preciso de ajuda com estrutural",
+        "fundação rasa estrutural",
+        "verificar ELU e ELS da estrutura",
+        "modelo estrutural em pórtico 3D",
+    ]
+    for text in cases:
+        assert route_by_rules(text) == "ESTRUTURAL", text
+        assert route(text)["discipline"] == "ESTRUTURAL", text
+        assert route(text)["agent"] == "estruturas_agent", text
+
+
+def test_geotecnia_keeps_sondagem_fundacao():
+    text = "sondagem SPT para fundação"
+    assert route_by_rules(text) == "GEOTECNIA"
+    assert route(text)["discipline"] == "GEOTECNIA"
+
+
+def test_estrutura_not_confused_with_infraestrutura():
+    # "estrutura" ⊂ "infraestrutura" não deve roubar INFRAESTRUTURA
+    text = "obra de infraestrutura urbana com terraplanagem"
+    assert route_by_rules(text) == "INFRAESTRUTURA"
+
+
+def test_call_llm_prefers_gemini_36():
+    from unittest.mock import patch
+
+    from core.router import call_llm
+
+    with (
+        patch("core.inspection_report.gemini_client.gemini_available", return_value=True),
+        patch(
+            "core.inspection_report.gemini_client.resolve_gemini_model",
+            return_value="gemini-3.6-flash",
+        ),
+        patch(
+            "core.inspection_report.gemini_client.generate_text",
+            return_value="ESTRUTURAL",
+        ) as mock_gem,
+        patch("core.router.requests.post") as mock_post,
+    ):
+        out = call_llm("classifique: projeto estrutural")
+    assert out == "estrutural"
+    mock_gem.assert_called_once()
+    mock_post.assert_not_called()
+
+
+def test_call_llm_falls_back_when_gemini_unavailable():
+    from unittest.mock import MagicMock, patch
+
+    from core.router import call_llm
+
+    fake = MagicMock()
+    fake.json.return_value = {"response": "HIDROSSANITARIO"}
+    fake.raise_for_status = MagicMock()
+
+    with (
+        patch("core.inspection_report.gemini_client.gemini_available", return_value=False),
+        patch("config.settings.USE_MODEL_ROUTER", False),
+        patch("config.settings.USE_MODEL_EVALUATION", False),
+        patch("core.router.requests.post", return_value=fake) as mock_post,
+    ):
+        out = call_llm("classifique: esgoto")
+    assert "hidrossanitario" in out
+    mock_post.assert_called_once()
+
+
 def test_estrutural_viga_concreto():
     text = "dimensionar viga de concreto armado"
     assert route_by_rules(text) == "ESTRUTURAL"
@@ -146,6 +220,9 @@ def test_dispatcher_has_chat_agent():
 
 if __name__ == "__main__":
     test_estrutural_viga_concreto()
+    test_estrutural_explicit_and_nbr()
+    test_geotecnia_keeps_sondagem_fundacao()
+    test_estrutura_not_confused_with_infraestrutura()
     test_hidrossanitario()
     test_eletrica()
     test_geotecnia()

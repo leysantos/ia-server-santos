@@ -10,7 +10,11 @@ class ModelsStatusResponse(BaseModel):
     learned_overrides: dict[str, str] = Field(default_factory=dict)
     performance_profiles: list[dict[str, Any]] = Field(default_factory=list)
     installed_models: list[str] = Field(default_factory=list)
+    cloud_models: list[str] = Field(default_factory=list)
+    local_models: list[str] = Field(default_factory=list)
+    gemini_available: bool = False
     active_by_module: dict[str, str] = Field(default_factory=dict)
     recent_requests: list[dict[str, Any]] = Field(default_factory=list)
     legacy_models: dict[str, str] = Field(default_factory=dict)
     ollama: str = "unknown"
+    ollama_base_url: Optional[str] = None

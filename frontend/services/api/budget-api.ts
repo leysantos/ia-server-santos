@@ -20,6 +20,10 @@ import type {
   PriceMatchingCatalogHit,
   PriceMatchingJob,
   PriceMatchingRow,
+  OrcaFacilJob,
+  OrcaFacilJobSummary,
+  OrcaFacilBaseHit,
+  OrcaFacilPlanStage,
   PriceBankInventory,
   PriceBankReference,
   PriceBankStats,
@@ -1403,6 +1407,114 @@ export const budgetApi = {
       method: "POST",
       headers: getAuthHeaders(),
     }
+    );
+    if (!response.ok) throw new Error(await parseFetchError(response));
+    return response.blob();
+  },
+
+  // --- OrçaFacil ---
+  orcaFacilCreateJob(body: {
+    title?: string;
+    premissas?: Record<string, unknown>;
+    etapas_seed?: Array<{ name: string; subetapas?: Array<{ name: string }> }>;
+    user_prompt?: string;
+    skeleton_id?: string;
+    skeleton_name?: string;
+  }): Promise<OrcaFacilJob> {
+    return request<OrcaFacilJob>("/pricing/budget/orca-facil/jobs", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  orcaFacilGetJob(jobId: string): Promise<OrcaFacilJob> {
+    return request<OrcaFacilJob>(`/pricing/budget/orca-facil/jobs/${jobId}`);
+  },
+
+  orcaFacilListJobs(
+    limit = 40,
+    summary = false
+  ): Promise<{ jobs: OrcaFacilJob[] | OrcaFacilJobSummary[] }> {
+    const qs = new URLSearchParams({ limit: String(limit), summary: String(summary) });
+    return request(`/pricing/budget/orca-facil/jobs?${qs.toString()}`);
+  },
+
+  orcaFacilDeleteJob(jobId: string): Promise<{ deleted: string }> {
+    return request(`/pricing/budget/orca-facil/jobs/${jobId}`, { method: "DELETE" });
+  },
+
+  orcaFacilSearchBase(
+    jobId: string,
+    query: string,
+    topK = 20
+  ): Promise<{
+    hits: OrcaFacilBaseHit[];
+    query: string;
+    base_size: number;
+    sheet_name?: string | null;
+  }> {
+    const qs = new URLSearchParams({ q: query, top_k: String(topK) });
+    return request(`/pricing/budget/orca-facil/jobs/${jobId}/base-search?${qs.toString()}`);
+  },
+
+  orcaFacilUpdateJob(
+    jobId: string,
+    body: {
+      title?: string;
+      premissas?: Record<string, unknown>;
+      etapas_seed?: Array<{ name: string; subetapas?: Array<{ name: string }> }>;
+      user_prompt?: string;
+      skeleton_id?: string | null;
+      skeleton_name?: string | null;
+    }
+  ): Promise<OrcaFacilJob> {
+    return request<OrcaFacilJob>(`/pricing/budget/orca-facil/jobs/${jobId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  },
+
+  orcaFacilPutPlan(
+    jobId: string,
+    body: {
+      stages: OrcaFacilPlanStage[];
+      rewrite_workbook?: boolean;
+    }
+  ): Promise<OrcaFacilJob> {
+    return request<OrcaFacilJob>(`/pricing/budget/orca-facil/jobs/${jobId}/plan`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+  },
+
+  async orcaFacilUpload(
+    jobId: string,
+    kind: "modelo" | "exemplo" | "pranchas" | "fotos",
+    files: File[]
+  ): Promise<{ job: OrcaFacilJob; saved: Array<{ name: string; kind: string }> }> {
+    const form = new FormData();
+    form.append("kind", kind);
+    for (const f of files) form.append("files", f);
+    const response = await apiFetch(
+      `${getApiBaseUrl()}/pricing/budget/orca-facil/jobs/${jobId}/upload`,
+      { method: "POST", headers: getMultipartAuthHeaders(), body: form }
+    );
+    if (!response.ok) throw new Error(await parseFetchError(response));
+    return response.json();
+  },
+
+  orcaFacilProcess(jobId: string, asyncMode = true): Promise<OrcaFacilJob> {
+    const qs = new URLSearchParams({ async_mode: String(asyncMode) });
+    return request<OrcaFacilJob>(
+      `/pricing/budget/orca-facil/jobs/${jobId}/process?${qs.toString()}`,
+      { method: "POST" }
+    );
+  },
+
+  async orcaFacilExportXlsm(jobId: string): Promise<Blob> {
+    const response = await apiFetch(
+      `${getApiBaseUrl()}/pricing/budget/orca-facil/jobs/${jobId}/export/xlsm`,
+      { method: "POST", headers: getAuthHeaders() }
     );
     if (!response.ok) throw new Error(await parseFetchError(response));
     return response.blob();

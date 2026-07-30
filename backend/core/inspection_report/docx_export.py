@@ -15,7 +15,7 @@ from typing import Any
 
 from docx import Document
 from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING, WD_TAB_ALIGNMENT, WD_TAB_LEADER
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Inches, Pt, RGBColor
@@ -36,6 +36,7 @@ from core.inspection_report.format_utils import (
     normalize_parties,
     party_display_lines,
     photo_source_line,
+    toc_bookmark_name,
 )
 from core.system.company_profile import (
     get_company_profile,
@@ -47,6 +48,8 @@ FIRST_LINE_INDENT = Cm(1.5)
 BLUE = RGBColor(0x1D, 0x4E, 0xD8)
 GRAY = RGBColor(0x47, 0x55, 0x69)
 BLACK = RGBColor(0x0F, 0x17, 0x2A)
+# Contador de bookmarks Word (ids únicos no documento)
+_BOOKMARK_ID = 0
 
 
 def _set_run_font(run, *, size=11, bold=False, color: RGBColor | None = None):
@@ -127,7 +130,7 @@ def _clear_paragraph(p):
     p.clear()
 
 
-def _add_field(paragraph, instr_text: str):
+def _add_field(paragraph, instr_text: str, *, size: int = 8, result: str = ""):
     run = paragraph.add_run()
     fld_begin = OxmlElement("w:fldChar")
     fld_begin.set(qn("w:fldCharType"), "begin")
@@ -136,13 +139,43 @@ def _add_field(paragraph, instr_text: str):
     instr.text = instr_text
     fld_sep = OxmlElement("w:fldChar")
     fld_sep.set(qn("w:fldCharType"), "separate")
-    fld_end = OxmlElement("w:fldChar")
-    fld_end.set(qn("w:fldCharType"), "end")
     run._r.append(fld_begin)
     run._r.append(instr)
     run._r.append(fld_sep)
+    if result:
+        t = OxmlElement("w:t")
+        t.set(qn("xml:space"), "preserve")
+        t.text = result
+        run._r.append(t)
+    fld_end = OxmlElement("w:fldChar")
+    fld_end.set(qn("w:fldCharType"), "end")
     run._r.append(fld_end)
-    _set_run_font(run, size=8)
+    _set_run_font(run, size=size)
+
+
+def _add_bookmark(paragraph, name: str) -> None:
+    """Insere bookmarkStart/End no parágrafo (âncora para PAGEREF no sumário)."""
+    global _BOOKMARK_ID
+    _BOOKMARK_ID += 1
+    bid = str(_BOOKMARK_ID)
+    start = OxmlElement("w:bookmarkStart")
+    start.set(qn("w:id"), bid)
+    start.set(qn("w:name"), name)
+    end = OxmlElement("w:bookmarkEnd")
+    end.set(qn("w:id"), bid)
+    paragraph._p.insert(0, start)
+    paragraph._p.append(end)
+
+
+def _enable_update_fields_on_open(doc: Document) -> None:
+    """Pede ao Word/LibreOffice para recalcular PAGE/PAGEREF ao abrir."""
+    settings = doc.settings.element
+    for child in list(settings):
+        if child.tag == qn("w:updateFields"):
+            settings.remove(child)
+    el = OxmlElement("w:updateFields")
+    el.set(qn("w:val"), "true")
+    settings.append(el)
 
 
 def _set_table_fixed(table, widths_cm: list[float]):
@@ -395,6 +428,9 @@ def _add_table(doc: Document, table_data: dict[str, Any]):
         widths = [1.8, 1.4, 2.8, 2.0, 1.5, 1.3, 1.5, 2.2]
     elif ncols == 7:
         widths = [1.3, 3.0, 2.4, 1.7, 1.2, 4.0, 2.4]
+    elif ncols == 6:
+        # ART L18: Responsável mais largo para quebrar linha sem cobrir o CREA
+        widths = [4.6, 2.4, 2.0, 2.2, 1.5, 3.8]
     elif ncols == 4:
         widths = [2.5, 2.5, 2.5, 9.0]
     elif ncols == 2:
@@ -473,13 +509,67 @@ def _add_cards(doc: Document, cards: list[dict[str, Any]]):
         doc.add_paragraph().paragraph_format.space_after = Pt(6)
 
 
-def _add_heading(doc: Document, text: str, level: int = 1, *, align=WD_ALIGN_PARAGRAPH.LEFT):
+def _add_heading(
+    doc: Document,
+    text: str,
+    level: int = 1,
+    *,
+    align=WD_ALIGN_PARAGRAPH.LEFT,
+    bookmark: str | None = None,
+):
     h = doc.add_heading(text, level=level)
     h.alignment = align
     for run in h.runs:
         size = 14 if level == 0 else (12 if level == 1 else 11)
         _set_run_font(run, size=size, bold=True, color=BLUE if level == 1 else BLACK)
+    if bookmark:
+        _add_bookmark(h, bookmark)
     return h
+
+
+def _add_sumario_entry(doc: Document, label: str, bookmark: str) -> None:
+    """Linha do sumário: título ····· N (tab direita com líder pontilhado + PAGEREF)."""
+    p = doc.add_paragraph()
+    pf = p.paragraph_format
+    pf.space_before = Pt(0)
+    pf.space_after = Pt(4)
+    pf.line_spacing_rule = WD_LINE_SPACING.SINGLE
+    pf.first_line_indent = Pt(0)
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    # Largura útil A4: 21 − 2,5 − 2,0 = 16,5 cm
+    pf.tab_stops.add_tab_stop(Cm(16.5), WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS)
+    run = p.add_run(label)
+    _set_run_font(run, size=11, color=BLACK)
+    p.add_run("\t")
+    _add_field(p, f" PAGEREF {bookmark} \\h ", size=11, result="—")
+
+
+def _add_sumario(doc: Document, content: dict[str, Any]) -> None:
+    """Insere Sumário em página exclusiva (após a capa; antes do 1º capítulo)."""
+    entries = build_sumario_entries(content)
+    if not entries:
+        return
+    doc.add_page_break()
+    _add_heading(doc, "Sumário", level=1, align=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_paragraph(
+        doc,
+        "O presente laudo está estruturado conforme as seções abaixo.",
+        first_indent=False,
+        align=WD_ALIGN_PARAGRAPH.CENTER,
+        size=10,
+        space_after=10,
+    )
+    for idx, entry in enumerate(entries, start=1):
+        label = (entry.get("label") or "").strip()
+        if not label:
+            continue
+        line = label if label[:1].isdigit() else f"{idx}. {label}"
+        bookmark = (entry.get("bookmark") or "").strip() or toc_bookmark_name(
+            entry.get("chapter_id") or f"sec{idx}", index=idx
+        )
+        _add_sumario_entry(doc, line, bookmark)
+    # Página exclusiva: 1º capítulo começa na folha seguinte
+    doc.add_page_break()
 
 
 def _add_signature_cell(cell, party: dict[str, Any], signature_path: str | None = None) -> None:
@@ -525,8 +615,13 @@ def _add_signatures_block(
     if not parties:
         return
     sig_map = signature_paths or {}
-    doc.add_page_break()
-    _add_heading(doc, "Responsáveis técnicos", level=1)
+    # Continua na folha anterior quando couber (sem quebra forçada)
+    _add_heading(
+        doc,
+        "Responsáveis técnicos",
+        level=1,
+        bookmark=toc_bookmark_name("assinaturas"),
+    )
     _add_paragraph(
         doc,
         "Declaramos, para os devidos fins, a responsabilidade técnica pelo presente laudo, "
@@ -700,37 +795,6 @@ def _add_cover_page(doc: Document, content: dict[str, Any], *, generated_at: str
         )
 
 
-def _add_sumario(doc: Document, content: dict[str, Any]) -> None:
-    """Insere página de Sumário após a capa, com a lista de seções do laudo."""
-    entries = build_sumario_entries(content)
-    if not entries:
-        return
-    doc.add_page_break()
-    _add_heading(doc, "Sumário", level=1, align=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_paragraph(
-        doc,
-        "O presente laudo está estruturado conforme as seções abaixo.",
-        first_indent=False,
-        align=WD_ALIGN_PARAGRAPH.CENTER,
-        size=10,
-        space_after=10,
-    )
-    for idx, entry in enumerate(entries, start=1):
-        label = (entry.get("label") or "").strip()
-        if not label:
-            continue
-        # Se o título já tem numeração (ex.: "1. Solicitação"), não prefixa índice do sumário
-        line = label if label[:1].isdigit() else f"{idx}. {label}"
-        _add_paragraph(
-            doc,
-            line,
-            first_indent=False,
-            align=WD_ALIGN_PARAGRAPH.LEFT,
-            size=11,
-            space_after=4,
-        )
-
-
 def build_inspection_laudo_docx(
     *,
     content: dict[str, Any],
@@ -739,6 +803,8 @@ def build_inspection_laudo_docx(
     signature_paths: dict[str, str] | None = None,
 ) -> bytes:
     generated_at = format_generated_at(datetime.now())
+    global _BOOKMARK_ID
+    _BOOKMARK_ID = 0
     doc = Document()
 
     export_content = dict(content or {})
@@ -751,14 +817,17 @@ def build_inspection_laudo_docx(
         )
 
     _setup_header_footer(doc, content=export_content, generated_at=generated_at)
+    _enable_update_fields_on_open(doc)
 
     _add_cover_page(doc, export_content, generated_at=generated_at)
 
     _add_sumario(doc, export_content)
 
     sections = build_body_sections(export_content)
-    for section in sections:
-        _add_heading(doc, section["title"], level=1)
+    for i, section in enumerate(sections):
+        cid = str(section.get("chapter_id") or "")
+        bm = toc_bookmark_name(cid or f"body_{i}", index=i)
+        _add_heading(doc, section["title"], level=1, bookmark=bm)
         if section.get("cards"):
             _add_cards(doc, section["cards"])
         for para in section.get("paragraphs") or []:
@@ -906,7 +975,12 @@ def build_inspection_laudo_docx(
     index_table = build_photographic_index_table(export_content)
     if index_table:
         doc.add_page_break()
-        _add_heading(doc, f"{next_num}. Índice do relatório fotográfico", level=1)
+        _add_heading(
+            doc,
+            f"{next_num}. Índice do relatório fotográfico",
+            level=1,
+            bookmark=toc_bookmark_name("indice_fotografico"),
+        )
         _add_paragraph(
             doc,
             "Relação ordenada das fotografias com vínculo a elemento e patologias, "
@@ -918,7 +992,12 @@ def build_inspection_laudo_docx(
         next_num += 1
 
     doc.add_page_break()
-    _add_heading(doc, f"{next_num}. Relatório fotográfico", level=1)
+    _add_heading(
+        doc,
+        f"{next_num}. Relatório fotográfico",
+        level=1,
+        bookmark=toc_bookmark_name("fotografico"),
+    )
     _add_paragraph(
         doc,
         build_photographic_presentation(export_content),

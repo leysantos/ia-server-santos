@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 
@@ -430,6 +431,15 @@ def build_body_sections(content: dict[str, Any]) -> list[dict[str, Any]]:
 
     return sections
 
+def toc_bookmark_name(chapter_id: str, *, index: int = 0) -> str:
+    """Nome de bookmark Word / chave TOC PDF (letra inicial, sem espaços)."""
+    raw = re.sub(r"[^A-Za-z0-9]", "_", (chapter_id or f"sec{index}").strip())
+    raw = re.sub(r"_+", "_", raw).strip("_") or f"sec{index}"
+    if not raw[0].isalpha():
+        raw = f"S_{raw}"
+    return f"toc_{raw}"[:40]
+
+
 def build_sumario_entries(content: dict[str, Any]) -> list[dict[str, str]]:
     """
     Monta o sumário institucional a partir das seções reais do corpo.
@@ -437,16 +447,24 @@ def build_sumario_entries(content: dict[str, Any]) -> list[dict[str, str]]:
     """
     sections = build_body_sections(content)
     entries: list[dict[str, str]] = []
-    for section in sections:
+    for i, section in enumerate(sections):
+        cid = str(section.get("chapter_id") or "")
         entries.append(
             {
                 "label": str(section.get("title") or ""),
-                "chapter_id": str(section.get("chapter_id") or ""),
+                "chapter_id": cid,
+                "bookmark": toc_bookmark_name(cid or f"body_{i}", index=i),
             }
         )
 
     if normalize_parties(content.get("responsaveis_tecnicos")):
-        entries.append({"label": "Responsáveis técnicos", "chapter_id": "assinaturas"})
+        entries.append(
+            {
+                "label": "Responsáveis técnicos",
+                "chapter_id": "assinaturas",
+                "bookmark": toc_bookmark_name("assinaturas"),
+            }
+        )
 
     next_n = (sections[-1]["number"] + 1) if sections else 1
     if build_photographic_index_table(content):
@@ -454,6 +472,7 @@ def build_sumario_entries(content: dict[str, Any]) -> list[dict[str, str]]:
             {
                 "label": f"{next_n}. Índice do relatório fotográfico",
                 "chapter_id": "indice_fotografico",
+                "bookmark": toc_bookmark_name("indice_fotografico"),
             }
         )
         next_n += 1
@@ -461,6 +480,7 @@ def build_sumario_entries(content: dict[str, Any]) -> list[dict[str, str]]:
         {
             "label": f"{next_n}. Relatório fotográfico",
             "chapter_id": "fotografico",
+            "bookmark": toc_bookmark_name("fotografico"),
         }
     )
     return [e for e in entries if (e.get("label") or "").strip()]

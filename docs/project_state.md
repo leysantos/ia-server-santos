@@ -6,9 +6,9 @@
 | Campo | Valor |
 |-------|-------|
 | **Versão do sistema** | 1.0.0 |
-| **Última atualização** | 2026-07-28 (CI E2E budget — mock composition + isolamento API) |
-| **Próximo foco** | Piloto UI §4.U `/budget` · Laudos PAdES com cert A1 em produção |
-| **Marco atual** | M1–M8 ✅ · Orçamento B1–B30 ✅ |
+| **Última atualização** | 2026-07-29 (Laudos — assinatura continua na folha; ART sem sobreposição) |
+| **Próximo foco** | **OrçaFacil** OF7 memória rica · OF9 benchmark CONT_DREN · validação takeoff edificação |
+| **Marco atual** | M1–M8 ✅ · Orçamento B1–B32 ✅ · OrçaFacil 🟡 OF2–OF6+OF8 · OF7/OF9–OF12 abertos |
 | **Repositório** | [github.com/leysantos/ia-server-santos](https://github.com/leysantos/ia-server-santos) |
 | **Branch principal** | `main` |
 | **Modo padrão de agentes** | Inteligente (`USE_INTELLIGENT_AGENTS=true`) |
@@ -70,8 +70,9 @@ ia-server-santos/
 | **Vision Analysis** | 🟢 Vision Engine — OCR → RAG CBMAM (modo PCI) → `gemma3:12b` → JSON → `qwen3:14b` → DOCX · checklist IT-11/NT-03 · SSE · `/projects/{id}/vision` |
 | **Workflow Projetos** | 🟡 Fase 3 — Wizard de Entrega (`/workflow/wizard`) · seleção manual arquivos · templates A4–A0 · nomenclatura `DISC-FLnn-TIPO-DESC-REV` · análise CAD/IA · GRD PDF · ZIP estruturado · Fase 2.1 (classificador, skip, presigned) mantida |
 | **Operational Transparency** | 🟢 ActivityPanel global · Operations Console `/console` (SSE live + fila Ollama + log `norm_bulk`/`knowledge`) · timeline `/projects/{id}/activity` · `project_decisions` + auto-capture |
-| **Orçamento `/budget`** | 🟢 **Produção interna alta** + **enterprise técnico** (B1–B30): 11 docs nativos + `proposta_comercial` + `.xlsm` oficial + **Lançar Preços** (import PDF hierárquico etapas/sub-etapas/composições · persistência imediata · abas PPD na mesma tela · Salvar/Editar/Excluir · matching SEMINF→SINAPI→SICRO→ORSE) · auditoria · tenant · lock · §8.1 |
-| **Laudos de Vistoria `/inspection-reports`** | 🟢 **L1–L19 + follow-up** ✅: croqui · ART live · PAdES opcional · órfãos admin · mapa · metrologia · ensaios |
+| **Orçamento `/budget`** | 🟢 **Produção interna alta** + **enterprise técnico** (B1–B32): 11 docs nativos + `proposta_comercial` + `.xlsm` oficial + **Lançar Preços** · snapshot/cache CPU · §8.1 |
+| **OrçaFacil** (submódulo Orçamento) | 🟡 **OF2–OF6+OF8** — Gemini 3.6 · editor MCQ · ABC/CRONO automáticos · **OF7/OF9–OF12** abertos (§8.3.12) |
+| **Laudos de Vistoria `/inspection-reports`** | 🟢 **L1–L20** ✅: croqui · ART · PAdES · editorial institucional (anti-IA, dedupe, coerência, plano tabela) |
 | Chat streaming UX | 🟢 SSE instantâneo (`connected`) + tokens ~60fps · **anexos no prompt** (PDF/planilha/imagem/CAD) em `/chat`, `/orchestrate`, `/copilot`, `/aed` + roteamento auto por tipo |
 | Agente Geotecnia dedicado | 🟢 `GeotecniaIntelligentAgent` — NBR 6122/7185, classificação solo, A_min |
 | Frontend | 🟢 `/chat`, `/projects`, `/inspection-reports`, `/budget`, `/mobile/*` (telefone), `/orchestrate`, `/copilot`, `/aed`, `/console`, `/history`, `/settings`, `/projects/{id}/workflow` |
@@ -138,13 +139,13 @@ Ativar multi-index explícito (opcional): `USE_KNOWLEDGE_ROUTER=true`
 
 ## Próximos passos (ordem recomendada)
 
-1. **Hardening** — trocar `JWT_SECRET` e senhas seed antes de uso prolongado via Quick Tunnel
-2. **Smoke E2E** — validar LAN: login → chat → upload projeto (`make validate-lan` + teste manual)
-3. **Teste PCI** — projeto combate a incêndio: upload fotos/plantas → `/projects/{id}/vision` modo `pci`
-4. Validar Operational Transparency end-to-end: orquestração → Console · orçamento salvo → timeline
+1. **OrçaFacil** — OF7 memória rica · OF9 benchmark CONT_DREN · OF10 tool-calling · endurecer quantitativos (edificação) — §8.3.12
+2. **Hardening** — trocar `JWT_SECRET` e senhas seed antes de uso prolongado via Quick Tunnel
+3. **Smoke E2E** — validar LAN: login → chat → upload projeto (`make validate-lan` + teste manual)
+4. Validar orçamento `/budget` em obra piloto (ComD/SemD, cronograma, export PPD) + checklist §4.U humano
 5. Validar Project RAG end-to-end: upload DOCX/XLSX/IFC → reindex → `/chat?project=<id>`
 6. Popular SINAPI/TCPO: `make index-price-bases` (price_bank → composition FAISS) — **não** `index_knowledge_bases --base sinapi`
-7. Validar orçamento `/budget` em obra piloto (ComD/SemD, cronograma, export PPD)
+7. Laudos PAdES com cert A1 real em produção
 8. Páginas frontend `/aed` e `/copilot`
 9. `pytest-cov` + subset CI estável
 10. Execution Planner (Orchestrator v2)
@@ -325,7 +326,7 @@ Fase 4  SaaS produção        ██████░░░░░░░░░░�
 | Módulo | Path | Responsabilidade |
 |--------|------|------------------|
 | API Gateway | `app/main.py` | FastAPI, CORS, lifespan, rotas |
-| Router v2 | `core/router.py` | Saudação → regras (keywords) → LLM fallback → GERAL |
+| Router v2 | `core/router.py` | Saudação → regras (keywords + NBR boost) → **Gemini 3.6** (fallback) → Ollama/Model Router → GERAL |
 | Agent Registry | `core/agent_registry.py` | Fonte única: disciplina → `{modulo}_agent` |
 | Dispatcher | `core/dispatcher.py` | Roteia para agente; persiste `agent_runs` + Learning Loop |
 | Orchestrator v1 | `core/orchestrator/multi_domain.py` | Decomposição multi-disciplina + síntese + filtro domínio |
@@ -382,6 +383,7 @@ Fase 4  SaaS produção        ██████░░░░░░░░░░�
 | `/history` | `frontend/app/history/page.tsx` | Histórico de execuções + continuar no chat |
 | `/settings` | `frontend/app/settings/page.tsx` | Upload/indexação `knowledge` (NBR, SINAPI…) |
 | `/budget` | `frontend/app/budget/page.tsx` | Orçamento PPD: abas flat, etapas, planilha ComD/SemD, cronograma Gantt, memória de cálculo |
+| `/budget/orca-facil` | `frontend/app/budget/orca-facil/page.tsx` | **OrçaFacil** — modelo+base + pranchas/fotos → sessão PPD |
 | `/budget/models` | `frontend/app/budget/models/page.tsx` | Cadastro de esqueletos WBS (etapas/sub-etapas) para novos orçamentos |
 | `BudgetPriceBasesPanel` | `frontend/components/BudgetPriceBasesPanel.tsx` | Adicionar/editar bases do orçamento (SINAPI/SICRO) — formulário + listbox |
 | `BudgetGantt` | `frontend/components/BudgetGantt.tsx` | Gantt + curvas físico/financeiro (mensal) |
@@ -777,6 +779,7 @@ Espelha a fórmula Excel da aba **Analítico com Custo**:
 - [x] **B32** — **Cache global CPUs** — tabela `composition_open_cache` (chave `code+reference+uf`, deduplicado) · migração lazy do legado B31 · `from_cache` na API batch · backfill lazy (`POST /compositions/backfill`) · save sem sync eager · benchmark real: **194 CPUs — cold ~299s (price_bank) vs warm ~60ms (cache)** · script `backend/scripts/bench_composition_cache.py`
 - [x] **B17+** — UI checklist §4.U — `BudgetPilotChecklist` (4.U1–4.U7) na aba Dados + export JSON assinatura
 - [ ] Piloto UI §4.U — **conferência humana** na `/budget` (marcar checklist + export assinatura; ver `docs/e2e_validation_checklist.md`)
+- [x] **B33 / OrçaFacil** — MVP OF2–OF6 entregue (código em `pricing/budget/orca_facil/` · UI `/budget/orca-facil`) · backlog OF7–OF12 + análise §8.3.12
 
 ### 8.1 Análise enterprise — módulo Orçamento (revisão 2026-06-29, pós B1–B22)
 
@@ -868,8 +871,16 @@ Espelha a fórmula Excel da aba **Analítico com Custo**:
 | **B14** | CI GitHub Actions — pytest orçamento + Playwright `/budget` | Média | Baixo | ✅ `.github/workflows/ci.yml` + `make test-ci` |
 | **B15** | Piloto campo §4 — script live + pytest exports (sintético, analítico, ABC, MCQ, cronograma) | Alta | Médio | ✅ `validate-budget-pilot` + `test_pilot_section4_field_checklist` · CI +`test_budget_export` / `test_budget_analytics` |
 
-**Ciclo B27–B28 concluído.** Próximo: **assinatura humana** §4.U · M10 `project.user_id` (transversal).
+**Ciclo B27–B28 concluído.** Próximo produto orçamento: **OrçaFacil §8.3** (OF2+) · **assinatura humana** §4.U · M10 `project.user_id` (transversal).
 
+#### Ciclo OrçaFacil (B33) — modelado 2026-07-28
+
+| # | Entrega | Status | Notas |
+|---|---------|--------|-------|
+| **OF1** | Modelagem §8.3 + case CONT_DREN | ✅ | Control plane only |
+| **OF2–OF4** | Base do modelo + job Gemini + sessão PPD | ✅ | MVP técnico |
+| **OF5–OF7** | UI + etapas seed + memória | 🟡 OF5–OF6 ✅ · OF7 ⬜ | Produto usável |
+| **OF8–OF12** | Cronograma/ABC · benchmark · tools · testes | 🟡 OF8 ✅ · OF9–OF12 ⬜ | Paridade Cursor |
 #### Ciclo B27–B28 (concluído)
 
 | # | Melhoria | Status | Fecha gap / benefício |
@@ -1010,6 +1021,7 @@ O módulo Laudos atingiu **maturidade enterprise técnica** no ciclo **L1–L9**
 | **L17** | P2 | ✅ Memória visual croqui/overlay cotado (`visual_memory.py` · canvas UI) |
 | **L18** | P2 | ✅ ART rastreável — PDF `kind=art` + protocolo/URL + tabela export |
 | **L19** | P2 | ✅ Evidência assinatura — imagem firma + SHA-256 PDF (PAdES futuro) |
+| **L20** | P0 | ✅ Pós-processamento editorial institucional (`editorial_postprocess.py`) |
 
 #### Sequência sugerida
 
@@ -1017,6 +1029,15 @@ O módulo Laudos atingiu **maturidade enterprise técnica** no ciclo **L1–L9**
 2. ~~**L13 + L14**~~ ✅ — interdição · cobertura fotográfica estratificada/ondas  
 3. ~~**L15**~~ ✅ — RAG normativo por tipología + citações rastreáveis  
 4. ~~**L16**~~ ✅ — ensaios medidos · ~~**L17–L19 MVP**~~ ✅ — croqui · ART anexo · evidência hash/firma (PAdES/SICAR live = follow-up)
+5. ~~**L20**~~ ✅ — editorial anti-IA · dedupe · coerência · plano tabela · memória de classificação
+
+##### L20 — editorial institucional (2026-07-29)
+
+- `editorial_postprocess.py`: remove floreios típicos de LLM; padroniza termos; dedupe Jaccard entre parágrafos; conclusão ≤5 itens; plano de recuperação forçado como tabela; legendas foto Elemento|Patologia|Localização|Criticidade; blurbs de normas; memória da classificação DNIT; coerência nota 1 ↔ conclusão
+- Prompt Gemini endurecido (`SYSTEM_PROMPT_BASE`) — tom DNIT/DER/CREA/consultoria
+- Integrado em `apply_engineering_enrichment` (gera + export/prepare)
+- Checklist pré-export inclui avisos/issues L20 (`validation.py`)
+- Testes: `tests/test_laudo_editorial_l20.py`
 
 ##### Protocolo CREA/perícia (2026-07-25)
 
@@ -1081,6 +1102,430 @@ Pacote P0–P2 no export: `protocol_order.py` (TOC/ordem/dedupe) · governing = 
 - **Órfãos:** `user_id` NULL só admin vê/acessa · `POST …/claim` · `POST …/assign` · `POST …/orphans/backfill` · UI admin
 - **ART/SICAR live:** `art_lookup.py` monta URL CREA por UF + link SICAR público · sonda HTTP · UI “Consultar ART / SICAR”
 - Risco residual: PAdES exige certificado A1 real em produção (sem cert = L19 hash)
+
+### 8.3 OrçaFacil — modelagem + MVP (2026-07-29)
+
+> **Objetivo:** gerar orçamento SEMINF/PPD com qualidade próxima ao case Cursor  
+> `CONT_DREN_COLONIA_ANTONIO_ALEIXO_R01` (contenção + drenagem Colônia Antônio Aleixo).  
+> **Nome de produto:** OrçaFacil · rota `/budget/orca-facil` · menu Orçamento.  
+> **Código MVP:** `backend/pricing/budget/orca_facil/` · `backend/app/routes/pricing/orca_facil.py` · `frontend/app/budget/orca-facil/`.
+
+#### 8.3.1 Problema e hipótese validada (case ouro)
+
+No case CONT_DREN o Cursor **não** “chutou” a planilha. O fluxo real foi:
+
+1. **Planilha modelo** (`00_MOD_MC_OR_*.xlsm`) — template oficial MCQ + VBA + **aba de preços embutida** (`Base_Maio-2026-Copia`, ~9k linhas; named range `_BaseMaio2026` no VLOOKUP).
+2. **Planilha exemplo** (`38_RUA_CARLOS_ARAÚJO_LIMA_*.xlsm`) — few-shot de estrutura (layout antigo: `ETAPA` na col. G; base `Base_Abril-2026`).
+3. **Projeto** — pranchas FL01/FL02 (PDF), fotos, CAD/topo (suporte).
+4. **Intervenção humana mínima** — usuário informou sobretudo as **etapas** a criar; a IA **lançou as composições**.
+5. **IA + scripts** (`_build_orcamento.py` → cópia do modelo → MCQ; depois ABC/cronograma) — volumes/comprimentos do projeto, **códigos na base do modelo**, memória de cálculo, VLOOKUP de descrição/unidade.
+
+**Entregável ouro analisado:** `32_CONT_DREN_COL_ANTONIO_ALEIXO_MC_OR_R00_MAIO.xlsm`
+
+| Métrica | Valor observado |
+|---------|-----------------|
+| Origem | `shutil.copy2` do modelo Maio/2026 (mesmas abas VBA: MCQ, PLANILHA, CURVA_ABC, CRONOGRAMA, COMPOSIÇÃO…) |
+| Etapas MCQ | 7 — Admin., Preliminares, Trabalhos em terra, Drenagem, Contenção, Paisagismo, Finais |
+| Serviços | **39** (todos tipo `S` + linha de memória abaixo) |
+| Subetapas | 0 neste case (mas produto deve suporte) |
+| Premissas | prazo 6 meses · DMT 30 km · empol. 1,30 · área interv. 1500 · grama 1200 · BDI tipo `ED` |
+| **Cabeçalho MCQ (auto)** | `PROJETO` CONTENÇÕES · `OBJETO` contenção+drenagem Rua Dr. Raoul… · `LOCAL` endereço Manaus-AM · `ORÇAMENTO` título curto · BDI `ED` — preenchidos a partir do projeto/pranchas (não digitados à mão no Excel) |
+| Quantitativos-chave | corte 95,50 · aterro 2665,26 · gabião 264,98 · TC Ø600 53,27 m · CC 84,73 m · 8 CX · 2 dissipadores — **todos lidos das pranchas FL01/FL02** |
+| Preço | VLOOKUP na base do **modelo** (não inventado); total ~**R$ 1,23 M** (SemD + BDI ED 25,72% no resumo) |
+| Memória | 100% dos serviços com memória legível (origem prancha/premissa + conta) |
+
+**Hipótese OrçaFacil:** repetir esse contrato — Gemini **lê as pranchas** (cabeçalho + quantitativos), interpreta o projeto e **completa composições a partir da base do modelo**; o sistema **não inventa preço**; engenheiro **revisa e edita** árvore.
+
+#### 8.3.1b Fluxo de produto (UX confirmado 2026-07-29)
+
+> A cada **novo** orçamento o usuário **sempre importa a planilha modelo** da vez — ela já vem com a **base de preços atualizada** do período SEMINF. A IA lê essa base e monta a memória de cálculo / MCQ em cima dela.
+
+```txt
+SEMPRE
+  [1] Importar planilha MODELO (.xlsm)     → schema MCQ + Base_* do período
+  [2] Importar PRANCHAS (PDF)             → **metadados da obra** + quantitativos / evidência
+  [3] Importar FOTOS (opcional)           → tipología / contexto de obra
+  [4] Premissas (prazo, DMT, BDI, áreas…) → só o que a prancha não traz (ou confirmação)
+
+ESTRUTURA (um dos dois caminhos)
+  [A] COM planilha EXEMPLO (opcional)
+        → few-shot de etapas/composições típicas
+        → usuário pode ajustar / marcar etapas faltantes
+  [B] SEM exemplo
+        → usuário CADASTRA etapas e subetapas na UI
+        → modelo de IA LANÇA as composições dentro delas
+          (códigos + qtd + memória), consultando a base do modelo
+
+AUTO-PREENCHIMENTO (igual Cursor no case CONT_DREN)
+  a partir das pranchas/projeto → alimentar cabeçalho e quantitativos do orçamento
+  (nome/tipo de obra, objeto, endereço/local, título do orçamento, volumes, extensões…)
+  → usuário revisa; não precisa re-digitar o que já está no projeto
+
+DEPOIS
+  revisão humana (CRUD etapa/subetapa/composição) → export
+```
+
+**Regra de ouro:** modelo = **fonte da base**; pranchas = **fonte dos dados da obra e quantitativos**; exemplo = **opcional**; etapas/subetapas = **seed humano**; composições = **trabalho da IA**.
+
+#### 8.3.1c Dados do orçamento alimentados pelas pranchas (obrigatório)
+
+> Igual ao Cursor no CONT_DREN: a IA **lê o projeto** e **preenche automaticamente** o orçamento — não espera o usuário digitar nome da obra, endereço, volumes etc. se isso já estiver nas pranchas.
+
+**Camada 1 — Identificação / cabeçalho** (MCQ + `BudgetProjectInfo`)
+
+| Campo alvo (MCQ / sessão) | Fonte típica na prancha | Exemplo CONT_DREN |
+|---------------------------|-------------------------|-------------------|
+| `PROJETO` / tipología | Carimbo, título, disciplina | `CONTENÇÕES` |
+| `OBJETO` | Título do desenho / carimbo | Contenção e rede de drenagem na Rua Dr. Raoul Follereau, Colônia Antônio Aleixo |
+| `LOCAL` / endereço | Carimbo, planta, KMZ/mapa | R. Dr. Raoul Follereau, Col. Antônio Aleixo, Manaus-AM |
+| `ORÇAMENTO` (título curto) | Derivado do objeto | Contenção e drenagem - Col. Antônio Aleixo |
+| `processo` (se legível) | Carimbo SEMINF/DP | placeholder se ilegível (`XXXX/…`) — usuário completa |
+| Tipo BDI sugerido | Tipología (ED/RF/FIE) | `ED` (intervenções externas) |
+
+**Camada 2 — Quantitativos e evidência** (alimentam qtd + memória de cálculo)
+
+| Dado | Fonte | Uso |
+|------|-------|-----|
+| Volumes (corte, aterro, gabião…) | Legenda / tabela de volumes FL01–FL02 | qty dos serviços de terra/contenção |
+| Extensões (TC, CC, dissipador…) | Cotas / labels na planta | qty drenagem |
+| Contagens (CX, PV, elementos) | Contagem no eixo / legenda | qty unidades |
+| Áreas (intervenção, grama…) | Planta + premissa se não cotado | preliminares / paisagismo |
+| Critérios geométricos | Detalhe FL02 (H gabião, e base…) | memória + qtds derivadas (manta, forma, aço) |
+
+**Contrato de saída Gemini (P1 — visão):** JSON `project_info` + `quantities[]` com `value`, `unit`, `source_sheet` (ex. FL01), `evidence` (trecho/legenda), `confidence`.  
+**Montagem:** mapear `project_info` → cabeçalho MCQ / sessão Budget (`BudgetProjectInfo`); mapear `quantities` → serviços + `qty_basis` na memória.
+
+**Anti-padrão:** formulário vazio pedindo nome/endereço que já estão no PDF.  
+**Padrão:** extrair → pré-preencher UI → engenheiro só corrige/confirma.
+
+#### 8.3.1d MCQ — códigos + memória de cálculo detalhada (obrigatório · paridade Cursor)
+
+> Na aba **MCQ** o OrçaFacil deve fazer exatamente o que o Cursor fez no `32_*_MAIO.xlsm`: **lançar o código da composição** e, na linha seguinte, **escrever a memória de cálculo com o detalhamento da conta** — não um resumo pobre de uma linha.
+
+**Padrão de linhas (case ouro):**
+
+| Linha | Col. I | Col. K | Col. L | Col. N |
+|-------|--------|--------|--------|--------|
+| Serviço | `S` | **código** (ex. `92212`, `92743`, `100091.3.9.SEMINF`) | VLOOKUP descrição (fórmula do modelo) | `=TRUNC((…),2)` quantidade |
+| Memória | *(vazio)* | *(vazio)* | **texto multilinha** da memória | *(vazio)* |
+
+No case CONT_DREN: **39/39** serviços com memória; tipicamente **3–7 linhas** de texto (média ~4).
+
+**Conteúdo mínimo da memória (estilo `_build_orcamento.py`):**
+
+1. **Título do serviço** (nome curto legível)  
+2. **Evidência** — prancha/legenda/premissa (`Conforme Prancha FL01 – …`)  
+3. **Conta explícita** — parcelas somadas ou fatores (`C = 9,43 + 13,08 + … = 53,27 m` · `Peso = 30,18 × 7,90 = 238,42 kg` · `T = V × DMT`)  
+4. **Critérios adotados** quando houver escolha de código (bitola, FCK, tipo de caminhão, empolamento…)  
+5. **Total = X,XX unidade** — fecha alinhado à qty da linha `S`
+
+**Exemplos reais do ouro (não inventar estilo diferente):**
+
+```txt
+Tubo de concreto Ø600 mm – águas pluviais
+(fornecimento e assentamento, junta rígida, baixo nível de interferência)
+Conforme Prancha FL01 – TC Ø600 mm, i = 1,00%
+C = 9,43 + 13,08 + 15,26 + 13,50 + 2,00 = 53.27 m
+Total = 53.27 m
+```
+
+```txt
+Armação da base – dupla tela Ø8,0 mm malha 20×20 cm
+Conforme Prancha FL02
+Taxa estimada (dupla malha 20×20 Ø8) ≈ 7,90 kg/m²
+A_base = 30.18 m²
+Peso = 30.18 × 7,90 = 238.42 kg
+Serviço: armação de sapata CA-50 Ø8 mm
+Total = 238.42 kg
+```
+
+**Regras de produto:**
+
+| Regra | Detalhe |
+|-------|---------|
+| Sem memória = falha | Todo `S` gerado deve ter memória; checklist barrar `ready` se faltar |
+| Conta visível | Proibido só “conforme projeto” sem números; a memória deve permitir **auditar** a qty |
+| Ligação qty ↔ memória | O `Total` da memória deve bater com o valor/fórmula de N (tolerância de arredondamento) |
+| Sessão nativa | Em `/budget`, o mesmo texto vai para o campo de memória do serviço (`BudgetMemoryPanel`) |
+| Gemini P2/P3 | Campo `memory` no JSON = texto multilinha nesse formato; P3 pode só enriquecer memórias fracas |
+| OF7 | Entrega dedicada — qualidade de memória é feature, não “nice to have” |
+
+**Anti-padrão:** `memory: "Tubulação conforme FL01"` ou copiar só a descrição do SINAPI.  
+**Padrão Cursor:** código na MCQ + memória com **origem + conta + total**.
+
+#### 8.3.2 Posicionamento vs módulos existentes
+
+| Módulo | Entrada principal | Saída | Diferença |
+|--------|-------------------|-------|-----------|
+| **Gerar orçamento com IA** (Histórico) | Texto + Ollama | Sessão PPD | Sem multimodal, sem modelo `.xlsm`, sem base embutida do template |
+| **Lançar Preços** | Planilha/PDF já tipada | Matching → PPD | Parte de linhas importadas; não “descobre” obra a partir de prancha/foto |
+| **OrçaFacil** | **Modelo sempre** (+ exemplo opcional **ou** etapas/subetapas) + **pranchas como fonte dos dados da obra** | MCQ + memória + sessão editável | Gemini extrai cabeçalho+qtds das pranchas · base do modelo · composições nas etapas |
+
+Reuso obrigatório: sessão `/budget`, `BudgetEtapasPanel` (CRUD), `BudgetProjectInfo` (objeto/local/endereço/processo), matching/price_bank, export `.xlsm`/PDF, Gemini client dos Laudos (`GEMINI_*`).
+
+#### 8.3.3 Entradas do job OrçaFacil
+
+| # | Entrada | Obrigatório | Papel |
+|---|---------|-------------|--------|
+| A | **Planilha modelo** `.xlsm` SEMINF | **Sempre (cada job)** | Schema MCQ + **base de preços atualizada do período** (`Base_*` / named range) — usuário reimporta quando a SEMINF publica nova base |
+| B | **Planilha exemplo** (obra similar) | **Opcional** | Few-shot; se ausente → caminho [B] com etapas cadastradas |
+| C | **Etapas / subetapas seed** | **Sim** (via exemplo ajustado **ou** cadastro manual) | Usuário define a árvore; IA **só lança composições** dentro |
+| D | **Pranchas / PDF de projeto** | **Quase obrigatório** | **Fonte primária** de: nome/objeto/local/endereço + quantitativos + evidência para memória — igual Cursor |
+| E | **Fotos / vídeo / croqui** | Opcional | Tipologia, justificativa (erosão, contenção, drenagem…) — reforça P1 |
+| F | **Premissas** (prazo, DMT, empolamento, BDI/obra_type, áreas) | **Sim** (com defaults) | Só o que a prancha **não** traz (DMT, prazo, empolamento) ou confirmação do que foi extraído |
+| G | CAD/topo (DWG, KMZ, REIT) | Fase 2 | Refino de local/área; MVP prioriza PDF/prancha + OCR/visão |
+
+#### 8.3.4 Pipeline alvo (espelha o case CONT_DREN)
+
+```txt
+1. INGESTÃO
+   upload modelo → extrair schema MCQ + INDEXAR base embutida (_Base*)
+   upload exemplo → extrair árvore etapa→serviço (few-shot)
+   upload pranchas/fotos → Vision/OCR (Gemini) → project_info + quantitativos candidatos
+   formulário premissas → prazo, DMT, BDI, áreas (merge com o extraído; usuário confirma)
+
+2. EXTRAÇÃO DE OBRA (Gemini P1 — visão)
+   saída JSON: project_info { projeto, objeto, local, endereco, orcamento, processo?, obra_type? }
+                quantities[] { key, value, unit, source_sheet, evidence, confidence }
+   → pré-preencher cabeçalho da sessão / MCQ (BudgetProjectInfo)
+
+3. PLANEJAMENTO (Gemini P2 — passagem estrutural)
+   entrada: etapas seed + exemplo + project_info + quantities + tipología
+   saída JSON: árvore proposta
+     etapa → [subetapa?] → [{code?, description, unit, qty_expr, memoria_rascunho, evidencia}]
+   regra: preferir códigos que EXISTAM na base indexada do modelo;
+         se só souber a descrição → marcar needs_match=true
+         qtds preferencialmente ligadas a quantities[] das pranchas
+
+4. RESOLUÇÃO DE PREÇO (determinístico — NÃO Gemini)
+   para cada serviço:
+     a) code presente na base do modelo → VLOOKUP / lookup local → PU + unidade
+     b) senão → matching price_bank (SEMINF→SINAPI→SICRO→ORSE) como Lançar Preços
+     c) senão → fila "revisão humana" (sem inventar PU)
+   gravar memória de cálculo (fórmula + origem do quantitativo + código)
+
+5. MONTAGEM (**entregável principal**)
+   shutil.copy2(modelo) → escrever MCQ (I/K/L/N + memória) com VLOOKUP da base do modelo
+   igual `_build_orcamento.py` / case `32_*_MAIO.xlsm`
+   sessão PPD no banco = auxiliar (não substitui a planilha)
+
+6. REVISÃO HUMANA
+   Editor **próprio** do OrçaFacil (árvore etapa/serviço + download .xlsm do modelo)
+   Sessão `/budget` é secundária
+
+7. PÓS (opcional no MVP+)
+   ABC + cronograma no próprio workbook do modelo · compliance-pack
+```
+
+#### 8.3.4b Pós-mortem teste CONT_DREN (2026-07-29) — resultado ruim
+
+Arquivo testado: `resultados/PPD_Obra_de_Contenção_de_Erosão_e_Drenagem_-.xlsm`
+
+| Critério | Ouro `32_*_MAIO` | Resultado OrçaFacil (1º teste) | Veredito |
+|----------|-----------------|--------------------------------|----------|
+| Origem do arquivo | **Cópia do modelo Maio** | Template **genérico** do sistema (export PPD) | ❌ fatídico |
+| Abas | `Base_Maio-2026-Copia`, `CodigoFaz`, `PLANILHA`, `COMPOSIÇÃO`… | `Base_Abril-2026`, `ORC_SINTETICO`, `ESP_TECNICA`… | ❌ outra planilha |
+| Layout MCQ | Col. **I** = tipo · **K** = código | Col. **G** = tipo · **I** = código (layout antigo) | ❌ |
+| Serviços | **39** | **~13** | ❌ incompleto |
+| Códigos | 92743 gabião, 92212 TC… | Códigos alternativos / errados (ex. 102876≠92743) | ❌ |
+| Cabeçalho K11–K14 | Preenchido | Quase vazio / labels errados | ❌ |
+
+**Causas raiz:** (1) export usava `ppd_workbook_service` genérico, não a cópia do modelo anexado; (2) Gemini P2 gerou pacote pobre de composições; (3) UX empurrou para editor `/budget` em vez do Excel do modelo.
+
+**Correção 2026-07-29:** `model_writer.write_plan_to_model_copy` · export baixa `workbook_path` · prompt P2 exige completeza 30–45 serviços · botão principal “Baixar planilha modelo”.
+
+#### 8.3.5 Papel da planilha modelo e da base embutida (decisão crítica)
+
+> A planilha modelo **já carrega a base de preços do período**. O OrçaFacil **deve ler essa base** e usá-la como catálogo primário — igual ao Cursor (`VLOOKUP` em `_BaseMaio2026`).
+>
+> **Decisão reforçada:** o **arquivo de saída** é sempre uma **cópia do modelo anexado** com a aba MCQ preenchida — nunca o template genérico do IA Server.
+
+| Regra | Detalhe |
+|-------|---------|
+| **Fonte primária de código/PU** | Aba(s) de base dentro do modelo (`Base_Maio-*` / named range `_BaseMaio2026`) |
+| **Arquivo de saída** | `shutil.copy2(modelo)` + escrita MCQ (`model_writer.py`) |
+| **Indexação no ingest** | Extrair código, descrição, unidade, PU ComD/SemD → índice do job |
+| **Gemini** | top-k + few-shot do exemplo + completeza de composições |
+| **Memória de cálculo** | §8.3.1d — linha abaixo do `S` na MCQ do **modelo** |
+| **Anti-padrão** | Export genérico `PPD_*.xlsm` do pipeline `/budget` como entregável |
+
+#### 8.3.6 Otimização Gemini (melhor resultado)
+
+Reutilizar padrões dos Laudos + ajustes de orçamento:
+
+| Técnica | Aplicação OrçaFacil |
+|---------|---------------------|
+| **Multi-passagem** | **P1:** `project_info` + quantitativos das pranchas/fotos (visão). **P2:** árvore etapa→composição com códigos. **P3** (opcional): só memórias / inconsistências |
+| **JSON schema rígido** | `project_info` · `quantities[]` · `stages[]` · `items[]` · `code` · `unit` · `qty` · `qty_basis` · `memory` · `confidence` · `needs_match` — repair + `max_output_tokens` alto |
+| **Tool-calling / retrieval** | `search_base`, `get_code`, `list_example_services(etapa)` — Gemini **não** recebe 50k linhas de base de uma vez |
+| **Few-shot do exemplo** | Só trechos das etapas relevantes (não o exemplo inteiro) |
+| **Grounding de quantitativos** | Prompt exige `qty_basis` = citação (ex.: “FL01 legenda volume aterro 2665,26 m³”) |
+| **Grounding de cabeçalho** | Prompt exige extrair objeto/local/endereço do carimbo/título da prancha; campos ilegíveis → `null` + flag para o usuário |
+| **Temperatura baixa** | ~0.1–0.3 na passagem de códigos; um pouco maior só na tipología |
+| **Modelo** | OrçaFacil força **`gemini-3.6-flash`** (`ORCA_FACIL_GEMINI_MODEL` override); shared `GEMINI_MODEL` só se já contiver `3.6` |
+| **SSE** | Etapas: ingest → index_base → vision_project_info → plan → resolve_prices → mount → ready |
+| **Limites** | Cap de páginas/fotos por job; OCR prévio de PDF (texto) + Gemini só nos recortes densos (carimbo + legenda de volumes) |
+
+#### 8.3.7 Edição pós-geração (requisito de produto)
+
+Após `ready`, o usuário **deve** poder no **editor próprio do OrçaFacil**:
+
+- Incluir / remover **etapa**
+- Incluir / remover **subetapa**
+- Incluir / remover / substituir **composição**
+- Editar quantidade e memória
+- **Baixar** a planilha modelo `.xlsm` atualizada (regrava MCQ)
+
+Sessão `/budget` permanece como visão auxiliar — **não** é o entregável principal.
+
+#### 8.3.8 Saídas
+
+| Saída | Status |
+|-------|--------|
+| **Cópia do modelo `.xlsm` com MCQ preenchida** | ✅ entregável principal (`workbook_path`) |
+| Preview de etapas/códigos/memória na UI OrçaFacil | ✅ |
+| Sessão PPD no banco (auxiliar) | ✅ |
+| Editor próprio OrçaFacil (CRUD + regrava workbook) | ✅ etapas/composições/memória + `PUT …/plan` |
+| Listagem orçamentos salvos (editar/excluir + confirmação) | ✅ sidebar jobs + `DELETE …/jobs/{id}` |
+| Seleção modelo WBS cadastrado | ✅ dropdown skeletons `/budget/models` |
+| Busca composições na base do modelo (editor MCQ) | ✅ `GET …/base-search?q=` |
+| Totais ComD/SemD (lista + etapa + item) | ✅ c/ BDI `TRUNC` paridade PLANILHA · enrich preços na base |
+| Layout full-width (sidebar larga + área principal) | ✅ sem `max-w-5xl` |
+| **CURVA_ABC + CRONOGRAMA automáticos** | ✅ OF8 — `abc_cronograma.py` · ABC = **menor** ComD/SemD (paridade MCQ!V14/V15) · admin todos meses · Gantt |
+| Campo **prompt do engenheiro** (`user_prompt`) | ✅ P1/P2 + UI |
+| Modelo Gemini forçado **3.6** (`gemini-3.6-flash`) | ✅ `resolve_orca_facil_model` |
+| Few-shot estruturado da planilha **exemplo** | ✅ `example_tree` + mapeamento à base |
+| Export genérico template sistema | ❌ **proibido** como resultado final |
+
+#### 8.3.9 Backlog OrçaFacil (OF1–OF12) — ordem de implementação
+
+| ID | Entrega | Depende | Status |
+|----|---------|---------|--------|
+| **OF1** | Spec fechada neste §8.3 + pasta case ouro documentada (CONT_DREN) | — | ✅ modelagem |
+| **OF2** | Extrator da **base embutida** do modelo `.xlsm` + índice `search_base` / `get_by_code` | OF1 | ✅ |
+| **OF3** | Job + upload (modelo, exemplo, pranchas, fotos) + premissas + SSE skeleton | OF1 | ✅ |
+| **OF4** | Gemini P1 (`project_info`+qtds) / P2 (árvore) → resolve preços → sessão PPD com cabeçalho pré-preenchido | OF2–OF3 | ✅ |
+| **OF5** | UI `/budget/orca-facil` + editor MCQ próprio (CRUD) — sem abrir `/budget` | OF4 | ✅ |
+| **OF6** | Modo sem exemplo: cadastro manual etapa/subetapa → IA lança composições; modo com exemplo: few-shot + etapas faltantes | OF4 | ✅ seed + `example_tree` |
+| **OF7** | Memória de cálculo rica na MCQ (código + linha de memória com conta detalhada · paridade `_build_orcamento.py` / §8.3.1d) | OF4 | ⬜ refinar qualidade |
+| **OF8** | ABC + cronograma pós-MCQ (espelhar `_fill_abc_crono`) | OF5 | ✅ ABC menor ComD/SemD · admin todos meses · Gantt |
+| **OF9** | Benchmark vs case CONT_DREN (cobertura códigos, totais ± faixa, checklist) | OF4–OF7 | ⬜ |
+| **OF10** | Tool-calling Gemini + top-k base (otimização custo/qualidade) | OF2 | ⬜ |
+| **OF11** | CAD/topo opcional (fase 2) | OF5 | ⬜ |
+| **OF12** | Testes pytest + E2E smoke OrçaFacil + permissão módulo | OF5 | ⬜ |
+
+**MVP OF2–OF6 entregue 2026-07-29.** Próximo: OF7 (memória detalhada) · OF9 benchmark CONT_DREN · ver análise produto §8.3.12.
+
+#### 8.3.10 Riscos específicos
+
+| ID | Risco | Mitigação |
+|----|-------|-----------|
+| OF-R1 | Gemini inventa código/PU | Lookup só na base do modelo / price_bank; `needs_match` + UI |
+| OF-R2 | Quantitativo ou cabeçalho errado (OCR) | `qty_basis` + `evidence` obrigatórios · pré-preencher UI para confirmação · premissas só como fallback · benchmark CONT_DREN |
+| OF-R3 | Modelo `.xlsm` layout muda | Detector de abas `_Base*` + testes com `00_MOD` versionado |
+| OF-R4 | Custo/token Gemini alto | Top-k + tools; não embedar base inteira |
+| OF-R6 | Memória rasa (“conforme projeto”) | Schema exige campos da conta · P3 de enriquecimento · benchmark textual vs amostras CONT_DREN · bloquear ready sem memória |
+| OF-R7 | Takeoff visual insuficiente (edificação: paredes, etc.) | Prompt + cotas/quadros · revisão MCQ · futuro CAD/BIM (OF11) · não vender como medição automática |
+
+#### 8.3.11 Critério de sucesso (paridade Cursor)
+
+Para o case CONT_DREN (ou clone interno):
+
+1. Etapas seed equivalentes → composições com **≥80%** códigos válidos na base do modelo na 1ª geração.  
+2. Volumes principais (corte/aterro/gabião/TC/CC) batem com legenda FL01/FL02 (± tolerância definida).  
+3. **Cabeçalho** (objeto, local/endereço, título do orçamento) pré-preenchido a partir das pranchas — engenheiro só confirma/corrige.  
+4. Toda linha `S` tem memória **detalhada** (§8.3.1d): evidência + conta explícita + `Total` alinhado à qty — qualidade ≥ case Cursor (não resumo de 1 linha).  
+5. Engenheiro consegue incluir/remover etapa/subetapa/composição sem regenerar o job.  
+6. Export `.xlsm` abre no Excel com preços da base do período.
+
+#### 8.3.12 Análise de produto — ótica do engenheiro orçamentista (2026-07-29)
+
+> **Perspectiva:** engenheiro quer **agilidade** — importar projeto (pranchas), planilha **modelo** (base do período), planilha **exemplo** (few-shot), **fotos**, gerar orçamento **próximo do real**, revisar rápido e exportar `.xlsm` oficial SEMINF/PPD.  
+> **Escopo lido:** `backend/pricing/budget/orca_facil/*` · `backend/app/routes/pricing/orca_facil.py` · `frontend/components/BudgetOrcaFacilWorkspace.tsx` · §8.3.1–8.3.11.
+
+##### Contrato de valor (o que o módulo promete)
+
+```txt
+MODELO (.xlsm)     → base de preços + schema MCQ/VBA     (fonte de PU)
+PRANCHAS + FOTOS   → cabeçalho + quantitativos + evidência (fonte da obra)
+EXEMPLO (opcional) → densidade/tipos de serviço por etapa  (few-shot)
+PROMPT + WBS/seed  → intenção do engenheiro + estrutura
+GEMINI P1 → P2     → árvore + memórias
+EDITOR MCQ         → correção humana rápida
+EXPORT             → cópia do modelo com MCQ preenchida
+```
+
+##### Pontos positivos (evidência)
+
+| # | Ponto | Por que importa para agilidade |
+|---|--------|--------------------------------|
+| 1 | **Modelo = verdade de preço** (`base_index` + VLOOKUP no writer) | Engenheiro não digita PU; período SEMINF vem na planilha importada |
+| 2 | **Pipeline multimodal** P1 (obra) + P2 (composições) com Gemini 3.6 | Reduz digitação de cabeçalho e lançamento inicial de serviços |
+| 3 | **Few-shot da planilha exemplo** (`example_tree` + mapeamento à base) | Densidade de serviços sobe vs geração “no vazio” |
+| 4 | **Prompt do engenheiro** no P1/P2 | Canal direto para regras (pé-direito, DMT, exclusões) sem reprogramar |
+| 5 | **Editor MCQ próprio** (CRUD, busca na base, substituir composição, memória) | Correção sem abrir `/budget`; ciclo “gerar → ajustar → baixar” |
+| 6 | **Totais ComD/SemD c/ BDI** (paridade `TRUNC` PLANILHA) | Confere valor com a planilha Excel gerada |
+| 7 | **Listagem de jobs** + WBS skeletons + export `.xlsm` | Continuação de trabalho e reuso de estrutura típica |
+| 8 | **Integração com ecossistema** | `bdi_types`, sessão PPD auxiliar, `save_budget`, skeletons `/budget/models` |
+
+##### Pontos negativos / gaps (evidência)
+
+| # | Gap | Impacto no engenheiro |
+|---|-----|------------------------|
+| 1 | **Takeoff visual limitado** — P1 lê ≤12 arquivos; não é medição CAD (paredes, áreas) | Edificação com muitas plantas exige cotas/quadros ou revisão pesada |
+| 2 | **OF7 memória rica ainda frágil** — prompt pede detalhe; sem validador de qualidade | Memórias rasas reduzem confiança em licitação/auditoria |
+| 3 | **OF8 ABC/cronograma** não espelha pós-Cursor | Entregável incompleto vs planilha ouro (abas ABC/CRONO) |
+| 4 | **OF9 sem benchmark automatizado** CONT_DREN | Regressões de qualidade passam despercebidas |
+| 5 | **OF10 sem tool-calling real** — só top-k pré-computado no prompt | Códigos errados / cobertura baixa em bases grandes |
+| 6 | **Jobs em filesystem** (`job_store`), não Postgres multi-tenant | Risco de perda, isolamento fraco, difícil escala SaaS |
+| 7 | **SSE existe, UI faz poll** | UX de progresso menos fluida |
+| 8 | **Qualidade dependente de exemplo+prompt** — 1º testes CONT_DREN ruins documentados em §8.3.4b | Sem “receita” padrão por tipología, resultado oscila |
+| 9 | **Busca lexical** na base (sem embedding) | Engenheiro demora a achar composição por sinônimo |
+| 10 | **OF11/OF12 ausentes** — CAD/topo e testes E2E/permissão | Não fecha ciclo projeto digital → orçamento → auditoria |
+
+##### Sugestões de melhoria (priorizadas)
+
+| Prioridade | Melhoria | Efeito esperado |
+|------------|----------|-----------------|
+| **P0** | **OF7** — schema rígido de memória + rejeitar `ready` se memória rasa; template por tipología | Orçamento auditável na 1ª geração |
+| **P0** | **OF9** — checklist automático vs CONT_DREN (códigos, volumes, totais ± faixa) | Travão de qualidade contínuo |
+| **P1** | **Biblioteca de prompts/receitas** por tipología (contenção, edificação, drenagem, pavimentação) | Menos dependência do engenheiro “saber promptar” |
+| **P1** | **OF10 tool-calling** `search_base` / `get_by_code` durante P2 | Mais códigos válidos, menos invenção |
+| **P1** | Painel de **quantitativos extraídos** editável antes do P2 (humano confirma volumes) | Menos regeneração completa |
+| **P2** | **OF8** ABC + cronograma na cópia do modelo | ✅ `abc_cronograma.py` (2026-07-29) |
+| **P2** | Persistência job em **Postgres** + permissão módulo | Pronto para multi-usuário / prefeitura |
+| **P2** | Busca semântica na base do modelo (nomic/FAISS local à base do job) | Agilidade no editor |
+| **P3** | **OF11** CAD/BIM takeoff (DXF/IFC → lengths/areas) | Edificação “próximo do real” sem só visão |
+| **P3** | Ligar job OrçaFacil ↔ **Project** (`/projects`) + Vision/Review | Um projeto → laudo + orçamento + workflow |
+
+##### Potencial de crescimento no IA Server Santos
+
+| Horizonte | Papel do OrçaFacil | Alavancas já existentes no monorepo |
+|-----------|--------------------|-------------------------------------|
+| **Curto (produto interno SEMINF)** | Acelerador de orçamento oficial `.xlsm` a partir de prancha+modelo | Budget B1–B32 · BDI · skeletons · price_bank |
+| **Médio (plataforma obra)** | Hub “projeto → quantitativo → orçamento → pacote licitação” | Project RAG · Vision · Workflow wizard · Lançar Preços · compliance-pack |
+| **Longo (SaaS multi-prefeitura)** | Diferencial competitivo: multimodal + base embutida + memória auditável | Auth/tenant · Console ops · Knowledge NBR separado de preço |
+
+**Veredito de crescimento:** alto **dentro do nicho orçamento público/PPD**, porque o IA Server já tem a stack rara (modelo `.xlsm` + bases + BDI + projetos + visão). O OrçaFacil é a **ponte multimodal** que o `/budget` clássico e o Lançar Preços **não** cobrem. O teto de valor sobe se OF7–OF11 fecharem o gap “próximo do real”; sem isso, permanece assistente forte de **contenção/drenagem com legendas** e fraco em **edificação por takeoff visual puro**.
+
+**Posicionamento vs irmãos:**
+
+| Módulo | Entrada | Força | Limite |
+|--------|---------|-------|--------|
+| `/budget` | Manual / WBS | Editor enterprise completo | Não “lê” prancha |
+| Lançar Preços | Planilha tipada | Matching bases | Não descobre obra |
+| **OrçaFacil** | Modelo + pranchas + exemplo | Gera árvore a partir do projeto | Takeoff e memória ainda humanos |
+
+##### Status snapshot (após esta análise)
+
+| Item | Status |
+|------|--------|
+| OF1–OF6 | ✅ |
+| OF8 CURVA_ABC + CRONOGRAMA | ✅ |
+| OF7 · OF9–OF12 | ⬜ |
+| UX engenheiro (lista, editor, BDI, busca base) | 🟡 boa o suficiente para piloto |
+| Paridade Cursor CONT_DREN | 🟡 melhorou com exemplo+prompt; OF9 ainda aberto |
+| Pronto “venda” como takeoff automático edificação | ❌ não — comunicar como **assistente + revisão** |
 
 ## Intent Layer v2
 
@@ -1357,7 +1802,7 @@ input → project_understanding → design_generator (≥2 opções/disciplina)
 - [ ] Export Excel alinhado ao layout ComD/SemD da UI
 - [ ] Curva financeira do cronograma usando cenário adotado (ComD vs SemD) de forma explícita
 
-### Laudos de Vistoria 🟢 (Jul/25) — §8.2 L1–L19 MVP ✅
+### Laudos de Vistoria 🟢 (Jul/25–29) — §8.2 L1–L20 ✅
 
 - [x] CRUD + templates seed (9 tipologías) + anexos PDF/fotos
 - [x] Gemini 2 passagens + SSE geração + RAG opcional
@@ -1382,9 +1827,24 @@ input → project_understanding → design_generator (≥2 opções/disciplina)
 - [x] **L4** Georref na passagem 1 Gemini
 - [x] **L5** Testes georef/PDF/parties/isolamento/tipología
 - [x] **L6** Limites upload + cancel geração
-- [x] **L7** Edição humana capítulos/legendas
-- [x] **L8** `project_id` + activity timeline
-- [x] **L9** Checklist CNPJ/CREA/ART + export strict
+- [x] **L7** Edição humana pós-geração (capítulos / parties)
+- [x] **L8** `project_id` + activity events
+- [x] **L9** Checklist CNPJ/CREA/ART
+
+### OrçaFacil 🟢 (Jul/29) — MVP OF2–OF6
+
+- [x] **OF1** Modelagem no control plane (§8.3) + case ouro CONT_DREN documentado
+- [x] **OF2** Extrator/índice da base embutida do modelo `.xlsm`
+- [x] **OF3** Job + uploads + premissas + SSE
+- [x] **OF4** Gemini P1 (`project_info`+qtds das pranchas) / P2 → resolve preços → sessão com cabeçalho pré-preenchido
+- [x] **OF5** UI `/budget/orca-facil` + editor MCQ próprio (CRUD + memória)
+- [x] **OF6** Etapas seed + few-shot exemplo (`example_tree`) + `user_prompt` + Gemini 3.6
+- [ ] **OF7** Memória de cálculo detalhada na MCQ (código + conta · §8.3.1d)
+- [x] **OF8** ABC + cronograma pós-MCQ (cenário adotado = menor ComD/SemD)
+- [ ] **OF9** Benchmark vs CONT_DREN
+- [ ] **OF10** Tool-calling / top-k base Gemini
+- [ ] **OF11** CAD/topo opcional
+- [ ] **OF12** Testes + permissão módulo
 
 ---
 
@@ -1819,6 +2279,10 @@ Variável opcional: `API_BACKEND_ORIGIN` (default `http://127.0.0.1:8000`) se a 
 | `CORS_ALLOWED_ORIGINS` | localhost 3000/3001 | Origens extras + painel `/settings/access` |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Só localhost; LAN/trycloudflare usam `/api-backend` |
 | `API_BACKEND_ORIGIN` | `http://127.0.0.1:8000` | Destino do proxy Next.js (opcional) |
+| `GEMINI_API_KEY` | — | Laudos + OrçaFacil + **roteamento de disciplina** (Gemini 3.6) |
+| `GEMINI_MODEL` | `gemini-3.6-flash` | Modelo Gemini padrão |
+| `USE_GEMINI_DISCIPLINE_ROUTER` | `true` | Fallback LLM do router de agentes via Gemini (senão Ollama) |
+| `GEMINI_MODEL` | `gemini-3.6-flash` (ou pin atual) | Modelo Gemini compartilhado Laudos/OrçaFacil |
 
 **Streaming:** `POST /chat/stream` (SSE) — evento `connected` imediato; fases `rag` → `rag_done` → `llm_start`; tokens em tempo real (~60fps no UI).
 
@@ -1833,7 +2297,8 @@ Settings completas: `backend/config/settings.py`
 | R-01 | Alta | SINAPI/TCPO legado em `cost_index` (RAG) vazio — orçamento usa `price_bank` + `composition_index` | `make index-price-bases` · sync em `/settings/price-bases` |
 | R-02 | Alta | LLM pode alucinar tabelas/nomenclaturas normativas | RAG + validação pós-resposta; prompts com restrições |
 | R-03 | Média | Latência 2–5 min por request (CPU local) | GPU; modelo menor; streaming ✅ no chat |
-| R-09 | Média | DWG indexa só strings ASCII (extração parcial) | Exportar para PDF/DXF antes do upload |
+| R-29 | Alta | OrçaFacil: Gemini inventar código/PU | Lookup só na base do modelo / price_bank · `needs_match` · revisão humana (§8.3) |
+| R-30 | Média | OrçaFacil: quantitativo OCR errado | `qty_basis` obrigatório · premissas explícitas · benchmark CONT_DREN |
 | R-10 | Baixa | Project RAG não validado com arquivos reais de obra | `make test-project-rag` (pytest mock embed) · `make validate-project-rag` (API+Ollama) · checklist §2 |
 | R-11 | Média | Agente cronograma com LLM pequeno pode gerar ações inválidas | Modelos maiores (`qwen3:14b`); enriquecimento heurístico + resolução código/nome |
 | R-04 | Média | Orchestrator v1 executa agentes com contexto limitado | Orchestrator v2: Execution Planner + dependências |
@@ -1864,6 +2329,20 @@ Settings completas: `backend/config/settings.py`
 
 | Data | Decisão | Motivo |
 |------|---------|--------|
+| 2026-07-29 | **Laudos — RT/ART layout** | Assinatura RT sem page-break forçado; tabela ART com Paragraph + col. Responsável mais larga (sem sobrepor CREA) |
+| 2026-07-29 | **Laudos — PDF export estável** | Sumário paginado: sondagem leve (sem reprocessar 60+ fotos) + 1 build final; proxy Next `proxyTimeout` 300s |
+| 2026-07-29 | **Laudos — Sumário com páginas** | TOC institucional: líderes pontilhados + nº à direita (PDF multi-pass; Word PAGEREF + tab leader) · página exclusiva |
+| 2026-07-29 | **Laudos — Sumário página exclusiva** | Word/PDF: quebra de página após o Sumário — não compartilha folha com o 1º capítulo |
+| 2026-07-29 | **Laudos L20 — editorial institucional** | Pós-processamento determinístico anti-floreios/IA · dedupe · coerência DNIT↔conclusão · plano em tabela · memória de classificação · prompt tom consultoria; gate checklist pré-PDF |
+| 2026-07-29 | **Gemini chat — stream real** | `generate_text_stream` usa `generate_content_stream`; chat escreve na tela token a token (como Ollama), sem buffer da resposta inteira |
+| 2026-07-29 | **Fix seletor Gemini → deepseek** | `_models_to_try` filtrava `gemini-*` contra `ollama list` e descartava; override Gemini agora preservado e sem fallback Ollama silencioso |
+| 2026-07-29 | **Seletor Modelo IA — Gemini** | `/models/status` inclui `cloud_models` (gemini-3.6-flash se `GEMINI_API_KEY`); `ModelSelector` lista `gemini-3.6-flash (Google)`; `OllamaClient.generate/stream` roteia override Gemini para API Google |
+| 2026-07-29 | **Router — Gemini 3.6 no roteamento** | Fallback LLM de disciplina usa `gemini-3.6-flash` (`USE_GEMINI_DISCIPLINE_ROUTER`, default on se `GEMINI_API_KEY`); senão Ollama/Model Router |
+| 2026-07-29 | **Router — fix ESTRUTURAL** | Keywords pobres + `fundação`→GEOTECNIA + LLM fallback errático: expandiu regras ESTRUTURAL (`estrutural`, NBR 6118/8800, pórtico, sapata…); score por soma de hits; NBR explícita boost; word-boundary evita `estrutura`⊂`infraestrutura`; `solo` genérico removido de GEOTECNIA |
+| 2026-07-29 | **OrçaFacil — ABC cenário adotado (menor)** | `CURVA_ABC` usa o menor total entre ComD e SemD (+BDI `TRUNC`), espelhando MCQ!V14/V15 (`=IF(R14<R15,"X","")`); não sobrescrever essas fórmulas; CRONO continua `IF(V15="X",W,S)` |
+| 2026-07-29 | **OrçaFacil P2 — códigos CONT_DREN** | Prompt/catalog: canaleta **106012**; kit sapata **102713/104924/104928/104918** + gabião 92743 |
+| 2026-07-29 | **OrçaFacil OF8 — ABC + CRONOGRAMA** | Writer preenche `CURVA_ABC` e `CRONOGRAMA` (paridade `_fill_abc_crono`/`_fix_cronograma`): admin em todos os meses; demais etapas em Gantt; valores via `PLANILHA!S/W` |
+| 2026-07-29 | **OrçaFacil — análise produto §8.3.12** | Ótica engenheiro (agilidade + orçamento próximo do real): MVP OF2–OF6 usável; priorizar OF7/OF9/OF10; takeoff visual ≠ CAD; potencial alto como ponte multimodal no monorepo |
 | 2026-06-20 | **B12 — piloto orçamento** | Esqueleto `sk-b12-piloto-passarela` · `test_budget_pilot_flow.py` · `validate_budget_pilot.sh` |
 | 2026-06-20 | **M6 — split pricing.py** | Pacote `app/routes/pricing/` (providers, sync, budget, tech_spec, export) — 99 rotas |
 | 2026-06-20 | **Orçamento B11 — auto-save** | Heartbeat `restore` 60s · persist DB silencioso 3min · `sessionStorage` + indicador toolbar |
@@ -1890,6 +2369,14 @@ Settings completas: `backend/config/settings.py`
 | 2026-07-24 | **Fix preview logo/brasão Empresa** | `<img src={API}>` sem JWT → 401 · preview via `systemFetchCompanyLogo/Brasao` + blob URL + auth (`ExportBrandingSettingsPanel`) |
 | 2026-07-24 | **Fix redes sociais Empresa** | `CompanyProfileUpdateRequest` omitia `social_*` — Pydantic descartava no PATCH · campos agora no schema + teste de persistência |
 | 2026-07-26 | **Laudos L15 RAG normativo** | `normative_rag.py` · queries por tipología · `retrieve_for_agent` · `normative_citations` + tabela Referências · prompt L15 · testes |
+| 2026-07-28 | **OrçaFacil §8.3 — modelagem** | Submódulo `/budget/orca-facil` · case CONT_DREN · base embutida do modelo como catálogo primário · Gemini multi-pass + tools top-k · etapas seed → IA completa composições · CRUD pós-geração · backlog OF1–OF12 · **sem código ainda** |
+| 2026-07-29 | **OrçaFacil — UX + análise ouro** | Modelo **sempre** importado (base atualizada) · exemplo **opcional** · sem exemplo: usuário cadastra etapas/subetapas e IA lança composições · audit `32_*_MAIO.xlsm`: 7 etapas / 39 serviços / memórias 100% / base `Base_Maio-2026-Copia` · total ~R$ 1,23 M |
+| 2026-07-29 | **OrçaFacil — dados das pranchas** | Orçamento **auto-alimentado** pelas pranchas: cabeçalho (`PROJETO`/`OBJETO`/`LOCAL`/`ORÇAMENTO`) + quantitativos + evidência · Gemini P1 → `project_info` + `quantities[]` · mapear para `BudgetProjectInfo` · premissas só para o que a prancha não traz |
+| 2026-07-29 | **OrçaFacil — memória MCQ detalhada** | Aba MCQ: lançar **código** da composição + linha de **memória com conta explícita** (origem prancha + parcelas/fatores + Total) · paridade Cursor/`_build_orcamento.py` · 39/39 no ouro · §8.3.1d · OF7 · OF-R6 |
+| 2026-07-29 | **OrçaFacil MVP OF2–OF5** | Pacote `pricing/budget/orca_facil/` · rotas `/pricing/budget/orca-facil/*` · UI `/budget/orca-facil` · índice base modelo · Gemini P1/P2 · montagem sessão PPD · smoke CONT_DREN (cabeçalho das pranchas) |
+| 2026-07-29 | **OrçaFacil — persistência + export** | Após gerar: `save_budget` → `budget_document_id` · abrir editor com `/budget?open={db_id}` (não session_id) · preview de etapas/códigos · botão **Exportar .xlsm** · jobId em sessionStorage |
+| 2026-07-29 | **OrçaFacil — pós-mortem + writer modelo** | Teste CONT_DREN ruim: export era template genérico (Abril/~13 serv.) ≠ modelo Maio/39 serv. · `model_writer` copia modelo e grava MCQ · export = `workbook_path` · editor próprio /budget secundário · P2 completeza |
+| 2026-07-29 | **OrçaFacil — Gemini 3.6 + prompt + MCQ editor** | 2º teste ainda fraco (exemplo/projeto/composições) · força `gemini-3.6-flash` · `user_prompt` no job/P1/P2 · `example_tree` few-shot · editor MCQ in-place (CRUD + memória) · `PUT /plan` regrava workbook · sem abrir editor `/budget` |
 | 2026-07-28 | **CI E2E budget B13** | Mock `/pricing/sync/bank/composition` (sem `/` trailing) · fechar dialog pós-lançamento · mocks `workflow/companies`+`bdi/profiles` · fallthrough 404 (não continue→401) |
 | 2026-07-27 | **Laudos L16 ensaios medidos** | `assay_results.py` · `instrumented_test_results` · API GET/PUT · UI cadastro · tabela export · metrologia vinculada |
 | 2026-07-27 | **Laudos L17–L19 MVP** | croqui `visual_memory` · ART `kind=art` · firma `kind=signature` + SHA-256 PDF · UI canvas/parties · testes |

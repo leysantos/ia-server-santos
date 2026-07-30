@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.routes.pricing import budget, export, price_matching, providers, sync, tech_spec
+from app.routes.pricing import budget, export, orca_facil, price_matching, providers, sync, tech_spec
 from app.routes.pricing.budget import (
     build_budget,
     generate_budget,
@@ -22,6 +22,7 @@ router.include_router(providers.router)
 router.include_router(sync.router)
 router.include_router(budget.router)
 router.include_router(price_matching.router)
+router.include_router(orca_facil.router)
 router.include_router(tech_spec.router)
 router.include_router(export.router)
 

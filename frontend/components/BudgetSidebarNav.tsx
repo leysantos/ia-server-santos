@@ -19,6 +19,7 @@ const BUDGET_ICON = (
 
 const SUB_ACTIONS = [
   { id: "new", label: "Novo orçamento", href: "/budget?action=new" },
+  { id: "orca_facil", label: "OrçaFacil", href: "/budget/orca-facil" },
   { id: "lancar_precos", label: "Lançar Preços", href: "/budget/lancar-precos" },
   { id: "models", label: "Cadastrar modelo de orçamento", href: "/budget/models" },
   { id: "open", label: "Abrir módulo de orçamento", href: "/budget" },
@@ -116,7 +117,8 @@ export default function BudgetSidebarNav() {
               className={cn(
                 "block w-full rounded-lg px-2.5 py-2 text-left text-xs transition-colors",
                 (action.id === "models" && pathname === "/budget/models") ||
-                  (action.id === "lancar_precos" && pathname === "/budget/lancar-precos")
+                  (action.id === "lancar_precos" && pathname === "/budget/lancar-precos") ||
+                  (action.id === "orca_facil" && pathname === "/budget/orca-facil")
                   ? "bg-brand-500/15 text-brand-200"
                   : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
               )}

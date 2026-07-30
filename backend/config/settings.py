@@ -210,9 +210,12 @@ class AppSettings(BaseSettings):
     minio_secure: bool = Field(default=False, validation_alias="MINIO_SECURE")
     minio_public_url: str | None = Field(default=None, validation_alias="MINIO_PUBLIC_URL")
 
-    # --- Gemini (Laudos de Vistoria) ---
+    # --- Gemini (Laudos · OrçaFacil · roteamento de disciplina) ---
     gemini_api_key: str | None = Field(default=None, validation_alias="GEMINI_API_KEY")
     gemini_model: str = Field(default="gemini-3.6-flash", validation_alias="GEMINI_MODEL")
+    use_gemini_discipline_router: bool = Field(
+        default=True, validation_alias="USE_GEMINI_DISCIPLINE_ROUTER"
+    )
     # Opcional: Static Maps com marcador nativo; sem chave usa Esri World Imagery
     google_maps_static_api_key: str | None = Field(
         default=None, validation_alias="GOOGLE_MAPS_STATIC_API_KEY"
@@ -291,6 +294,9 @@ _LEGACY_FIELD_MAP: dict[str, str] = {
     "USE_INTELLIGENT_AGENTS": "use_intelligent_agents",
     "USE_TUNED_PROMPTS": "use_tuned_prompts",
     "USE_MODEL_ROUTER": "use_model_router",
+    "USE_GEMINI_DISCIPLINE_ROUTER": "use_gemini_discipline_router",
+    "GEMINI_API_KEY": "gemini_api_key",
+    "GEMINI_MODEL": "gemini_model",
     "USE_BUDGET_SMART_ROUTING": "use_budget_smart_routing",
     "USE_ENGINEERING_SMART_ROUTING": "use_engineering_smart_routing",
     "USE_MODEL_EVALUATION": "use_model_evaluation",

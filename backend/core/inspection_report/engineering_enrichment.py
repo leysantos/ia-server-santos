@@ -32,6 +32,7 @@ from core.inspection_report.normative_rag import (
     normative_prompt_block,
 )
 from core.inspection_report.assay_results import apply_assay_results_to_content
+from core.inspection_report.editorial_postprocess import apply_editorial_postprocess
 from core.inspection_report.protocol_order import reorder_chapters_for_protocol
 
 
@@ -63,6 +64,7 @@ def apply_engineering_enrichment(
     5. Citações normativas rastreáveis (L15)
     6. Resultados medidos de ensaios (L16)
     7. Capítulos oficiais + ordem de protocolo
+    8. Pós-processamento editorial institucional (L20)
     """
     out = dict(content or {})
     out = apply_metrology(out)
@@ -73,6 +75,7 @@ def apply_engineering_enrichment(
     out = apply_normative_citations(out, normative=normative, slug=slug)
     out = apply_assay_results_to_content(out)
     out["chapters"] = reorder_chapters_for_protocol(list(out.get("chapters") or []))
+    out = apply_editorial_postprocess(out)
     return out
 
 

@@ -110,42 +110,100 @@
         {
           "name": "ADMINISTRAÇÃO DA OBRA",
           "sub_etapas": [
-            { "name": "CORPO TÉCNICO" },
-            { "name": "MOBILIZAÇÃO" }
+            {
+              "name": "CORPO TÉCNICO"
+            },
+            {
+              "name": "MOBILIZAÇÃO"
+            }
           ]
         },
         {
           "name": "SERVIÇOS PRELIMINARES",
           "sub_etapas": [
-            { "name": "LOCACAO DE OBRA" },
-            { "name": "SINALIZACAO" }
+            {
+              "name": "LOCACAO DE OBRA"
+            },
+            {
+              "name": "SINALIZACAO"
+            }
           ]
         },
         {
           "name": "FUNDACOES",
           "sub_etapas": [
-            { "name": "ESTACAS" },
-            { "name": "BLOCO DE COROAMENTO" }
+            {
+              "name": "ESTACAS"
+            },
+            {
+              "name": "BLOCO DE COROAMENTO"
+            }
           ]
         },
         {
           "name": "ESTRUTURA METALICA",
           "sub_etapas": [
-            { "name": "VIGAS E LONGARINAS" },
-            { "name": "PINTURA ANTICORROSIVA" }
+            {
+              "name": "VIGAS E LONGARINAS"
+            },
+            {
+              "name": "PINTURA ANTICORROSIVA"
+            }
           ]
         },
         {
           "name": "PAVIMENTO E GUARDA-CORPO",
           "sub_etapas": [
-            { "name": "PISO DE MADEIRA PLASTICA" },
-            { "name": "GUARDA-CORPO" }
+            {
+              "name": "PISO DE MADEIRA PLASTICA"
+            },
+            {
+              "name": "GUARDA-CORPO"
+            }
           ]
         }
       ],
       "created_at": "2026-06-20T12:00:00+00:00",
       "updated_at": "2026-06-20T12:00:00+00:00"
+    },
+    {
+      "id": "a96abff5f6c9",
+      "name": "Obra de Contenção e Drenagem de Erosão",
+      "description": "Contenção e drenagem",
+      "obra_type": "ED",
+      "etapas": [
+        {
+          "name": "ADMINISTRAÇÃO DA OBRA",
+          "sub_etapas": []
+        },
+        {
+          "name": "SERVIÇOS PRELIMINARES",
+          "sub_etapas": []
+        },
+        {
+          "name": "TRABALHOS EM TERRA",
+          "sub_etapas": []
+        },
+        {
+          "name": "DRENAGEM",
+          "sub_etapas": []
+        },
+        {
+          "name": "CONTENÇÃO DO ATERRO",
+          "sub_etapas": []
+        },
+        {
+          "name": "PAISAGISMO",
+          "sub_etapas": []
+        },
+        {
+          "name": "SERVIÇOS FINAIS",
+          "sub_etapas": []
+        }
+      ],
+      "created_at": "2026-07-29T07:16:52+00:00",
+      "updated_at": "2026-07-29T07:17:09+00:00"
     }
   ],
-  "updated_at": "2026-06-20T12:00:00+00:00"
+  "updated_at": "2026-07-29T07:17:09+00:00"
 }

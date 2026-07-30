@@ -87,7 +87,7 @@ def resolve_llm_stream_config(
 
     Retorna (timeout, options, fallbacks, aviso_vram, modelo_efetivo).
     """
-    from core.llm_override import resolve_llm_model
+    from core.llm_override import is_gemini_model, resolve_llm_model
     from core.runtime.model_vram import fit_model_to_vram
 
     plan = resolve_chat_runtime()
@@ -96,11 +96,17 @@ def resolve_llm_stream_config(
     fallbacks = list(fallback_models or [])
 
     vram_notice: str | None = None
-    if effective:
+    # Gemini (cloud) não usa VRAM local — não aplicar fit_model_to_vram
+    if effective and not is_gemini_model(effective):
         effective, fallbacks, vram_notice = fit_model_to_vram(effective, fallbacks)
 
     opts = dict(plan.ollama_options or {})
     timeout = plan.timeout_sec
+
+    if is_gemini_model(effective):
+        # Cloud: timeout HTTP generoso; sem fallbacks Ollama (escolha explícita)
+        timeout = max(timeout, 120)
+        return timeout, opts, [], vram_notice, effective
 
     if is_heavy_llm_model(effective):
         heavy_timeout = int(getattr(settings, "OLLAMA_HEAVY_MODEL_TIMEOUT", 300))

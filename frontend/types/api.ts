@@ -520,6 +520,9 @@ export interface ModelsStatusResponse {
   evaluation_enabled?: boolean;
   model_map?: Record<string, string>;
   installed_models?: string[];
+  cloud_models?: string[];
+  local_models?: string[];
+  gemini_available?: boolean;
   ollama?: string;
 }
 
@@ -1318,6 +1321,8 @@ export interface BudgetProjectInfo {
   orgao?: string;
   empresa?: string;
   responsavel_tecnico?: string;
+  processo?: string;
+  data_ref?: string;
   obra_type?: string;
   price_bases?: BudgetPriceBaseSelection[];
   bdi?: {
@@ -1757,6 +1762,122 @@ export interface PriceMatchingCatalogHit {
   unit: string;
   price: number;
   default_uf: string;
+}
+
+/** Resumo de job OrçaFacil para listagem */
+export interface OrcaFacilJobSummary {
+  id: string;
+  title: string;
+  status: string;
+  updated_at?: string | null;
+  created_at?: string | null;
+  n_etapas?: number | null;
+  n_services?: number | null;
+  total_comd?: number | null;
+  total_semd?: number | null;
+  has_workbook?: boolean;
+  has_modelo?: boolean;
+  modelo_name?: string | null;
+  skeleton_name?: string | null;
+}
+
+/** Hit de busca na base do modelo OrçaFacil */
+export interface OrcaFacilBaseHit {
+  code: string;
+  description: string;
+  unit: string;
+  price_comd?: number;
+  price_semd?: number;
+  score?: number;
+}
+
+export interface OrcaFacilPlanItem {
+  code?: string | null;
+  description?: string;
+  unit?: string;
+  qty?: number | string | null;
+  qty_basis?: string;
+  memory?: string;
+  needs_match?: boolean;
+  confidence?: number;
+  price_comd?: number | null;
+  price_semd?: number | null;
+}
+
+export interface OrcaFacilPlanStage {
+  name?: string;
+  subetapas?: Array<{ name?: string; items?: OrcaFacilPlanItem[] }>;
+  items?: OrcaFacilPlanItem[];
+}
+
+/** Job OrçaFacil — geração multimodal a partir de modelo+pranchas */
+export interface OrcaFacilJob {
+  id: string;
+  title: string;
+  status: string;
+  phase?: string;
+  progress?: number;
+  message?: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  files?: {
+    modelo?: string | null;
+    exemplo?: string | null;
+    pranchas?: string[];
+    fotos?: string[];
+  };
+  premissas?: Record<string, unknown>;
+  etapas_seed?: Array<{ name: string; subetapas?: Array<{ name: string }> }>;
+  user_prompt?: string;
+  skeleton_id?: string | null;
+  skeleton_name?: string | null;
+  base_summary?: { sheet_name?: string | null; size?: number; sample_codes?: string[] } | null;
+  example_summary?: {
+    source?: string | null;
+    n_etapas?: number;
+    n_servicos?: number;
+    mapped_n_servicos?: number;
+  } | null;
+  project_info?: Record<string, unknown> | null;
+  quantities?: Array<Record<string, unknown>>;
+  plan?: { stages?: OrcaFacilPlanStage[]; gemini_model?: string; fallback?: boolean } | null;
+  warnings?: string[];
+  session_id?: string | null;
+  budget_document_id?: string | null;
+  error?: string | null;
+  stats?: { etapas?: number; resolved?: number; needs_match?: number };
+  workbook_path?: string | null;
+  workbook_stats?: {
+    n_etapas?: number;
+    n_servicos?: number;
+    n_memorias?: number;
+    base_named_range?: string;
+  } | null;
+  gemini_model?: string | null;
+  preview?: {
+    stages?: Array<{
+      name?: string;
+      n_services?: number;
+      codes?: string[];
+      sample_memory?: string;
+      total_comd?: number;
+      total_semd?: number;
+    }>;
+    n_etapas?: number;
+    n_services?: number;
+    grand_total?: number;
+    title?: string;
+    total_comd?: number;
+    total_semd?: number;
+    cost_comd?: number;
+    cost_semd?: number;
+    bdi_obra_type?: string;
+    bdi_rate_comd?: number;
+    bdi_rate_semd?: number;
+    workbook_n_servicos?: number;
+    workbook_n_etapas?: number;
+  } | null;
+  events?: Array<{ at?: string; phase?: string; progress?: number; message?: string }>;
 }
 
 export interface BudgetGenerateRequest {

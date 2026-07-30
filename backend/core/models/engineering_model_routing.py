@@ -78,6 +78,12 @@ def engineering_generate(
         llm_model=llm_model,
     )
     model = effective or model
+    # Override Gemini: não tentar Ollama se a API Google falhar
+    from core.llm_override import is_gemini_model
+
+    if override and is_gemini_model(override):
+        fallbacks = []
+        model = override
     effective_timeout = timeout or stream_timeout
     llm = client or OllamaClient(timeout=effective_timeout)
     from core.runtime.ollama_defaults import merge_llm_options
@@ -112,10 +118,12 @@ def engineering_stream_models(
 ) -> tuple[str, list[str], str]:
     if not engineering_routing_enabled():
         from config.settings import OLLAMA_LLM_MODEL
-        from core.llm_override import resolve_llm_model
+        from core.llm_override import is_gemini_model, resolve_llm_model
 
         override = resolve_llm_model(llm_model)
         if override:
+            if is_gemini_model(override):
+                return override, [], "user_override"
             fb = settings.OLLAMA_LLM_FALLBACK_MODEL
             fallbacks = [fb] if fb and fb != override else []
             return override, fallbacks, "user_override"
@@ -138,6 +146,12 @@ def engineering_stream_models(
     }
     override = resolve_llm_model(llm_model)
     if override:
+        # Escolha explícita do usuário: não empilhar fallbacks Ollama
+        # (evita Gemini → deepseek silencioso quando a API cloud falha).
+        from core.llm_override import is_gemini_model
+
+        if is_gemini_model(override):
+            return override, [], "user_override"
         fallbacks = router.get_fallback_models(task_type, ctx)
         return override, fallbacks, "user_override"
     model, fallbacks, resolved = router.get_optimal_model(

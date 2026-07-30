@@ -133,6 +133,21 @@ def build_export_checklist(content: dict[str, Any] | None, *, assets: list[Any] 
     if not chapters:
         issues.append({"code": "chapters", "message": "Laudo sem capítulos — gere ou edite o conteúdo"})
 
+    # L20 — checklist editorial (qualidade institucional)
+    try:
+        from core.inspection_report.editorial_postprocess import editorial_checklist
+
+        ed = editorial_checklist(content)
+        issues.extend(ed.get("issues") or [])
+        warnings.extend(ed.get("warnings") or [])
+    except Exception:
+        warnings.append(
+            {
+                "code": "editorial_check",
+                "message": "Não foi possível executar checklist editorial L20",
+            }
+        )
+
     blocking = len(issues) > 0
     return {
         "ok": not blocking,

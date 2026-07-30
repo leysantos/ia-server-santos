@@ -8,6 +8,53 @@ from typing import Iterator, Optional
 
 _llm_override: ContextVar[Optional[str]] = ContextVar("llm_model_override", default=None)
 
+# Alias aceitos no seletor / override → id canônico Gemini
+_GEMINI_ALIASES = frozenset(
+    {
+        "gemini",
+        "gemini-3.6",
+        "gemini-3.6-flash",
+        "gemini-3.6-pro",
+        "google-gemini",
+    }
+)
+
+
+def is_gemini_model(model: Optional[str]) -> bool:
+    """True se o nome aponta para Gemini (cloud), não Ollama."""
+    if not model:
+        return False
+    lower = model.strip().lower()
+    if lower in _GEMINI_ALIASES:
+        return True
+    return lower.startswith("gemini")
+
+
+def canonical_gemini_model(model: Optional[str] = None) -> str:
+    """Resolve alias → GEMINI_MODEL (default gemini-3.6-flash)."""
+    from core.inspection_report.gemini_client import resolve_gemini_model
+
+    configured = (resolve_gemini_model() or "gemini-3.6-flash").strip()
+    if not model:
+        return configured
+    lower = model.strip().lower()
+    if lower in ("gemini", "gemini-3.6", "google-gemini"):
+        return configured
+    return model.strip() or configured
+
+
+def list_cloud_llm_models() -> list[str]:
+    """Modelos cloud disponíveis para o seletor (Gemini se API key OK)."""
+    try:
+        from core.inspection_report.gemini_client import gemini_available, resolve_gemini_model
+
+        if not gemini_available():
+            return []
+        name = (resolve_gemini_model() or "gemini-3.6-flash").strip()
+        return [name] if name else []
+    except Exception:
+        return []
+
 
 def normalize_llm_model_choice(model: Optional[str]) -> Optional[str]:
     """Retorna None para auto/vazio; caso contrário o nome do modelo."""
@@ -16,6 +63,8 @@ def normalize_llm_model_choice(model: Optional[str]) -> Optional[str]:
     cleaned = model.strip()
     if not cleaned or cleaned.lower() == "auto":
         return None
+    if is_gemini_model(cleaned):
+        return canonical_gemini_model(cleaned)
     return cleaned
 
 
