@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import type { ChatMessage } from "@/types/api";
+import ChatExportActions from "./ChatExportActions";
 import JsonViewer from "./JsonViewer";
 import LoadingSpinner from "./LoadingSpinner";
 
@@ -103,6 +104,9 @@ export default function MessageList({ messages, loading }: MessageListProps) {
                 </span>
               )}
             </p>
+            {message.role === "assistant" && (
+              <ChatExportActions message={message} messages={messages} />
+            )}
             {message.meta?.extra && (
               <details className="mt-3">
                 <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-300">

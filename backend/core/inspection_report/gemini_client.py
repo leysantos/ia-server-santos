@@ -139,6 +139,113 @@ def generate_text_stream(
         raise RuntimeError(f"Gemini stream vazio (model={resolved})")
 
 
+def resolve_gemini_image_model() -> str:
+    from config.settings import get_settings
+
+    settings = get_settings()
+    return (
+        getattr(settings, "gemini_image_model", None)
+        or os.getenv("GEMINI_IMAGE_MODEL")
+        or "gemini-2.5-flash-image"
+    ).strip()
+
+
+def generate_engineering_sketch(
+    prompt: str,
+    *,
+    model: str | None = None,
+) -> tuple[bytes, str]:
+    """
+    Gera croqui/esquema técnico via modelo de imagem Gemini.
+    Retorna (png_or_jpeg_bytes, mime_type).
+    """
+    api_key = resolve_gemini_api_key()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY não configurada")
+
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError as exc:
+        raise RuntimeError(
+            "Pacote google-genai não instalado. Execute: pip install google-genai"
+        ) from exc
+
+    resolved = (model or resolve_gemini_image_model()).strip()
+    client = genai.Client(api_key=api_key)
+
+    sketch_prompt = (
+        "Professional Brazilian reinforced-concrete structural detailing drawing "
+        "(prancha de detalhamento NBR 6118), black ink on pure white background, "
+        "orthographic elevation + cross-section + steel schedule table. "
+        "Correct dimensions only (do NOT invent heights like 7.60 m for a 60 cm beam). "
+        "Show: simply-supported beam, support hatches, distributed load arrows, "
+        "bottom tensile bars with 90° hooks at supports, top hanger bars, closed stirrups, "
+        "section with cover c and effective depth d, steel table columns "
+        "Pos. | Função | φ | Qtd. | Comp. unit. | Comp. total | Aço | Peso. "
+        "No decorative icons, no logos, no watermarks, no watercolor, no 3D.\n\n"
+        f"{(prompt or '').strip()}"
+    )
+
+    def _from_inline_parts(response: Any) -> tuple[bytes, str] | None:
+        import base64
+
+        candidates = getattr(response, "candidates", None) or []
+        for cand in candidates:
+            content = getattr(cand, "content", None)
+            parts = getattr(content, "parts", None) or []
+            for part in parts:
+                inline = getattr(part, "inline_data", None) or getattr(
+                    part, "inlineData", None
+                )
+                if not inline:
+                    continue
+                data = getattr(inline, "data", None)
+                mime = (
+                    getattr(inline, "mime_type", None)
+                    or getattr(inline, "mimeType", None)
+                    or "image/png"
+                )
+                if not data:
+                    continue
+                raw = data if isinstance(data, (bytes, bytearray)) else base64.b64decode(data)
+                return bytes(raw), str(mime)
+        return None
+
+    # 1) Modelo Gemini image via generate_content
+    try:
+        response = client.models.generate_content(
+            model=resolved,
+            contents=sketch_prompt,
+        )
+        got = _from_inline_parts(response)
+        if got:
+            return got
+    except Exception as exc:
+        logger.warning("Gemini generate_content croqui falhou (%s): %s", resolved, exc)
+
+    # 2) Fallback generate_images (Imagen-like)
+    try:
+        img_resp = client.models.generate_images(
+            model=resolved,
+            prompt=sketch_prompt,
+            config=types.GenerateImagesConfig(number_of_images=1),
+        )
+        images = getattr(img_resp, "generated_images", None) or []
+        if images:
+            img = images[0].image
+            data = getattr(img, "image_bytes", None)
+            if data:
+                return bytes(data), "image/png"
+    except Exception as exc:
+        logger.warning("Gemini generate_images croqui falhou (%s): %s", resolved, exc)
+
+    raise RuntimeError(
+        f"Modelo {resolved} não retornou imagem. "
+        "Confira GEMINI_IMAGE_MODEL (ex.: gemini-2.5-flash-image) e a cota da API."
+    )
+
+
 def _extract_json(text: str) -> dict[str, Any]:
     raw = (text or "").strip()
     if not raw:

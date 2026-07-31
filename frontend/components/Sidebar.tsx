@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import ShellHeader, { ShellFooter } from "@/components/ShellHeader";
+import ShellHeader from "@/components/ShellHeader";
 import BudgetSidebarNav from "@/components/BudgetSidebarNav";
 import SystemBenchmarkPanel from "@/components/SystemBenchmarkPanel";
 import { useAuth } from "@/context/AuthContext";
@@ -120,8 +120,16 @@ export default function Sidebar() {
     <aside className="hidden h-full w-56 shrink-0 flex-col border-r border-white/5 bg-surface/90 backdrop-blur-xl md:w-64 lg:flex">
       <ShellHeader>
         <Link href="/" className="group flex min-w-0 items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-brand-600 shadow-brand-sm ring-1 ring-brand-400/20">
-            <span className="text-sm font-bold text-white">IA</span>
+          <div
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-400/90 via-brand-500 to-brand-700 p-[2px] shadow-brand-sm ring-1 ring-sky-300/30 transition group-hover:ring-brand-400/50"
+            aria-hidden
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/logo.png"
+              alt=""
+              className="h-full w-full rounded-full bg-white object-cover"
+            />
           </div>
           <div className="min-w-0">
             <p className="truncate font-semibold text-white transition-colors group-hover:text-brand-300">
@@ -174,21 +182,20 @@ export default function Sidebar() {
         })}
       </nav>
 
-      <div className="shrink-0 border-t border-white/5 bg-surface/95 px-5 py-3">
-        <SystemBenchmarkPanel />
-      </div>
-
-      <ShellFooter innerClassName="items-stretch">
-        <div className="app-card w-full p-3">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface-elevated text-xs font-medium text-slate-300 ring-1 ring-white/10">
+      <div className="mt-auto shrink-0 border-t border-white/5 bg-surface/95">
+        <div className="px-3 pb-1.5 pt-2">
+          <SystemBenchmarkPanel />
+        </div>
+        <div className="border-t border-white/5 px-3 py-2">
+          <div className="app-card flex w-full items-center gap-2.5 px-2.5 py-2">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-elevated text-xs font-medium text-slate-300 ring-1 ring-white/10">
               {initials}
             </div>
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 leading-tight">
               <p className="truncate text-sm font-medium text-slate-200">
                 {user?.full_name || user?.username || "Convidado"}
               </p>
-              <p className="truncate text-xs text-slate-500">
+              <p className="truncate text-[11px] text-slate-500">
                 {authEnabled ? user?.role_label || user?.role || "—" : "Auth desabilitada"}
               </p>
             </div>
@@ -204,7 +211,7 @@ export default function Sidebar() {
             ) : null}
           </div>
         </div>
-      </ShellFooter>
+      </div>
     </aside>
   );
 }

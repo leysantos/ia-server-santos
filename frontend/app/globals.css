@@ -190,6 +190,42 @@ body {
   }
 }
 
+@keyframes landingUp {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes landingGlow {
+  from {
+    box-shadow: 0 0 40px rgba(14, 165, 233, 0.08);
+  }
+  to {
+    box-shadow: 0 0 64px rgba(14, 165, 233, 0.18);
+  }
+}
+
+.landing-fade-up {
+  animation: landingUp 0.7s ease-out both;
+}
+
+.landing-fade-up-delay {
+  animation: landingUp 0.85s ease-out 0.15s both;
+}
+
+.landing-login {
+  animation: landingGlow 6s ease-in-out infinite alternate;
+}
+
+.landing-stream-cursor {
+  animation: stream-cursor-blink 0.85s step-end infinite;
+}
+
 .streaming-cursor {
   animation: stream-cursor-blink 1s step-end infinite;
 }

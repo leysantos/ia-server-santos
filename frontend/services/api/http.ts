@@ -182,6 +182,37 @@ export async function downloadApiFile(path: string, fallbackFilename: string): P
   URL.revokeObjectURL(url);
 }
 
+/** POST que retorna arquivo (PDF/DOCX/imagem). Opcionalmente dispara download. */
+export async function downloadApiPost(
+  path: string,
+  body: unknown,
+  fallbackFilename: string,
+  opts?: { autoDownload?: boolean }
+): Promise<Blob> {
+  const response = await apiFetch(`${getApiBaseUrl()}${path}`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(formatApiError(errorText, response.status));
+  }
+  const blob = await response.blob();
+  if (opts?.autoDownload !== false) {
+    const dispo = response.headers.get("Content-Disposition") ?? "";
+    const match = /filename="?([^";\n]+)"?/.exec(dispo);
+    const filename = match?.[1] ?? fallbackFilename;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }
+  return blob;
+}
+
 export function downloadTextFile(content: string, filename: string, mime = "text/csv;charset=utf-8"): void {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);

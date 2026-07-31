@@ -6,7 +6,7 @@
 | Campo | Valor |
 |-------|-------|
 | **Versão do sistema** | 1.0.0 |
-| **Última atualização** | 2026-07-30 (CI — skip FAISS composition + base ativa desligada; hang pytest) |
+| **Última atualização** | 2026-07-31 (Landing — demos stream álgebra + viga isostática) |
 | **Próximo foco** | **OrçaFacil** OF7 memória rica · OF9 benchmark CONT_DREN · validação takeoff edificação |
 | **Marco atual** | M1–M8 ✅ · Orçamento B1–B32 ✅ · OrçaFacil 🟡 OF2–OF6+OF8 · OF7/OF9–OF12 abertos |
 | **Repositório** | [github.com/leysantos/ia-server-santos](https://github.com/leysantos/ia-server-santos) |
@@ -75,7 +75,7 @@ ia-server-santos/
 | **Laudos de Vistoria `/inspection-reports`** | 🟢 **L1–L20** ✅: croqui · ART · PAdES · editorial institucional (anti-IA, dedupe, coerência, plano tabela) |
 | Chat streaming UX | 🟢 SSE instantâneo (`connected`) + tokens ~60fps · **anexos no prompt** · **export dinâmico** (memória/TRD/memorial/parecer/ET/checklist/orçamento + croqui) |
 | Agente Geotecnia dedicado | 🟢 `GeotecniaIntelligentAgent` — NBR 6122/7185, classificação solo, A_min |
-| Frontend | 🟢 `/chat`, `/projects`, `/inspection-reports`, `/budget`, `/mobile/*` (telefone), `/orchestrate`, `/copilot`, `/aed`, `/console`, `/history`, `/settings`, `/projects/{id}/workflow` |
+| Frontend | 🟢 `/login` landing institucional · `/chat`, `/projects`, `/inspection-reports`, `/budget`, `/mobile/*`, `/orchestrate`, `/copilot`, `/aed`, `/console`, `/history`, `/settings`, `/projects/{id}/workflow` |
 | Auth SaaS | 🟢 JWT · middleware · papéis `admin` \| `dev_user` + **tipos customizados** · **permissões por módulo** (oculto/bloqueado) · `/settings/users` (**editar** + **excluir**/desativar) |
 
 ## Feature flags importantes (defaults)
@@ -2330,6 +2330,8 @@ Settings completas: `backend/config/settings.py`
 
 | Data | Decisão | Motivo |
 |------|---------|--------|
+| 2026-07-31 | **Landing — demos stream lado a lado** | Hero com 2 cards sem scroll: equação 2º grau + reações viga biapoiada (q uniforme, ΣF/ΣM); login sticky intacto |
+| 2026-07-30 | **Landing no /login** | Página institucional (hero + login embutido, módulos reais, casos, footer) no padrão visual dark/azul da mockup `landing_page.png` |
 | 2026-07-30 | **CI — skip FAISS composition no runner** | Base DP/SEMINF ativa (8k) + embed Ollama no pytest hangava o GHA; `SKIP_COMPOSITION_FAISS`/`CI` ignora rebuild; index sem active; pytest-timeout 60s |
 | 2026-07-30 | **Chat — sugestões dinâmicas de docs** | Classificador por conteúdo/disciplina sugere memória, TRD, memorial, parecer, ET, checklist, nota de orçamento e croqui (`POST /chat/export/suggestions`) |
 | 2026-07-30 | **CI — OllamaClient lazy + fail-fast** | `__init__` não chama `/api/tags`; CI aponta Ollama para `:9` + timeout 25 min no job backend (evita hang GHA) |

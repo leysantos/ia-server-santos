@@ -213,6 +213,10 @@ class AppSettings(BaseSettings):
     # --- Gemini (Laudos · OrçaFacil · roteamento de disciplina) ---
     gemini_api_key: str | None = Field(default=None, validation_alias="GEMINI_API_KEY")
     gemini_model: str = Field(default="gemini-3.6-flash", validation_alias="GEMINI_MODEL")
+    gemini_image_model: str = Field(
+        default="gemini-2.5-flash-image",
+        validation_alias="GEMINI_IMAGE_MODEL",
+    )
     use_gemini_discipline_router: bool = Field(
         default=True, validation_alias="USE_GEMINI_DISCIPLINE_ROUTER"
     )
@@ -297,6 +301,7 @@ _LEGACY_FIELD_MAP: dict[str, str] = {
     "USE_GEMINI_DISCIPLINE_ROUTER": "use_gemini_discipline_router",
     "GEMINI_API_KEY": "gemini_api_key",
     "GEMINI_MODEL": "gemini_model",
+    "GEMINI_IMAGE_MODEL": "gemini_image_model",
     "USE_BUDGET_SMART_ROUTING": "use_budget_smart_routing",
     "USE_ENGINEERING_SMART_ROUTING": "use_engineering_smart_routing",
     "USE_MODEL_EVALUATION": "use_model_evaluation",

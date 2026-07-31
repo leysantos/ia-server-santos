@@ -131,6 +131,7 @@ import {
   apiFetch,
   BudgetVersionConflictError,
   downloadApiFile,
+  downloadApiPost,
   downloadTextFile,
   formatApiError,
   getApiBaseUrl,
@@ -155,6 +156,7 @@ export {
   BudgetVersionConflictError,
   formatApiError,
   downloadApiFile,
+  downloadApiPost,
   downloadTextFile,
   isSessionNotFoundError,
   restoreBudgetSessionFromStorage,
@@ -619,6 +621,59 @@ export async function* techSpecComposeStream(
     const event = parseSseBlock(buffer.trim());
     if (event) yield event as TechSpecStreamEvent;
   }
+}
+
+export type ChatExportKind =
+  | "memoria"
+  | "trd"
+  | "memorial"
+  | "parecer"
+  | "especificacao"
+  | "checklist"
+  | "nota_orcamento"
+  | "resposta";
+
+export type ChatDocSuggestion = {
+  kind: ChatExportKind | "croqui";
+  label: string;
+  formats: string[];
+  priority: number;
+  reason: string;
+};
+
+export async function fetchChatDocumentSuggestions(body: {
+  text: string;
+  discipline?: string;
+  source_question?: string;
+  route_mode?: string;
+}): Promise<ChatDocSuggestion[]> {
+  const data = await request<{ suggestions: ChatDocSuggestion[] }>(
+    "/chat/export/suggestions",
+    { method: "POST", body: JSON.stringify(body) }
+  );
+  return data.suggestions || [];
+}
+
+export async function downloadChatExport(body: {
+  text: string;
+  kind: ChatExportKind;
+  format: "pdf" | "docx";
+  title?: string;
+  discipline?: string;
+  source_question?: string;
+}): Promise<Blob> {
+  const ext = body.format === "docx" ? "docx" : "pdf";
+  return downloadApiPost("/chat/export", body, `${body.kind}.${ext}`);
+}
+
+export async function downloadChatCroqui(body: {
+  text: string;
+  source_question?: string;
+  llm_model?: string;
+}): Promise<Blob> {
+  return downloadApiPost("/chat/croqui", body, "croqui_chat.png", {
+    autoDownload: false,
+  });
 }
 
 export const api = {

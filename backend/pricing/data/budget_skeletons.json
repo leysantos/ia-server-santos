@@ -203,7 +203,85 @@
       ],
       "created_at": "2026-07-29T07:16:52+00:00",
       "updated_at": "2026-07-29T07:17:09+00:00"
+    },
+    {
+      "id": "0608e40a9c6e",
+      "name": "Construção Quadra",
+      "description": "Quando houver Construção de Quadra ou Campo",
+      "obra_type": "ED",
+      "etapas": [
+        {
+          "name": "Construção da Arena Verão",
+          "sub_etapas": [
+            {
+              "name": "Administração da Obra"
+            },
+            {
+              "name": "Serviços Preliminares"
+            },
+            {
+              "name": "Trabalhos em Terra"
+            },
+            {
+              "name": "Infraestrutura"
+            },
+            {
+              "name": "Supraestrutura"
+            },
+            {
+              "name": "Paredes e Painéis"
+            },
+            {
+              "name": "Cobertura"
+            },
+            {
+              "name": "Impermeabilizações"
+            },
+            {
+              "name": "Revestimentos"
+            },
+            {
+              "name": "Pisos"
+            },
+            {
+              "name": "Esquadrias"
+            },
+            {
+              "name": "Cercas e Proteções"
+            },
+            {
+              "name": "Instalações Elétricas"
+            },
+            {
+              "name": "Instalações Hidráulicas"
+            },
+            {
+              "name": "Instalações Sanitárias"
+            },
+            {
+              "name": "Aparelhos e Metais"
+            },
+            {
+              "name": "Pintura"
+            },
+            {
+              "name": "Equipamentos para Esportes"
+            },
+            {
+              "name": "Paisagismo"
+            },
+            {
+              "name": "Móveis e Equipamentos"
+            },
+            {
+              "name": "Serviços Finais"
+            }
+          ]
+        }
+      ],
+      "created_at": "2026-07-30T15:29:01+00:00",
+      "updated_at": "2026-07-30T15:29:01+00:00"
     }
   ],
-  "updated_at": "2026-07-29T07:17:09+00:00"
+  "updated_at": "2026-07-30T15:29:02+00:00"
 }

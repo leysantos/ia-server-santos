@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -37,3 +37,47 @@ class ChatResponse(BaseModel):
     intent: Optional[dict[str, Any]] = None
     segments: Optional[list[dict[str, Any]]] = None
     error: Optional[bool] = None
+
+
+class ChatExportRequest(BaseModel):
+    text: str = Field(..., min_length=40, description="Texto da resposta do assistente")
+    kind: Literal[
+        "memoria",
+        "trd",
+        "memorial",
+        "parecer",
+        "especificacao",
+        "checklist",
+        "nota_orcamento",
+        "resposta",
+    ] = Field(
+        default="memoria",
+        description="Tipo de documento a gerar a partir da resposta",
+    )
+    format: Literal["pdf", "docx"] = Field(default="pdf")
+    title: Optional[str] = None
+    discipline: Optional[str] = None
+    source_question: Optional[str] = Field(
+        default=None,
+        description="Pergunta do usuário que originou a resposta",
+    )
+
+
+class ChatSuggestDocumentsRequest(BaseModel):
+    text: str = Field(..., min_length=40)
+    discipline: Optional[str] = None
+    source_question: Optional[str] = None
+    route_mode: Optional[str] = None
+
+
+class ChatCroquiRequest(BaseModel):
+    text: str = Field(
+        ...,
+        min_length=40,
+        description="Texto técnico da resposta (base para o croqui)",
+    )
+    source_question: Optional[str] = None
+    llm_model: Optional[str] = Field(
+        default=None,
+        description="Modelo Gemini selecionado no chat (informativo)",
+    )
