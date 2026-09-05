@@ -43,6 +43,21 @@ APP_TAR_EXCLUDES = {
     ".netlify",
 }
 
+# Dados volumosos / já cobertos por alvos dedicados (knowledge, faiss, database).
+# Sem isso o tar "app" chega a ~2–4 GB (price_bank + FAISS + laudos).
+APP_PATH_PREFIX_EXCLUDES = (
+    "backend/knowledge/price_bank",
+    "backend/knowledge/raw",
+    "backend/knowledge/sync",
+    "backend/knowledge/cache",
+    "backend/memory/faiss_index",
+    "backend/data/inspection_reports",
+    "backend/data/workflow",
+    "backend/data/projects",
+    "backend/pricing/data/orca_facil",
+    "backend/htmlcov",
+)
+
 APP_TOP_LEVEL = (
     "frontend",
     "backend",
@@ -275,6 +290,8 @@ if (-not (Test-Path $dst)) {{ New-Item -ItemType Directory -Path $dst -Force | O
         try:
             manifest["drive_sync"] = self._sync_to_google_drive()
             self._apply_retention_on_drive()
+            # Persistir status do Drive (antes só gravava em erro)
+            self._write_manifest(stamp, manifest)
         except Exception as exc:
             manifest["errors"].append({"target": "drive_sync", "error": str(exc)})
             if manifest["artifacts"]:
@@ -380,6 +397,10 @@ Write-Output ('removed:' + ($toRemove -join ','))
             return None
         if any(part.endswith(".pyc") for part in parts):
             return None
+        normalized = "/".join(parts).replace("\\", "/")
+        for prefix in APP_PATH_PREFIX_EXCLUDES:
+            if normalized == prefix or normalized.startswith(prefix + "/"):
+                return None
         return info
 
     def _backup_database(self, stamp: str) -> dict[str, Any]:

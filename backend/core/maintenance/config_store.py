@@ -29,7 +29,7 @@ class MaintenanceConfig(BaseModel):
         description="Staging local no WSL antes de enviar ao Drive",
     )
     keep_latest_sets: int = Field(
-        default=1,
+        default=3,
         ge=1,
         le=10,
         description="Quantos conjuntos de backup manter (apaga os mais antigos)",
@@ -58,7 +58,7 @@ def load_config() -> MaintenanceConfig:
                 data.setdefault("backup_drive_win", DEFAULT_BACKUP_DRIVE_WIN)
             else:
                 data.setdefault("backup_staging_dir", legacy)
-        data.setdefault("keep_latest_sets", 1)
+        data.setdefault("keep_latest_sets", 3)
         data.setdefault("backup_drive_win", DEFAULT_BACKUP_DRIVE_WIN)
         data.setdefault("backup_staging_dir", DEFAULT_BACKUP_STAGING)
         for legacy_key in ("wsl_backup_dir", "wsl_script_path", "wsl_schedule_note"):

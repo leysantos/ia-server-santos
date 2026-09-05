@@ -16,19 +16,30 @@ test.describe("Orçamento — smoke E2E", () => {
   });
 
   test("carrega página com toolbar e abas", async ({ page }) => {
-    await page.goto("/budget");
+    await page.goto("/budget?tab=dados");
     await expect(page.getByRole("heading", { name: "Orçamento de Obra" })).toBeVisible();
     await expect(page.getByTestId("budget-toolbar")).toBeVisible();
-    await expect(page.getByTestId("budget-tab-historico")).toBeVisible();
     await expect(page.getByTestId("budget-tab-dados")).toBeVisible();
     await expect(page.getByTestId("budget-tab-etapas")).toBeVisible();
+    await expect(page.getByTestId("budget-tab-busca_cpu")).toHaveCount(0);
+    await expect(page.getByTestId("budget-tab-historico")).toHaveCount(0);
   });
 
   test("aba Histórico exibe gerador IA e lista salva", async ({ page }) => {
-    await page.goto("/budget");
+    await page.goto("/budget?tab=historico");
     await expect(page.getByRole("heading", { name: "Gerar orçamento com IA" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Gerar orçamento" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Obra piloto ·" }).first()).toBeVisible();
+  });
+
+  test("menu lateral — Busca CPU e Histórico", async ({ page }) => {
+    await page.goto("/budget?tab=dados");
+    await expect(page.getByTestId("budget-nav-busca_cpu")).toBeVisible();
+    await expect(page.getByTestId("budget-nav-historico")).toBeVisible();
+    await page.getByTestId("budget-nav-historico").click();
+    await expect(page.getByRole("heading", { name: "Gerar orçamento com IA" })).toBeVisible();
+    await page.getByTestId("budget-nav-busca_cpu").click();
+    await expect(page).toHaveURL(/tab=busca_cpu/);
   });
 
   test("sem sessão, aba Dados mostra estado vazio", async ({ page }) => {

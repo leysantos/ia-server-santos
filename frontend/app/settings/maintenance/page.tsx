@@ -145,10 +145,19 @@ export default function SettingsMaintenancePage() {
     try {
       const result = await api.maintenanceBackup(selected);
       setLastResult(result);
+      const drive = result.drive_sync;
+      let driveNote = "";
+      if (drive?.skipped) {
+        driveNote = ` Drive não sincronizado (${drive.reason || "pulado"}).`;
+      } else if (drive?.status === "ok" || drive?.destination) {
+        driveNote = ` Enviado para ${drive.destination || "Google Drive"}.`;
+      } else {
+        driveNote = " Verifique a pasta do Drive e o histórico abaixo.";
+      }
       setMessage(
         result.status === "completed"
-          ? `Backup concluído — ${result.artifacts.length} artefato(s).`
-          : `Backup parcial — ${result.artifacts.length} ok, ${result.errors.length} erro(s).`,
+          ? `Backup ${result.id} concluído — ${result.artifacts.length} artefato(s).${driveNote}`
+          : `Backup ${result.id} parcial — ${result.artifacts.length} ok, ${result.errors.length} erro(s).${driveNote}`,
       );
       if (result.errors?.length) {
         setError(result.errors.map((e) => `${e.target}: ${e.error}`).join(" · "));
@@ -240,12 +249,37 @@ export default function SettingsMaintenancePage() {
       <section className="rounded-2xl bg-slate-900/40 p-6 ring-1 ring-slate-800">
         <h3 className="mb-1 text-sm font-semibold text-white">Google Drive e retenção</h3>
         <p className="mb-4 text-sm text-slate-500">
-          Backups da aplicação são gerados em staging local e enviados ao{" "}
-          <code className="text-cyan-400/90">Google Drive</code>. Mantém apenas os{" "}
-          <strong className="font-medium text-slate-400">N conjuntos mais recentes</strong> — os
-          antigos são apagados automaticamente (app, banco, FAISS, knowledge).
+          Backups são gerados em staging local e copiados para o{" "}
+          <code className="text-cyan-400/90">Google Drive</code>. Com retenção N, só os{" "}
+          <strong className="font-medium text-slate-400">N conjuntos mais recentes</strong>{" "}
+          permanecem — o anterior some se N = 1. Código (app) não inclui price_bank, FAISS nem
+          laudos (use os alvos Knowledge/FAISS).
         </p>
 
+        {config && (
+          <div className="mb-4 flex flex-wrap gap-2 text-xs">
+            <span
+              className={cn(
+                "rounded-full px-2.5 py-1 ring-1",
+                config.backup_drive_exists
+                  ? "bg-emerald-500/10 text-emerald-300 ring-emerald-500/30"
+                  : "bg-amber-500/10 text-amber-300 ring-amber-500/30",
+              )}
+            >
+              Drive {config.backup_drive_exists ? "acessível ✓" : "não encontrado — confira a letra/caminho"}
+            </span>
+            <span
+              className={cn(
+                "rounded-full px-2.5 py-1 ring-1",
+                config.backup_staging_exists
+                  ? "bg-emerald-500/10 text-emerald-300 ring-emerald-500/30"
+                  : "bg-slate-800 text-slate-500 ring-slate-700",
+              )}
+            >
+              Staging {config.backup_staging_exists ? "ok" : "ausente"}
+            </span>
+          </div>
+        )}
         {config && (
           <div className="grid gap-3">
             <Field
@@ -262,14 +296,14 @@ export default function SettingsMaintenancePage() {
             />
             <Field
               label="Manter últimos N conjuntos"
-              value={String(config.keep_latest_sets ?? 1)}
+              value={String(config.keep_latest_sets ?? 3)}
               onChange={(v) => {
                 const n = parseInt(v, 10);
                 if (!Number.isNaN(n) && n >= 1 && n <= 10) {
                   setConfig({ ...config, keep_latest_sets: n });
                 }
               }}
-              hint="1 = só o backup mais recente (~1 GB app + FAISS + banco)"
+              hint="Recomendado ≥ 3. Com 1, cada backup novo apaga o anterior no Drive e no staging."
             />
             <div className="flex flex-wrap gap-4 text-sm">
               <label className="flex items-center gap-2 text-slate-300">
@@ -485,6 +519,12 @@ export default function SettingsMaintenancePage() {
                   <p className="mt-1 text-xs text-slate-500">
                     {item.targets.join(", ")} · {item.artifacts?.length ?? 0} artefato(s)
                     {(item.errors?.length ?? 0) > 0 && ` · ${item.errors.length} erro(s)`}
+                    {item.drive_sync?.status === "ok" &&
+                      ` · Drive: ${item.drive_sync.destination || "ok"}`}
+                    {item.drive_sync?.skipped && " · Drive pulado"}
+                    {item.artifacts?.length
+                      ? ` · ${item.artifacts.map((a) => a.size_human).join(" + ")}`
+                      : ""}
                   </p>
                 </li>
               ))}

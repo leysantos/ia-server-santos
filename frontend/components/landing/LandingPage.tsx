@@ -7,6 +7,8 @@ import { formatApiError } from "@/services/api";
 import { cn } from "@/lib/utils";
 import QuadraticStreamDemo, {
   BeamReactionsStreamDemo,
+  ConcreteMixStreamDemo,
+  TrussAxialStreamDemo,
 } from "@/components/landing/QuadraticStreamDemo";
 
 const NAV = [
@@ -392,9 +394,11 @@ export default function LandingPage() {
             </div>
           </div>
 
-          <div className="landing-fade-up mt-10 grid gap-4 lg:mt-12 lg:grid-cols-2 lg:items-start">
+          <div className="landing-fade-up mt-10 grid gap-4 sm:grid-cols-2 lg:mt-12 lg:items-start">
             <QuadraticStreamDemo />
             <BeamReactionsStreamDemo />
+            <ConcreteMixStreamDemo />
+            <TrussAxialStreamDemo />
           </div>
         </section>
 

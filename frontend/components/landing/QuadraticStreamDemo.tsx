@@ -189,5 +189,89 @@ export function BeamReactionsStreamDemo({ className }: { className?: string }) {
   );
 }
 
+const CONCRETE_PROMPT =
+  "Dosagem de concreto fck = 25 MPa, slump 8 ± 2 cm. Trace o traço 1 : a : b e o consumo de cimento.";
+
+const CONCRETE_FULL = `Solução recomendada
+
+Método: dosagem racional (ABCP / IPT — simplificado)
+fck = 25 MPa · slump = 8 ± 2 cm · brita 1
+
+Resistência de dosagem:
+fcm = fck + 1,65 · Sd
+Sd ≈ 4 MPa → fcm = 25 + 6,6 ≈ 31,6 MPa
+
+Água/cimento (curva típica CP II):
+a/c ≈ 0,55
+
+Consumo de água (slump 8 cm, brita 1):
+Aa ≈ 190 L/m³
+
+Cimento:
+C = Aa / (a/c) = 190 / 0,55 ≈ 345 kg/m³
+
+Agregados (massa):
+areia ≈ 710 kg/m³ · brita ≈ 1080 kg/m³
+
+Traço em massa (1 : a : b):
+1 : 2,06 : 3,13
+com a/c = 0,55
+
+Conferência: C · (1+a+b) ≈ volume unitário ✓
+
+Resposta: 1 : 2,06 : 3,13 · C ≈ 345 kg/m³`;
+
+const TRUSS_PROMPT =
+  "Treliça triangular isostática: vão 8 m, altura 3 m, carga P = 40 kN no nó do topo. Calcule o esforço axial nas barras.";
+
+const TRUSS_FULL = `Solução recomendada
+
+Modelo: treliça plana isostática ABC
+A e B apoios · C nó do topo
+L = 8 m · h = 3 m · P = 40 kN ↓ em C
+
+Geometria (AC = BC):
+ℓ = √((L/2)² + h²) = √(16 + 9) = 5 m
+cos θ = (L/2)/ℓ = 4/5 = 0,80
+sen θ = h/ℓ = 3/5 = 0,60
+
+Equilíbrio no nó C (ΣFx = ΣFy = 0):
+2 · N_AC · sen θ = P
+N_AC = N_BC = P / (2 · 0,60) = 40 / 1,20 ≈ 33,3 kN (tração)
+
+Tirante AB (método dos nós em A):
+N_AB · 1 + N_AC · cos θ = 0
+N_AB = −33,3 · 0,80 ≈ −26,7 kN (compressão)
+
+Conferência: ΣFy apoios = P ✓
+
+Resposta: AC=BC ≈ 33,3 kN (T) · AB ≈ 26,7 kN (C)`;
+
+export function ConcreteMixStreamDemo({ className }: { className?: string }) {
+  const { visible, streaming } = useTokenStream(CONCRETE_FULL, { idleMs: 2200 });
+  return (
+    <DemoShell
+      className={className}
+      badge="MATERIAIS"
+      userPrompt={CONCRETE_PROMPT}
+      visible={visible}
+      streaming={streaming}
+    />
+  );
+}
+
+export function TrussAxialStreamDemo({ className }: { className?: string }) {
+  const { visible, streaming } = useTokenStream(TRUSS_FULL, { idleMs: 3000 });
+  return (
+    <DemoShell
+      className={className}
+      badge="TRELIÇA"
+      userPrompt={TRUSS_PROMPT}
+      visible={visible}
+      streaming={streaming}
+    />
+  );
+}
+
 /** @deprecated use named export QuadraticStreamDemo */
 export default QuadraticStreamDemo;

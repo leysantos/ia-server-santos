@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,16 @@ def backup_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(
         "core.maintenance.config_store.load_config",
         lambda: cfg,
+    )
+    monkeypatch.setattr(
+        MaintenanceBackupService,
+        "_sync_to_google_drive",
+        lambda self: {"skipped": True, "reason": "test"},
+    )
+    monkeypatch.setattr(
+        MaintenanceBackupService,
+        "_apply_retention_on_drive",
+        lambda self: None,
     )
     return root
 
@@ -74,6 +85,15 @@ def test_backup_app_creates_tar(backup_root: Path):
     assert len(manifest["artifacts"]) == 1
     path = Path(manifest["artifacts"][0]["path"])
     assert path.exists()
+
+
+def test_tar_filter_excludes_heavy_runtime_paths():
+    info = tarfile.TarInfo(name="backend/knowledge/price_bank/BR-2026-01/foo.bin")
+    assert MaintenanceBackupService._tar_filter(info) is None
+    info2 = tarfile.TarInfo(name="backend/memory/faiss_index/chunks.json")
+    assert MaintenanceBackupService._tar_filter(info2) is None
+    info3 = tarfile.TarInfo(name="backend/app/main.py")
+    assert MaintenanceBackupService._tar_filter(info3) is not None
 
 
 def test_save_and_load_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

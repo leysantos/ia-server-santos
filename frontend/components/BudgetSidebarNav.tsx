@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/context/AuthContext";
@@ -21,16 +21,20 @@ const SUB_ACTIONS = [
   { id: "new", label: "Novo orçamento", href: "/budget?action=new" },
   { id: "orca_facil", label: "OrçaFacil", href: "/budget/orca-facil" },
   { id: "lancar_precos", label: "Lançar Preços", href: "/budget/lancar-precos" },
+  { id: "busca_cpu", label: "Busca CPU", href: "/budget?tab=busca_cpu" },
+  { id: "historico", label: "Histórico", href: "/budget?tab=historico" },
   { id: "models", label: "Cadastrar modelo de orçamento", href: "/budget/models" },
   { id: "open", label: "Abrir módulo de orçamento", href: "/budget" },
 ] as const;
 
 export default function BudgetSidebarNav() {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const { canAccessModule } = useAuth();
   const budgetAccess = canAccessModule("budget");
   const [expanded, setExpanded] = useState(false);
+  const budgetTab = searchParams.get("tab");
 
   const budgetActive =
     pathname === "/budget" ||
@@ -47,6 +51,27 @@ export default function BudgetSidebarNav() {
     },
     [router]
   );
+
+  const isSubActive = (action: (typeof SUB_ACTIONS)[number]) => {
+    if (action.id === "models") return pathname === "/budget/models";
+    if (action.id === "lancar_precos") return pathname === "/budget/lancar-precos";
+    if (action.id === "orca_facil") return pathname === "/budget/orca-facil";
+    if (action.id === "busca_cpu") {
+      return pathname === "/budget" && budgetTab === "busca_cpu";
+    }
+    if (action.id === "historico") {
+      return pathname === "/budget" && budgetTab === "historico";
+    }
+    if (action.id === "open") {
+      return (
+        pathname === "/budget" &&
+        budgetTab !== "busca_cpu" &&
+        budgetTab !== "historico" &&
+        !searchParams.get("action")
+      );
+    }
+    return false;
+  };
 
   if (!budgetAccess.visible) return null;
 
@@ -113,12 +138,11 @@ export default function BudgetSidebarNav() {
             <button
               key={action.id}
               type="button"
+              data-testid={`budget-nav-${action.id}`}
               onClick={() => handleSubAction(action.id, action.href)}
               className={cn(
                 "block w-full rounded-lg px-2.5 py-2 text-left text-xs transition-colors",
-                (action.id === "models" && pathname === "/budget/models") ||
-                  (action.id === "lancar_precos" && pathname === "/budget/lancar-precos") ||
-                  (action.id === "orca_facil" && pathname === "/budget/orca-facil")
+                isSubActive(action)
                   ? "bg-brand-500/15 text-brand-200"
                   : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
               )}

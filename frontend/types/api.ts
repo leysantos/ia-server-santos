@@ -1095,6 +1095,17 @@ export interface MaintenanceBackupManifest {
   }>;
   errors: Array<{ target: string; error: string }>;
   manifest_file?: string;
+  drive_sync?: {
+    skipped?: boolean;
+    reason?: string;
+    destination?: string;
+    source?: string;
+    status?: string;
+  } | null;
+  retention?: {
+    kept_stamps?: string[];
+    removed?: string[];
+  };
 }
 
 export interface MaintenanceInitResponse {

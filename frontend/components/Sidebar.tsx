@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Suspense } from "react";
 import { usePathname } from "next/navigation";
 import ShellHeader from "@/components/ShellHeader";
 import BudgetSidebarNav from "@/components/BudgetSidebarNav";
@@ -141,7 +142,9 @@ export default function Sidebar() {
       </ShellHeader>
 
       <nav className="flex-1 space-y-1 overflow-y-auto p-3">
-        <BudgetSidebarNav />
+        <Suspense fallback={null}>
+          <BudgetSidebarNav />
+        </Suspense>
         {navItems.map((item) => {
           const access = canAccessModule(item.moduleId);
           if (!access.visible) return null;

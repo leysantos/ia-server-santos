@@ -66,7 +66,6 @@ const BUDGET_TABS: { id: BudgetTabId; label: string }[] = [
   { id: "etapas", label: "Etapas e composições" },
   { id: "ppd", label: "Orç. Sintético" },
   { id: "analitico", label: "Orç. Analítico" },
-  { id: "busca_cpu", label: "Busca CPU" },
   { id: "memoria", label: "Memória de cálculo" },
   { id: "cronograma", label: "Cronograma" },
   { id: "curva_abc", label: "Curva ABC" },
@@ -74,10 +73,14 @@ const BUDGET_TABS: { id: BudgetTabId; label: string }[] = [
   { id: "histograma", label: "Histograma" },
   { id: "especificacao", label: "Especificação técnica" },
   { id: "auditoria", label: "Auditoria" },
-  { id: "historico", label: "Histórico" },
 ];
 
-const BUDGET_TAB_IDS = new Set<BudgetTabId>(BUDGET_TABS.map((t) => t.id));
+/** Abas do workspace (barra superior). Busca CPU e Histórico ficam no menu lateral. */
+const BUDGET_TAB_IDS = new Set<BudgetTabId>([
+  ...BUDGET_TABS.map((t) => t.id),
+  "busca_cpu",
+  "historico",
+]);
 
 const BUDGET_LAST_TAB_KEY = "iaserver.budget.lastTab";
 
@@ -91,7 +94,7 @@ function parseBudgetTab(value: string | null): BudgetTabId {
       return last as BudgetTabId;
     }
   }
-  return "historico";
+  return "dados";
 }
 
 function BudgetTabBar({
@@ -190,11 +193,7 @@ function BudgetPageContent() {
         sessionStorage.setItem(BUDGET_LAST_TAB_KEY, tab);
       }
       const params = new URLSearchParams(searchParams.toString());
-      if (tab === "historico") {
-        params.delete("tab");
-      } else {
-        params.set("tab", tab);
-      }
+      params.set("tab", tab);
       const qs = params.toString();
       router.replace(qs ? `/budget?${qs}` : "/budget", { scroll: false });
     },
@@ -1050,7 +1049,7 @@ function BudgetPageContent() {
             <div className="rounded-xl bg-slate-800/20 py-12 text-center ring-1 ring-slate-700/40">
               <h2 className="text-lg font-semibold text-white">Novo orçamento</h2>
               <p className="mx-auto mt-2 max-w-lg text-sm text-slate-400">
-                Crie um orçamento vazio ou abra um salvo na aba Histórico. Configure dados da obra e bases
+                Crie um orçamento vazio ou abra um salvo em Histórico (menu lateral). Configure dados da obra e bases
                 de preços em Dados do orçamento.
               </p>
               <button
@@ -1063,7 +1062,9 @@ function BudgetPageContent() {
             </div>
           )}
 
-          <BudgetTabBar tabs={BUDGET_TABS} active={activeTab} onChange={setActiveTab} />
+          {activeTab !== "historico" && activeTab !== "busca_cpu" && (
+            <BudgetTabBar tabs={BUDGET_TABS} active={activeTab} onChange={setActiveTab} />
+          )}
 
           {session && (
             <div className={cn(activeTab !== "auditoria" && "hidden")}>

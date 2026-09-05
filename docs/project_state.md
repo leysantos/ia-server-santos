@@ -6,7 +6,7 @@
 | Campo | Valor |
 |-------|-------|
 | **Versão do sistema** | 1.0.0 |
-| **Última atualização** | 2026-07-31 (Landing — demos stream álgebra + viga isostática) |
+| **Última atualização** | 2026-08-10 (Orçamento — Busca CPU e Histórico no menu lateral) |
 | **Próximo foco** | **OrçaFacil** OF7 memória rica · OF9 benchmark CONT_DREN · validação takeoff edificação |
 | **Marco atual** | M1–M8 ✅ · Orçamento B1–B32 ✅ · OrçaFacil 🟡 OF2–OF6+OF8 · OF7/OF9–OF12 abertos |
 | **Repositório** | [github.com/leysantos/ia-server-santos](https://github.com/leysantos/ia-server-santos) |
@@ -36,7 +36,7 @@ ia-server-santos/
 
 **Subir:** `cd backend && uvicorn app.main:app --reload --port 8000` · `cd frontend && npm run dev` · `make api` / `make db-init` na raiz.
 
-**Acesso equipe:** LAN `http://172.22.3.234:3000` (portproxy Windows + proxy `/api-backend`) · externo Quick Tunnel em `/settings/access` · runbook completo na **seção 5** · análise geral na **seção 8**.
+**Acesso equipe:** LAN `http://172.22.3.234:3000` (portproxy Windows + proxy `/api-backend`) · externo Quick Tunnel em `/settings/access` · runbook completo na **seção 5** · **máquina nova:** `docs/nova_maquina_checklist.md` · análise geral na **seção 8**.
 
 ## O que já funciona (produção local)
 
@@ -58,7 +58,7 @@ ia-server-santos/
 | Knowledge Layer multi-base | 🟢 FAISS por base (NBR, TDR, catálogos…) — SINAPI/TCPO **fora** do catálogo/FAISS RAG |
 | **Norm Pack Studio** | 🟢 Gap analysis por pacote (arquitetura, documentação, PCI, estrutural) · `/settings/norm-packs` · API `/knowledge/norm-packs/*` · só PDF licenciado / legislação pública |
 | **Importação em lote NBR/NR** | 🟢 `/settings/imports` · pasta ou multi-PDF · classificação automática (**IN SICRO → ORÇAMENTO**) · SSE progresso **por arquivo na indexação FAISS** · **embed batch Ollama + indexação parcial** (chunks resilientes) · job `norm_bulk` no Console · **CSV auditoria pós-lote** · CLI `scripts/ingest_nbr_folder.py` |
-| **Manutenção / Backup** | 🟢 `/settings/maintenance` · backup app, PostgreSQL, knowledge, FAISS → Google Drive · **restore** por stamp (`make restore STAMP=…`, UI e `/maintenance/restore`) · CLI `scripts/maintenance/run_backup.sh` · backup WSL completo **removido** |
+| **Manutenção / Backup** | 🟢 `/settings/maintenance` · backup app, PostgreSQL, knowledge, FAISS → Google Drive · **restore** por stamp (`make restore STAMP=…`, UI e `/maintenance/restore`) · CLI `scripts/maintenance/run_backup.sh` · checklist máquina nova `docs/nova_maquina_checklist.md` · backup WSL completo **removido** |
 | **Serviços / DevOps** | 🟢 `/settings/servers` · API `/devops/*` · status PostgreSQL/API/Ollama/Redis/MinIO · subir stack backend (Docker + db-init) · start/stop frontend e Celery · console bash com blocklist · API e frontend manual (`make api`, `npm run dev`) |
 | Knowledge storage flat | 🟢 `knowledge/raw/documents/` + metadata sidecar + `catalog.jsonl` |
 | RAG agent-aware | 🟢 15 agentes com escopo isolado — `USE_AGENT_SCOPED_RAG=true` |
@@ -2032,6 +2032,8 @@ ia-server-santos/
 
 # ⚙️ 5. RUNBOOK — COMO SUBIR O SISTEMA
 
+> **Migração para hardware novo:** checklist em 10 passos — [`docs/nova_maquina_checklist.md`](nova_maquina_checklist.md) (restore Drive + setup + Ollama + price_bank).
+
 ## Pré-requisitos
 
 - Python 3.11+
@@ -2330,6 +2332,10 @@ Settings completas: `backend/config/settings.py`
 
 | Data | Decisão | Motivo |
 |------|---------|--------|
+| 2026-08-10 | **Orçamento — Busca CPU/Histórico no menu lateral** | Removidos da barra de abas do workspace; entradas em `BudgetSidebarNav` (`/budget?tab=busca_cpu` / `historico`); barra superior só abas do documento |
+| 2026-08-01 | **Checklist máquina nova** | `docs/nova_maquina_checklist.md` — 10 passos restore Drive (app/DB/knowledge/FAISS) + setup Ollama/Docker/price_bank; sem clone WSL |
+| 2026-08-01 | **Manutenção — backup Drive clarificado** | Retenção default 3; app tar exclui price_bank/FAISS/laudos; manifest persiste `drive_sync`; UI mostra Drive acessível + stamp |
+| 2026-08-01 | **Landing — 4 demos stream** | Grid 2×2: álgebra, viga biapoiada, dosagem concreto fck 25, esforço axial treliça triangular; altura fixa 500px |
 | 2026-07-31 | **Landing — demos stream lado a lado** | Hero com 2 cards sem scroll: equação 2º grau + reações viga biapoiada (q uniforme, ΣF/ΣM); login sticky intacto |
 | 2026-07-30 | **Landing no /login** | Página institucional (hero + login embutido, módulos reais, casos, footer) no padrão visual dark/azul da mockup `landing_page.png` |
 | 2026-07-30 | **CI — skip FAISS composition no runner** | Base DP/SEMINF ativa (8k) + embed Ollama no pytest hangava o GHA; `SKIP_COMPOSITION_FAISS`/`CI` ignora rebuild; index sem active; pytest-timeout 60s |
